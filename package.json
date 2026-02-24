@@ -1,0 +1,38 @@
+{
+  "name": "z-code",
+  "version": "0.1.0",
+  "description": "Terminal-native AI coding agent",
+  "module": "src/index.tsx",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "bun run src/index.tsx",
+    "build": "bun build src/index.tsx --outdir ./dist --target bun --external react-devtools-core && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "bin": {
+    "z-code": "./dist/index.js"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.3.0",
+    "react-devtools-core": "^7.0.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.46",
+    "@ai-sdk/openai": "^3.0.31",
+    "@anthropic-ai/sdk": "^0.78.0",
+    "ai": "^6.0.97",
+    "chalk": "^5.6.2",
+    "chokidar": "^5.0.0",
+    "ink": "^6.8.0",
+    "ink-text-input": "^6.0.0",
+    "ora": "^9.3.0",
+    "react": "^19.2.4",
+    "zod": "^4.3.6"
+  }
+}
