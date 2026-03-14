@@ -23,7 +23,6 @@ interface ChatPanelProps {
 }
 
 type StaticItem =
-  | { type: "welcome"; key: string }
   | { type: "message"; key: string; message: Message };
 
 export default function ChatPanel({
@@ -41,7 +40,6 @@ export default function ChatPanel({
 }: ChatPanelProps) {
   // Build static items: welcome screen + finalized messages
   const items: StaticItem[] = [
-    { type: "welcome", key: "welcome" },
     ...messages.map((m, i) => ({
       type: "message" as const,
       key: `msg-${m.timestamp}-${i}`,
@@ -51,23 +49,21 @@ export default function ChatPanel({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {/* Welcome screen (live-rendered for animation) */}
+      <Box marginBottom={1}>
+        <WelcomeScreen
+          version={version}
+          model={model}
+          workingDirectory={workingDirectory}
+          agentName={agentName}
+          providerType={providerType}
+          baseURL={baseURL}
+        />
+      </Box>
+
       {/* Static items */}
       <Static items={items}>
         {(item) => {
-          if (item.type === "welcome") {
-            return (
-              <Box key={item.key} marginBottom={1}>
-                <WelcomeScreen
-                  version={version}
-                  model={model}
-                  workingDirectory={workingDirectory}
-                  agentName={agentName}
-                  providerType={providerType}
-                  baseURL={baseURL}
-                />
-              </Box>
-            );
-          }
           return (
             <Box key={item.key}>
               <MessageView message={item.message} />

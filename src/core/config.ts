@@ -1,23 +1,18 @@
 // Configuration loading — env vars → config file → CLI args
 //
-// Config supports named model "profiles", each with its own API key:
-//
-//   .zcode.json:
-//   {
-//     "model": "gpt-4o",
-//     "profiles": {
-//       "gpt-4o":       { "provider": "openai",    "model": "gpt-4o",            "apiKey": "env:OPENAI_API_KEY" },
-//       "claude":       { "provider": "anthropic", "model": "claude-sonnet-4-20250514", "apiKey": "env:ANTHROPIC_API_KEY" },
-//       "glm-4":        { "provider": "openai",    "model": "glm-4",             "apiKey": "env:GLM_API_KEY", "baseURL": "https://open.bigmodel.cn/api/v1" },
-//       "deepseek":     { "provider": "openai",    "model": "deepseek-chat",     "apiKey": "env:DEEPSEEK_API_KEY", "baseURL": "https://api.deepseek.com/v1" }
-//     }
-//   }
+// Config supports named model "profiles", each with its own API key, plus
+// optional MCP server definitions.
 
-import { existsSync } from "fs";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { ZCodeConfig, ProviderType, AgentName, ModelProfile } from "./types.js";
+import type {
+  ZCodeConfig,
+  ProviderType,
+  AgentName,
+  ModelProfile,
+  MCPServerConfig,
+} from "./types.js";
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
@@ -30,7 +25,7 @@ const DEFAULTS: ZCodeConfig = {
   dangerouslySkipPermissions: false,
 };
 
-// ─── Resolve "env:VAR_NAME" references ──────────────────────────────────────
+// ─── Resolve "env:VAR_NAME" references ─────────────────────────────────────
 
 function resolveEnvRef(value: string): string {
   if (value.startsWith("env:")) {
@@ -49,36 +44,47 @@ const CONFIG_PATHS = [
 
 function loadConfigFile(): Partial<ZCodeConfig> {
   for (const path of CONFIG_PATHS) {
-    if (existsSync(path)) {
-      try {
-        const raw = readFileSync(path, "utf-8");
-        const parsed = JSON.parse(raw);
+    if (!existsSync(path)) continue;
+    try {
+      const raw = readFileSync(path, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<ZCodeConfig>;
 
-        // Resolve env refs in top-level apiKey
-        if (typeof parsed.apiKey === "string") {
-          parsed.apiKey = resolveEnvRef(parsed.apiKey);
+      // Resolve env refs in top-level apiKey
+      if (typeof parsed.apiKey === "string") {
+        parsed.apiKey = resolveEnvRef(parsed.apiKey);
+      }
+
+      // Resolve env refs in every profile's apiKey
+      if (parsed.profiles && typeof parsed.profiles === "object") {
+        for (const [, profile] of Object.entries(parsed.profiles)) {
+          const p = profile as ModelProfile;
+          if (typeof p.apiKey === "string") {
+            p.apiKey = resolveEnvRef(p.apiKey);
+          }
         }
+      }
 
-        // Resolve env refs in every profile's apiKey
-        if (parsed.profiles && typeof parsed.profiles === "object") {
-          for (const [name, profile] of Object.entries(parsed.profiles)) {
-            const p = profile as ModelProfile;
-            if (typeof p.apiKey === "string") {
-              p.apiKey = resolveEnvRef(p.apiKey);
+      // Resolve env refs in MCP server env values
+      if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
+        for (const [, server] of Object.entries(parsed.mcpServers)) {
+          const s = server as MCPServerConfig;
+          if (s.env && typeof s.env === "object") {
+            for (const [k, v] of Object.entries(s.env)) {
+              if (typeof v === "string") s.env[k] = resolveEnvRef(v);
             }
           }
         }
-
-        return parsed;
-      } catch {
-        // Skip invalid config files
       }
+
+      return parsed;
+    } catch {
+      // Skip invalid config files
     }
   }
   return {};
 }
 
-// ─── Environment variables ──────────────────────────────────────────────────
+// ─── Environment variables ─────────────────────────────────────────────────
 
 function loadEnvConfig(): Partial<ZCodeConfig> {
   const config: Partial<ZCodeConfig> = {};
@@ -99,7 +105,7 @@ function loadEnvConfig(): Partial<ZCodeConfig> {
   return config;
 }
 
-// ─── CLI argument parsing ───────────────────────────────────────────────────
+// ─── CLI argument parsing ──────────────────────────────────────────────────
 
 function parseCliArgs(): Partial<ZCodeConfig> & { help?: boolean; version?: boolean } {
   const args = process.argv.slice(2);
@@ -156,7 +162,7 @@ function parseCliArgs(): Partial<ZCodeConfig> & { help?: boolean; version?: bool
   return config;
 }
 
-// ─── Help text ──────────────────────────────────────────────────────────────
+// ─── Help text ─────────────────────────────────────────────────────────────
 
 export function printHelp(): void {
   console.log(`
@@ -199,10 +205,13 @@ Examples:
 
   # Use Groq
   z-code --provider openai --model llama-3.3-70b-versatile --base-url https://api.groq.com/openai/v1
+
+  # MCP servers from config (then use /mcp in the app)
+  z-code
 `);
 }
 
-// ─── Main loader ────────────────────────────────────────────────────────────
+// ─── Main loader ───────────────────────────────────────────────────────────
 
 export function loadConfig(): ZCodeConfig & { help?: boolean; version?: boolean } {
   const fileConfig = loadConfigFile();

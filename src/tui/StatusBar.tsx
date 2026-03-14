@@ -2,14 +2,15 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import type { AgentName } from "../core/types.js";
+import type { AgentName, ThinkingMode } from "../core/types.js";
 
 interface StatusBarProps {
   model: string;
   agentName: AgentName;
   tokenCount?: number;
-  cost?: number;
-  thinkingEnabled?: boolean;
+  thinkingMode?: ThinkingMode;
+  mcpEnabledCount?: number;
+  queueCount?: number;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -22,8 +23,9 @@ export default function StatusBar({
   model,
   agentName,
   tokenCount = 0,
-  cost = 0,
-  thinkingEnabled = false,
+  thinkingMode = "off",
+  mcpEnabledCount = 0,
+  queueCount = 0,
 }: StatusBarProps) {
   const cols = process.stdout.columns || 80;
   const separator = "─".repeat(cols);
@@ -36,41 +38,19 @@ export default function StatusBar({
       </Box>
 
       <Box justifyContent="space-between" paddingX={0}>
-        {/* Left side: agent + model + tokens + cost */}
+        {/* Left side: shortcuts */}
         <Box>
-          <Text color={agentColor} bold>
-            [{agentName}]
-          </Text>
-          <Text dimColor> {model}</Text>
-          {tokenCount > 0 && (
-            <>
-              <Text dimColor> · </Text>
-              <Text dimColor>
-                {tokenCount > 1000
-                  ? `${(tokenCount / 1000).toFixed(1)}k`
-                  : tokenCount}{" "}
-                tokens
-              </Text>
-            </>
-          )}
-          {cost > 0 && (
-            <>
-              <Text dimColor> · </Text>
-              <Text dimColor>${cost.toFixed(4)}</Text>
-            </>
-          )}
-          {thinkingEnabled && (
-            <>
-              <Text dimColor> · </Text>
-              <Text color="magenta">💭</Text>
-            </>
-          )}
+          <Text dimColor>? for shortcuts</Text>
         </Box>
 
-        {/* Right side: shortcuts */}
+        {/* Right side: context */}
         <Box>
           <Text dimColor>
-            Shift+Tab thinking · /help for commands
+            <Text color={agentColor}>⧉</Text> In {agentName} · {model}
+            {thinkingMode !== "off" ? ` · 💭 ${thinkingMode}` : ""}
+            {mcpEnabledCount > 0 ? ` · MCP ${mcpEnabledCount}` : ""}
+            {queueCount > 0 ? ` · queue ${queueCount}` : ""}
+            {tokenCount > 0 ? ` · ${tokenCount > 1000 ? `${(tokenCount / 1000).toFixed(1)}k` : tokenCount} tok` : ""}
           </Text>
         </Box>
       </Box>

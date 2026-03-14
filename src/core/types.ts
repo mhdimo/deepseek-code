@@ -72,6 +72,9 @@ export interface ToolResult {
 
 export type AgentName = "code" | "plan" | "review";
 
+/** Thinking depth for extended reasoning (Anthropic-compatible models only) */
+export type ThinkingMode = "off" | "light" | "deep" | "max";
+
 export interface AgentConfig {
   name: AgentName;
   displayName: string;
@@ -112,6 +115,20 @@ export interface ModelProfile {
   displayName?: string;
 }
 
+// ─── MCP Servers ────────────────────────────────────────────────────────────
+
+/**
+ * Minimal MCP server config (compatible with common MCP JSON patterns).
+ * This is used for discovery and runtime toggling in the TUI.
+ */
+export interface MCPServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled?: boolean;
+}
+
 // ─── Config ─────────────────────────────────────────────────────────────────
 
 export interface ZCodeConfig {
@@ -124,4 +141,6 @@ export interface ZCodeConfig {
   dangerouslySkipPermissions?: boolean;
   /** Named model profiles for quick /model switching */
   profiles?: Record<string, ModelProfile>;
+  /** Optional MCP server definitions loaded from config file */
+  mcpServers?: Record<string, MCPServerConfig>;
 }

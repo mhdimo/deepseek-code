@@ -9,6 +9,54 @@ import { spawn } from "child_process";
 import { resolve, relative, dirname } from "path";
 import type { PermissionRuleset } from "../core/types.js";
 
+function previewTextBlock(text: string, maxLines = 16, maxChars = 900): string {
+  const lines = text.split("\n");
+  const clipped = lines.slice(0, maxLines);
+  const numbered = clipped
+    .map((line, i) => `${String(i + 1).padStart(3)}│${line}`)
+    .join("\n");
+  const hasMoreLines = lines.length > maxLines;
+  const withLineNotice = hasMoreLines
+    ? `${numbered}\n... (${lines.length - maxLines} more lines)`
+    : numbered;
+
+  if (withLineNotice.length <= maxChars) return withLineNotice;
+  return withLineNotice.slice(0, maxChars) + "\n... (truncated)";
+}
+
+function previewRawBlock(text: string, maxLines = 40, maxChars = 1200): string {
+  const lines = text.split("\n");
+  const clipped = lines.slice(0, maxLines);
+  const withLineNotice = lines.length > maxLines
+    ? `${clipped.join("\n")}\n... (${lines.length - maxLines} more lines)`
+    : clipped.join("\n");
+
+  if (withLineNotice.length <= maxChars) return withLineNotice;
+  return withLineNotice.slice(0, maxChars) + "\n... (truncated)";
+}
+
+function buildSimpleDiffPreview(oldText: string, newText: string, maxLines = 40): string {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const max = Math.max(oldLines.length, newLines.length);
+  const out: string[] = [];
+
+  for (let i = 0; i < max; i++) {
+    const oldLine = oldLines[i];
+    const newLine = newLines[i];
+    if (oldLine === newLine) continue;
+
+    if (oldLine !== undefined) out.push(`-${oldLine}`);
+    if (newLine !== undefined) out.push(`+${newLine}`);
+
+    if (out.length >= maxLines) break;
+  }
+
+  if (out.length === 0) return "(no textual diff)";
+  if (out.length >= maxLines) out.push("... (diff truncated)");
+  return out.join("\n");
+}
+
 // ─── Permission callback type ───────────────────────────────────────────────
 
 export type PermissionCallback = (
@@ -89,12 +137,37 @@ export function createTools(
       if (!filePath) return `❌ Missing file_path parameter. Received: ${Object.keys(params).join(", ")}`;
       const content = (params.content ?? params.text ?? "") as string;
       const fullPath = resolvePath(filePath);
-      const approved = await checkPermission("Write", `Write ${relative(cwd, fullPath)}`);
+
+      let previousContent = "";
+      let exists = false;
+      try {
+        previousContent = await readFile(fullPath, "utf-8");
+        exists = true;
+      } catch {
+        exists = false;
+      }
+
+      const writePermissionPreview = [
+        `Write ${relative(cwd, fullPath)}`,
+        exists ? "Mode: overwrite existing file" : "Mode: create new file",
+        "",
+        exists ? "Diff preview:" : "Content preview:",
+        exists
+          ? previewRawBlock(buildSimpleDiffPreview(previousContent, content), 60, 1200)
+          : previewTextBlock(content, 20, 1200),
+      ].join("\n");
+
+      const approved = await checkPermission("Write", writePermissionPreview);
       if (!approved) return "⚠️ Permission denied by user.";
       try {
         await mkdir(dirname(fullPath), { recursive: true });
         await writeFile(fullPath, content, "utf-8");
-        return `✅ Wrote ${relative(cwd, fullPath)} (${content.split("\n").length} lines)`;
+        return [
+          `✅ Wrote ${relative(cwd, fullPath)} (${content.split("\n").length} lines)`,
+          "",
+          "Preview:",
+          previewTextBlock(content),
+        ].join("\n");
       } catch (error) {
         return `❌ ${(error as Error).message}`;
       }
@@ -120,7 +193,13 @@ export function createTools(
       const oldString = (params.old_string ?? params.oldString ?? "") as string;
       const newString = (params.new_string ?? params.newString ?? "") as string;
       const fullPath = resolvePath(filePath);
-      const approved = await checkPermission("Edit", `Edit ${relative(cwd, fullPath)}`);
+      const editPermissionPreview = [
+        `Edit ${relative(cwd, fullPath)}`,
+        "",
+        "Diff preview:",
+        previewRawBlock(buildSimpleDiffPreview(oldString, newString), 60, 1200),
+      ].join("\n");
+      const approved = await checkPermission("Edit", editPermissionPreview);
       if (!approved) return "⚠️ Permission denied by user.";
       try {
         const content = await readFile(fullPath, "utf-8");
@@ -134,7 +213,15 @@ export function createTools(
         }
         const newContent = content.replace(oldString, newString);
         await writeFile(fullPath, newContent, "utf-8");
-        return `✅ Edited ${relative(cwd, fullPath)}`;
+        return [
+          `✅ Edited ${relative(cwd, fullPath)}`,
+          "",
+          "Replacement preview:",
+          "-- old --",
+          previewTextBlock(oldString, 8, 350),
+          "-- new --",
+          previewTextBlock(newString, 8, 350),
+        ].join("\n");
       } catch (error) {
         return `❌ ${(error as Error).message}`;
       }

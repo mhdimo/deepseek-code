@@ -1,4 +1,4 @@
-// Agent system — agentic loop with tool calling via AI SDK
+  // Agent system — agentic loop with tool calling via AI SDK
 //
 // Implements a manual multi-step loop:
 //   1. Call streamText with tools

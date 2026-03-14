@@ -1,94 +1,123 @@
 # z-code
 
-Terminal-native AI coding agent inspired by Claude Code and OpenCode.
+Terminal-native AI coding agent with a Claude-like UX, multi-agent workflow, and provider/MCP extensibility.
 
-## Features
+## What z-code focuses on
 
-- **TUI Interface** - Beautiful terminal UI with panel navigation
-- **Multi-Provider Support** - Works with OpenAI and Claude APIs
-- **Agent System** - Switch between "build" (full access) and "plan" (read-only) agents
-- **File Tree** - Browse your codebase from the terminal
-- **Tool System** - Built-in tools for reading, editing, and executing commands
+- Fast terminal interaction (Ink-based TUI)
+- Multi-step coding agent loop with tool execution
+- OpenAI-compatible endpoints + Anthropic
+- Model/profile switching at runtime
+- MCP server discovery/status UX in-app
 
-## Installation
+## Documentation index
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Providers & modular adapter model](docs/PROVIDERS.md)
+- [MCP usage](docs/MCP.md)
+- [Example config](.zcode.example.json)
+
+---
+
+## Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/z-code.git
+git clone https://github.com/Zellia-Keyboards/z-code.git
 cd z-code
-
-# Install dependencies
 bun install
-
-# Or with npm
-npm install
 ```
 
-## Configuration
-
-Set your API key as an environment variable:
+## Run
 
 ```bash
-# For OpenAI
-export ZCODE_API_KEY="your-openai-api-key"
-export ZCODE_PROVIDER="openai"
-
-# For Claude
-export ZCODE_API_KEY="your-anthropic-api-key"
-export ZCODE_PROVIDER="claude"
-
-# Optional: custom base URL (for compatible APIs)
-export ZCODE_BASE_URL="https://your-api-endpoint.com"
-export ZCODE_MODEL="your-model-name"
-```
-
-## Usage
-
-```bash
-# Run z-code
 bun run dev
 ```
 
-### Keybindings
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Switch between panels |
-| `Ctrl+C` | Exit |
-| `/agent` | Switch between build/plan agents |
-
-## Architecture
-
-```
-z-code/
-├── src/
-│   ├── agent/       # Agent system (build, plan)
-│   ├── core/        # Core types and interfaces
-│   ├── provider/    # AI provider abstraction (OpenAI, Claude)
-│   ├── tool/        # Tool system (read, edit, bash)
-│   ├── tui/         # Terminal UI components (Ink)
-│   └── index.tsx    # Entry point
-```
-
-### Tech Stack
-
-- **Runtime**: Bun
-- **Language**: TypeScript
-- **UI Framework**: Ink (React for CLIs)
-- **AI SDK**: Vercel AI SDK (provider-agnostic)
-
-## Development
+## Build
 
 ```bash
-# Run in development mode
-bun run dev
-
-# Type checking
-bun run typecheck
-
-# Build for production
 bun run build
 ```
+
+---
+
+## Quick configuration
+
+You can configure by env vars and/or `.zcode.json`.
+
+### Environment variables
+
+```bash
+export ZCODE_PROVIDER="openai"      # openai | anthropic
+export ZCODE_MODEL="gpt-4o"
+export ZCODE_API_KEY="..."
+
+# Optional OpenAI-compatible endpoint override
+export ZCODE_BASE_URL="https://api.z.ai/api/coding/paas/v4"
+```
+
+### .zcode.json
+
+Copy [.zcode.example.json](.zcode.example.json) and edit values.
+
+Supports:
+
+- base provider/model/key
+- named `profiles`
+- `mcpServers`
+
+---
+
+## Providers
+
+z-code currently supports provider types:
+
+- `openai` (used as **OpenAI-compatible** adapter)
+- `anthropic`
+
+Using `openai` + `baseURL` works for many vendors (Z.AI/GLM, DeepSeek, Groq, Together, Mistral, etc).
+
+See full details in [docs/PROVIDERS.md](docs/PROVIDERS.md).
+
+---
+
+## MCP
+
+Current MCP scope in z-code:
+
+- Configurable `mcpServers` in `.zcode.json`
+- `/mcp` command for visibility and toggling
+- MCP status shown in UI
+
+Protocol-level MCP tool execution is the next integration phase.
+
+See [docs/MCP.md](docs/MCP.md) for examples and roadmap.
+
+---
+
+## Useful in-app commands
+
+- `/help`
+- `/setup`
+- `/model`, `/models`
+- `/apikey`
+- `/agent`
+- `/think`
+- `/mcp`
+- `/shortcuts`
+
+Type `/` to open the command picker. Use arrows to navigate.
+
+---
+
+## Developer notes
+
+- Runtime: Bun
+- Language: TypeScript
+- UI: Ink
+- Model layer: AI SDK
+
+For code structure and data flow, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 

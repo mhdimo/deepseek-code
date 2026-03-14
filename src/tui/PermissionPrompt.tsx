@@ -16,6 +16,16 @@ export default function PermissionPrompt({
   onApprove,
   onDeny,
 }: PermissionPromptProps) {
+  const descriptionLines = description.split("\n");
+
+  const lineColor = (line: string): string | undefined => {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("+")) return "green";
+    if (trimmed.startsWith("-")) return "red";
+    if (trimmed.startsWith("@@") || trimmed === "Diff preview:") return "cyan";
+    return undefined;
+  };
+
   useInput((input, key) => {
     if (input === "y" || input === "Y" || key.return) {
       onApprove();
@@ -41,9 +51,15 @@ export default function PermissionPrompt({
       <Box>
         <Text>
           <Text bold>{toolName}</Text>
-          <Text dimColor> wants to: </Text>
-          <Text>{description}</Text>
+          <Text dimColor> wants to:</Text>
         </Text>
+      </Box>
+      <Box flexDirection="column" marginLeft={2}>
+        {descriptionLines.map((line, i) => (
+          <Text key={`${toolName}-line-${i}`} wrap="wrap" color={lineColor(line)} dimColor={!lineColor(line)}>
+            {line || " "}
+          </Text>
+        ))}
       </Box>
       <Box>
         <Text dimColor>Press </Text>

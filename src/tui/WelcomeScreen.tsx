@@ -1,16 +1,26 @@
-// Welcome screen with Z-Code ASCII art
+// Welcome screen styled like Claude-like UI with Zcode branding
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
+import { basename } from "path";
 
-const ASCII_ART = [
-  "  ███████╗       ██████╗ ██████╗ ██████╗ ███████╗",
-  "  ╚══███╔╝      ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
-  "    ███╔╝ █████╗██║     ██║   ██║██║  ██║█████╗  ",
-  "   ███╔╝  ╚════╝██║     ██║   ██║██║  ██║██╔══╝  ",
-  "  ███████╗      ╚██████╗╚██████╔╝██████╔╝███████╗",
-  "  ╚══════╝       ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
-];
+const MASCOT_FRAMES = [
+  {
+    top: "▐▛███▜▌",
+    mid: "▝▜█████▛▘",
+    bot: "  ▘▘ ▝▝",
+  },
+  {
+    top: "▐▛███▜▌",
+    mid: "▝▜█████▛▘",
+    bot: "  ▝▝ ▘▘",
+  },
+  {
+    top: "▐▛███▜▌",
+    mid: "▝▜█████▛▘",
+    bot: "  ▘▝ ▝▘",
+  },
+] as const;
 
 interface WelcomeScreenProps {
   version: string;
@@ -25,64 +35,54 @@ export default function WelcomeScreen({
   version,
   model,
   workingDirectory,
-  agentName,
   providerType,
-  baseURL,
 }: WelcomeScreenProps) {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((prev) => (prev + 1) % MASCOT_FRAMES.length);
+    }, 260);
+    return () => clearInterval(timer);
+  }, []);
+
+  const mascot = MASCOT_FRAMES[frame]!;
+  const cwdDisplay = useMemo(() => {
+    if (!workingDirectory) return "~";
+    const home = process.env.HOME;
+    if (home && workingDirectory.startsWith(home)) {
+      const tail = workingDirectory.slice(home.length);
+      return `~${tail || "/"}`;
+    }
+    return `~/${basename(workingDirectory)}`;
+  }, [workingDirectory]);
+
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="gray"
-      paddingX={2}
-      paddingY={1}
-    >
-      {/* ASCII Art */}
-      <Box flexDirection="column" marginBottom={1}>
-        {ASCII_ART.map((line, i) => (
-          <Text key={i} color="white">
-            {line}
-          </Text>
-        ))}
-      </Box>
-
-      {/* Version line */}
+    <Box flexDirection="column" marginLeft={1} marginBottom={1}>
       <Box>
-        <Text dimColor>v{version}</Text>
-        <Text dimColor> · </Text>
-        <Text dimColor>provider: </Text>
-        <Text color="white">{providerType}</Text>
-        <Text dimColor> · </Text>
-        <Text dimColor>model: </Text>
-        <Text color="white">{model}</Text>
+        <Text color="white"> {mascot.top}</Text>
+        <Text>   </Text>
+        <Text color="white">Zcode</Text>
+        <Text dimColor> v{version}</Text>
       </Box>
 
-      {/* Base URL if custom */}
-      {baseURL && (
-        <Box>
-          <Text dimColor>endpoint: </Text>
-          <Text color="white">{baseURL}</Text>
-        </Box>
-      )}
-
-      {/* Working directory + agent */}
-      <Box marginBottom={1}>
-        <Text dimColor>cwd: </Text>
-        <Text color="white">{workingDirectory}</Text>
-        <Text dimColor> · </Text>
-        <Text dimColor>agent: </Text>
-        <Text color="cyan" bold>{agentName}</Text>
-      </Box>
-
-      {/* Tips */}
       <Box>
-        <Text dimColor>Type </Text>
-        <Text color="white" bold>/help</Text>
-        <Text dimColor> for commands · </Text>
-        <Text color="white" bold>Esc</Text>
-        <Text dimColor> to interrupt · </Text>
-        <Text color="white" bold>Ctrl+C</Text>
-        <Text dimColor> to exit</Text>
+        <Text color="white">{mascot.mid}</Text>
+        <Text>  </Text>
+        <Text dimColor>{model}</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor>API Usage Billing</Text>
+      </Box>
+
+      <Box>
+        <Text color="white">{mascot.bot}</Text>
+        <Text>    </Text>
+        <Text dimColor>{cwdDisplay}</Text>
+      </Box>
+
+      <Box marginTop={1}>
+        <Text dimColor>/setup for quick provider/model/api-key setup</Text>
+        <Text dimColor>  ·  provider: {providerType}</Text>
       </Box>
     </Box>
   );

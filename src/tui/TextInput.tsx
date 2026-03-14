@@ -5,6 +5,7 @@ import { Box, Text } from "ink";
 import InkTextInput from "ink-text-input";
 
 interface InputProps {
+  inputResetKey?: number;
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -19,6 +20,7 @@ const AGENT_COLORS: Record<string, string> = {
 };
 
 export default function Input({
+  inputResetKey,
   value,
   onChange,
   onSubmit,
@@ -27,29 +29,26 @@ export default function Input({
 }: InputProps) {
   const color = AGENT_COLORS[agentName] || "cyan";
 
-  if (isLoading) {
-    return (
-      <Box paddingX={0}>
-        <Text dimColor color={color}>❯ </Text>
-        <Text dimColor italic>
-          Press Esc to interrupt...
-        </Text>
-      </Box>
-    );
-  }
-
   return (
-    <Box paddingX={0}>
-      <Text bold color={color}>
-        ❯{" "}
-      </Text>
-      <InkTextInput
-        value={value}
-        onChange={onChange}
-        onSubmit={() => onSubmit()}
-        placeholder={`Message ${agentName} agent...`}
-        focus={!isLoading}
-      />
+    <Box flexDirection="column" paddingX={0}>
+      <Box>
+        <Text bold={!isLoading} dimColor={isLoading} color={color}>
+          ❯{" "}
+        </Text>
+        <InkTextInput
+          key={inputResetKey}
+          value={value}
+          onChange={onChange}
+          onSubmit={() => onSubmit()}
+          placeholder={isLoading ? "Type and press Enter to queue next message..." : 'Try "create a util logging.py that..."'}
+          focus={true}
+        />
+      </Box>
+      {isLoading && (
+        <Text dimColor italic>
+          Running response… press Esc to interrupt.
+        </Text>
+      )}
     </Box>
   );
 }
