@@ -1,13 +1,14 @@
-// Permission prompt component (like Claude Code's tool approval dialog)
+// Permission prompt with picker + optional feedback
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
+import InkTextInput from "ink-text-input";
 
 interface PermissionPromptProps {
   toolName: string;
   description: string;
-  onApprove: () => void;
-  onDeny: () => void;
+  onApprove: (feedback?: string) => void;
+  onDeny: (feedback?: string) => void;
 }
 
 export default function PermissionPrompt({
@@ -16,7 +17,15 @@ export default function PermissionPrompt({
   onApprove,
   onDeny,
 }: PermissionPromptProps) {
+  const [selected, setSelected] = useState<"approve" | "deny">("approve");
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
   const descriptionLines = description.split("\n");
+  const hasDiff = useMemo(
+    () => descriptionLines.some((line) => line.trimStart().startsWith("+") || line.trimStart().startsWith("-")),
+    [descriptionLines],
+  );
 
   const lineColor = (line: string): string | undefined => {
     const trimmed = line.trimStart();
@@ -27,9 +36,46 @@ export default function PermissionPrompt({
   };
 
   useInput((input, key) => {
-    if (input === "y" || input === "Y" || key.return) {
+    if (feedbackMode) {
+      if (key.escape) {
+        setFeedbackMode(false);
+        return;
+      }
+      if (key.return) {
+        const note = feedback.trim() || undefined;
+        if (selected === "approve") onApprove(note);
+        else onDeny(note);
+      }
+      return;
+    }
+
+    if (key.upArrow || key.downArrow || key.tab) {
+      setSelected((prev) => (prev === "approve" ? "deny" : "approve"));
+      return;
+    }
+
+    if (input === "f" || input === "F") {
+      setFeedbackMode(true);
+      return;
+    }
+
+    if (input === "y" || input === "Y") {
       onApprove();
-    } else if (input === "n" || input === "N" || key.escape) {
+      return;
+    }
+
+    if (input === "n" || input === "N") {
+      onDeny();
+      return;
+    }
+
+    if (key.return) {
+      if (selected === "approve") onApprove();
+      else onDeny();
+      return;
+    }
+
+    if (key.escape) {
       onDeny();
     }
   });
@@ -61,12 +107,39 @@ export default function PermissionPrompt({
           </Text>
         ))}
       </Box>
+
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>Decision</Text>
+        <Text color={selected === "approve" ? "green" : undefined} bold={selected === "approve"}>
+          {selected === "approve" ? "▸ " : "  "}Approve
+        </Text>
+        <Text color={selected === "deny" ? "red" : undefined} bold={selected === "deny"}>
+          {selected === "deny" ? "▸ " : "  "}Deny
+        </Text>
+      </Box>
+
+      {feedbackMode && (
+        <Box marginTop={1}>
+          <Text dimColor>Feedback: </Text>
+          <InkTextInput
+            value={feedback}
+            onChange={setFeedback}
+            onSubmit={() => {
+              const note = feedback.trim() || undefined;
+              if (selected === "approve") onApprove(note);
+              else onDeny(note);
+            }}
+            placeholder="Add feedback for this tool action..."
+            focus={true}
+          />
+        </Box>
+      )}
+
       <Box>
-        <Text dimColor>Press </Text>
-        <Text color="green" bold>y</Text>
-        <Text dimColor> to allow, </Text>
-        <Text color="red" bold>n</Text>
-        <Text dimColor> to deny</Text>
+        <Text dimColor>
+          ↑↓/Tab pick · Enter confirm · y approve · n deny · f add feedback
+          {hasDiff ? " · + green / - red" : ""}
+        </Text>
       </Box>
     </Box>
   );

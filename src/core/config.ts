@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type {
-  ZCodeConfig,
+  DeepSeekCodeConfig,
   ProviderType,
   AgentName,
   ModelProfile,
@@ -16,9 +16,9 @@ import type {
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
-const DEFAULTS: ZCodeConfig = {
-  provider: "openai",
-  model: "gpt-4o",
+const DEFAULTS: DeepSeekCodeConfig = {
+  provider: "deepseek",
+  model: "deepseek-chat",
   apiKey: "",
   defaultAgent: "code",
   maxSteps: 25,
@@ -37,17 +37,21 @@ function resolveEnvRef(value: string): string {
 // ─── Config file paths ─────────────────────────────────────────────────────
 
 const CONFIG_PATHS = [
+  join(process.cwd(), ".deepseek-code.json"),
+  join(homedir(), ".config", "deepseek-code", "config.json"),
+  join(homedir(), ".deepseek-code.json"),
+  // Legacy paths for backward compatibility
   join(process.cwd(), ".zcode.json"),
   join(homedir(), ".config", "z-code", "config.json"),
   join(homedir(), ".zcode.json"),
 ];
 
-function loadConfigFile(): Partial<ZCodeConfig> {
+function loadConfigFile(): Partial<DeepSeekCodeConfig> {
   for (const path of CONFIG_PATHS) {
     if (!existsSync(path)) continue;
     try {
       const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw) as Partial<ZCodeConfig>;
+      const parsed = JSON.parse(raw) as Partial<DeepSeekCodeConfig>;
 
       // Resolve env refs in top-level apiKey
       if (typeof parsed.apiKey === "string") {
@@ -86,20 +90,19 @@ function loadConfigFile(): Partial<ZCodeConfig> {
 
 // ─── Environment variables ─────────────────────────────────────────────────
 
-function loadEnvConfig(): Partial<ZCodeConfig> {
-  const config: Partial<ZCodeConfig> = {};
+function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
+  const config: Partial<DeepSeekCodeConfig> = {};
 
-  if (process.env.ZCODE_PROVIDER) config.provider = process.env.ZCODE_PROVIDER as ProviderType;
-  if (process.env.ZCODE_MODEL) config.model = process.env.ZCODE_MODEL;
-  if (process.env.ZCODE_BASE_URL) config.baseURL = process.env.ZCODE_BASE_URL;
-  if (process.env.ZCODE_MAX_STEPS) config.maxSteps = parseInt(process.env.ZCODE_MAX_STEPS, 10);
-  if (process.env.ZCODE_AGENT) config.defaultAgent = process.env.ZCODE_AGENT as AgentName;
+  if (process.env.DEEPSEEK_PROVIDER) config.provider = process.env.DEEPSEEK_PROVIDER as ProviderType;
+  if (process.env.DEEPSEEK_MODEL) config.model = process.env.DEEPSEEK_MODEL;
+  if (process.env.DEEPSEEK_BASE_URL) config.baseURL = process.env.DEEPSEEK_BASE_URL;
+  if (process.env.DEEPSEEK_MAX_STEPS) config.maxSteps = parseInt(process.env.DEEPSEEK_MAX_STEPS, 10);
+  if (process.env.DEEPSEEK_AGENT) config.defaultAgent = process.env.DEEPSEEK_AGENT as AgentName;
 
-  // Support multiple key env vars
+  // Support multiple key env vars for convenience
   config.apiKey =
-    process.env.ZCODE_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
+    process.env.DEEPSEEK_API_KEY ||
+    process.env.ZCODE_API_KEY || // Legacy support
     "";
 
   return config;
@@ -107,9 +110,9 @@ function loadEnvConfig(): Partial<ZCodeConfig> {
 
 // ─── CLI argument parsing ──────────────────────────────────────────────────
 
-function parseCliArgs(): Partial<ZCodeConfig> & { help?: boolean; version?: boolean } {
+function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean } {
   const args = process.argv.slice(2);
-  const config: Partial<ZCodeConfig> & { help?: boolean; version?: boolean } = {};
+  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -166,15 +169,15 @@ function parseCliArgs(): Partial<ZCodeConfig> & { help?: boolean; version?: bool
 
 export function printHelp(): void {
   console.log(`
-z-code — Terminal-native AI coding agent
+DeepSeek Code — Terminal-native AI coding agent
 
-Usage: z-code [options]
+Usage: deepseek-code [options]
 
 Options:
-  -p, --provider <type>         Provider: openai, anthropic (default: openai)
-  -m, --model <name>            Model name (default: gpt-4o)
-  -k, --api-key <key>           API key (or set ZCODE_API_KEY)
-  -u, --base-url <url>          Custom API base URL (for OpenAI-compatible endpoints)
+  -m, --model <name>            Model name (default: deepseek-chat)
+                                Available: deepseek-chat, deepseek-reasoner
+  -k, --api-key <key>           API key (or set DEEPSEEK_API_KEY)
+  -u, --base-url <url>          Custom API base URL (default: https://api.deepseek.com/v1)
   -a, --agent <name>            Default agent: code, plan, review (default: code)
   --max-steps <n>               Max tool-call steps per turn (default: 25)
   --dangerously-skip-permissions  Skip permission prompts for tools
@@ -182,38 +185,31 @@ Options:
   -v, --version                 Show version
 
 Environment:
-  ZCODE_API_KEY          API key (also reads OPENAI_API_KEY, ANTHROPIC_API_KEY)
-  ZCODE_PROVIDER         Provider type
-  ZCODE_MODEL            Model name
-  ZCODE_BASE_URL         Custom base URL
+  DEEPSEEK_API_KEY        API key for DeepSeek
+  DEEPSEEK_MODEL          Model name (deepseek-chat or deepseek-reasoner)
+  DEEPSEEK_BASE_URL       Custom base URL (for proxies)
 
 Config file:
-  .zcode.json in cwd, or ~/.config/z-code/config.json
+  .deepseek-code.json in cwd, or ~/.config/deepseek-code/config.json
 
 Examples:
-  # Use OpenAI
-  z-code --provider openai --model gpt-4o
+  # Use default DeepSeek Chat
+  deepseek-code
 
-  # Use Claude
-  z-code --provider anthropic --model claude-sonnet-4-20250514
+  # Use DeepSeek Reasoner for complex reasoning tasks
+  deepseek-code --model deepseek-reasoner
 
-  # Use GLM-4 via OpenAI-compatible endpoint
-  z-code --provider openai --model glm-4 --base-url https://open.bigmodel.cn/api/v1
+  # With API key from command line
+  deepseek-code --api-key sk-xxxxx
 
-  # Use DeepSeek
-  z-code --provider openai --model deepseek-chat --base-url https://api.deepseek.com/v1
-
-  # Use Groq
-  z-code --provider openai --model llama-3.3-70b-versatile --base-url https://api.groq.com/openai/v1
-
-  # MCP servers from config (then use /mcp in the app)
-  z-code
+  # With custom endpoint (proxy)
+  deepseek-code --base-url https://your-proxy.com/v1
 `);
 }
 
 // ─── Main loader ───────────────────────────────────────────────────────────
 
-export function loadConfig(): ZCodeConfig & { help?: boolean; version?: boolean } {
+export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean } {
   const fileConfig = loadConfigFile();
   const envConfig = loadEnvConfig();
   const cliConfig = parseCliArgs();
@@ -229,5 +225,8 @@ export function loadConfig(): ZCodeConfig & { help?: boolean; version?: boolean 
   // Filter out empty strings
   if (!merged.apiKey) merged.apiKey = "";
 
-  return merged as ZCodeConfig & { help?: boolean; version?: boolean };
+  // Ensure provider is always deepseek
+  merged.provider = "deepseek";
+
+  return merged as DeepSeekCodeConfig & { help?: boolean; version?: boolean };
 }

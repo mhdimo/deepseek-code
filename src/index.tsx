@@ -1,9 +1,9 @@
-// Main entry point for z-code
+// Main entry point for DeepSeek Code
 //
 // Supports:
-//   - CLI arguments: z-code --model glm-4 --base-url https://...
-//   - Environment variables: ZCODE_API_KEY, ZCODE_MODEL, etc.
-//   - Config file: .zcode.json
+//   - CLI arguments: deepseek-code --model deepseek-reasoner
+//   - Environment variables: DEEPSEEK_API_KEY, DEEPSEEK_MODEL, etc.
+//   - Config file: .deepseek-code.json
 
 import React from "react";
 import { render } from "ink";
@@ -23,7 +23,7 @@ async function main() {
 
   // Handle --version
   if (config.version) {
-    console.log(`z-code v${VERSION}`);
+    console.log(`DeepSeek Code v${VERSION}`);
     process.exit(0);
   }
 

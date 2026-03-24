@@ -1,29 +1,29 @@
-# z-code
+# DeepSeek Code
 
-Terminal-native AI coding agent with a Claude-like UX, multi-agent workflow, and provider/MCP extensibility.
+Terminal-native AI coding agent powered by DeepSeek, with multi-agent workflow and MCP extensibility.
 
-## What z-code focuses on
+## Features
 
 - Fast terminal interaction (Ink-based TUI)
 - Multi-step coding agent loop with tool execution
-- OpenAI-compatible endpoints + Anthropic
+- DeepSeek API integration (deepseek-chat, deepseek-reasoner)
 - Model/profile switching at runtime
 - MCP server discovery/status UX in-app
 
-## Documentation index
+## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [Providers & modular adapter model](docs/PROVIDERS.md)
+- [Agents](docs/AGENTS.md)
 - [MCP usage](docs/MCP.md)
-- [Example config](.zcode.example.json)
+- [Example config](.deepseek-code.example.json)
 
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/Zellia-Keyboards/z-code.git
-cd z-code
+git clone https://github.com/your-repo/deepseek-code.git
+cd deepseek-code
 bun install
 ```
 
@@ -43,53 +43,42 @@ bun run build
 
 ## Quick configuration
 
-You can configure by env vars and/or `.zcode.json`.
+You can configure via environment variables or `.deepseek-code.json`.
 
 ### Environment variables
 
 ```bash
-export ZCODE_PROVIDER="openai"      # openai | anthropic
-export ZCODE_MODEL="gpt-4o"
-export ZCODE_API_KEY="..."
-
-# Optional OpenAI-compatible endpoint override
-export ZCODE_BASE_URL="https://api.z.ai/api/coding/paas/v4"
+export DEEPSEEK_API_KEY="..."
+export DEEPSEEK_MODEL="deepseek-chat"  # or deepseek-reasoner
+export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"  # optional, for proxies
 ```
 
-### .zcode.json
+### .deepseek-code.json
 
-Copy [.zcode.example.json](.zcode.example.json) and edit values.
+Copy [.deepseek-code.example.json](.deepseek-code.example.json) and edit values.
 
 Supports:
 
-- base provider/model/key
+- base model/key
 - named `profiles`
 - `mcpServers`
 
 ---
 
-## Providers
+## Available Models
 
-z-code currently supports provider types:
-
-- `openai` (used as **OpenAI-compatible** adapter)
-- `anthropic`
-
-Using `openai` + `baseURL` works for many vendors (Z.AI/GLM, DeepSeek, Groq, Together, Mistral, etc).
-
-See full details in [docs/PROVIDERS.md](docs/PROVIDERS.md).
+- `deepseek-chat` - General-purpose coding assistant (default)
+- `deepseek-reasoner` - Advanced reasoning for complex tasks
 
 ---
 
 ## MCP
 
-Current MCP scope in z-code:
+Current MCP scope in DeepSeek Code:
 
-- Configurable `mcpServers` in `.zcode.json`
+- Configurable `mcpServers` in `.deepseek-code.json`
 - `/mcp` command for visibility and toggling
 - MCP status shown in UI
-
-Protocol-level MCP tool execution is the next integration phase.
 
 See [docs/MCP.md](docs/MCP.md) for examples and roadmap.
 

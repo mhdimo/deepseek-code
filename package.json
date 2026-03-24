@@ -1,7 +1,7 @@
 {
-  "name": "z-code",
+  "name": "deepseek-code",
   "version": "0.1.0",
-  "description": "Terminal-native AI coding agent",
+  "description": "Terminal-native AI coding agent powered by DeepSeek",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "bin": {
-    "z-code": "./dist/index.js"
+    "deepseek-code": "./dist/index.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -23,9 +23,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.46",
     "@ai-sdk/openai": "^3.0.31",
-    "@anthropic-ai/sdk": "^0.78.0",
     "ai": "^6.0.97",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",

@@ -49,24 +49,20 @@ export class Agent {
   /** Abort the current generation */
   abort(): void {
     this.abortController?.abort();
-    this.abortController = null;
   }
 
   /**
    * Run the agent with a user message and history.
    * Returns an async generator that yields AgentEvents for the TUI.
-   *
-   * @param thinkingBudget  If > 0, enable extended thinking with this token budget.
-   *                        Only effective for Anthropic models.
    */
   async *run(
     userMessage: string,
     history: Message[],
     workingDir: string,
     requestPermission?: PermissionCallback,
-    thinkingBudget?: number,
   ): AsyncGenerator<AgentEvent> {
-    this.abortController = new AbortController();
+    const runAbortController = new AbortController();
+    this.abortController = runAbortController;
 
     // Create tools based on agent permissions
     const tools = createTools(workingDir, this.config.permissions, requestPermission);
@@ -84,7 +80,7 @@ export class Agent {
 
     try {
       for (let step = 0; step < maxSteps; step++) {
-        if (this.abortController.signal.aborted) break;
+        if (runAbortController.signal.aborted) break;
 
         // Track tool calls and results for this step
         const stepToolCalls: ToolCallInfo[] = [];
@@ -100,23 +96,14 @@ export class Agent {
           tools: hasTools ? tools : undefined,
           temperature: this.config.temperature,
           maxTokens: this.config.maxTokens,
-          abortSignal: this.abortController.signal,
+          abortSignal: runAbortController.signal,
         };
-
-        // Enable extended thinking for Anthropic if budget is set
-        if (thinkingBudget && thinkingBudget > 0) {
-          streamOptions.providerOptions = {
-            anthropic: {
-              thinking: { type: "enabled", budgetTokens: thinkingBudget },
-            },
-          };
-        }
 
         const result = await streamText(streamOptions);
 
         // Stream events from this step
         for await (const event of result.fullStream) {
-          if (this.abortController.signal.aborted) break;
+          if (runAbortController.signal.aborted) break;
 
           const eventType = (event as any).type as string;
 
@@ -246,7 +233,9 @@ export class Agent {
         yield { type: "error", error: (error as Error).message };
       }
     } finally {
-      this.abortController = null;
+      if (this.abortController === runAbortController) {
+        this.abortController = null;
+      }
     }
   }
 }

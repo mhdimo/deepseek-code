@@ -1,24 +1,25 @@
-// Welcome screen styled like Claude-like UI with Zcode branding
+// Welcome screen with DeepSeek Code branding
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { basename } from "path";
 
+// DeepSeek-style animated mascot
 const MASCOT_FRAMES = [
   {
-    top: "▐▛███▜▌",
-    mid: "▝▜█████▛▘",
-    bot: "  ▘▘ ▝▝",
+    top: "    ▄▄▄▄▄▄▄    ",
+    mid: "  ▄▀░░░░░░░▀▄  ",
+    bot: " █░░▄░░░░▄░░█  ",
   },
   {
-    top: "▐▛███▜▌",
-    mid: "▝▜█████▛▘",
-    bot: "  ▝▝ ▘▘",
+    top: "    ▄▄▄▄▄▄▄    ",
+    mid: "  ▄▀░░░░░░░▀▄  ",
+    bot: " █░░▀░░░░▀░░█  ",
   },
   {
-    top: "▐▛███▜▌",
-    mid: "▝▜█████▛▘",
-    bot: "  ▘▝ ▝▘",
+    top: "    ▄▄▄▄▄▄▄    ",
+    mid: "  ▄▀░░░░░░░▀▄  ",
+    bot: " █░░░░██░░░░█  ",
   },
 ] as const;
 
@@ -42,7 +43,7 @@ export default function WelcomeScreen({
   useEffect(() => {
     const timer = setInterval(() => {
       setFrame((prev) => (prev + 1) % MASCOT_FRAMES.length);
-    }, 260);
+    }, 400);
     return () => clearInterval(timer);
   }, []);
 
@@ -60,29 +61,29 @@ export default function WelcomeScreen({
   return (
     <Box flexDirection="column" marginLeft={1} marginBottom={1}>
       <Box>
-        <Text color="white"> {mascot.top}</Text>
-        <Text>   </Text>
-        <Text color="white">Zcode</Text>
-        <Text dimColor> v{version}</Text>
-      </Box>
-
-      <Box>
-        <Text color="white">{mascot.mid}</Text>
-        <Text>  </Text>
-        <Text dimColor>{model}</Text>
-        <Text dimColor> · </Text>
-        <Text dimColor>API Usage Billing</Text>
-      </Box>
-
-      <Box>
-        <Text color="white">{mascot.bot}</Text>
-        <Text>    </Text>
-        <Text dimColor>{cwdDisplay}</Text>
+        <Box flexDirection="column">
+          <Text color="blue">{mascot.top}</Text>
+          <Text color="blue">{mascot.mid}</Text>
+          <Text color="blue">{mascot.bot}</Text>
+        </Box>
+        <Box flexDirection="column" marginLeft={2}>
+          <Text>
+            <Text color="cyan" bold>DeepSeek</Text>
+            <Text color="blue" bold> Code</Text>
+            <Text dimColor> v{version}</Text>
+          </Text>
+          <Text dimColor>{model}</Text>
+        </Box>
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>/setup for quick provider/model/api-key setup</Text>
-        <Text dimColor>  ·  provider: {providerType}</Text>
+        <Text dimColor>📁 {cwdDisplay}</Text>
+      </Box>
+
+      <Box marginTop={1}>
+        <Text dimColor>/setup for quick API key setup</Text>
+        <Text dimColor>  ·  </Text>
+        <Text dimColor>provider: {providerType}</Text>
       </Box>
     </Box>
   );

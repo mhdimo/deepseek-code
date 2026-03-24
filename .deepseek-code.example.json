@@ -1,0 +1,31 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "apiKey": "env:DEEPSEEK_API_KEY",
+  "defaultAgent": "code",
+  "maxSteps": 25,
+  "profiles": {
+    "chat": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "apiKey": "env:DEEPSEEK_API_KEY"
+    },
+    "reasoner": {
+      "provider": "deepseek",
+      "model": "deepseek-reasoner",
+      "apiKey": "env:DEEPSEEK_API_KEY"
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "enabled": true
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git"],
+      "enabled": false
+    }
+  }
+}

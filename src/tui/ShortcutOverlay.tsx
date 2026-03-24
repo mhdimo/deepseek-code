@@ -23,7 +23,7 @@ export default function ShortcutOverlay({
       <Text>  / + ↑↓ + Enter    Open and navigate command picker</Text>
       <Text>  Shift+Tab         Cycle thinking mode</Text>
       <Text>  Esc               Interrupt generation / close picker</Text>
-      <Text>  Ctrl+C            Exit zcode</Text>
+      <Text>  Ctrl+C            Exit DeepSeek Code</Text>
       <Text dimColor> </Text>
       <Text>Thinking mode: <Text color="magenta">{thinkingMode}</Text></Text>
       <Text>MCP servers: <Text color="cyan">{mcpEnabledCount}/{mcpCount}</Text> enabled</Text>

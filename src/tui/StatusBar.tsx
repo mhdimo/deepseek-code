@@ -11,6 +11,8 @@ interface StatusBarProps {
   thinkingMode?: ThinkingMode;
   mcpEnabledCount?: number;
   queueCount?: number;
+  currentFile?: string | null;
+  awaitingPermission?: boolean;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -26,10 +28,19 @@ export default function StatusBar({
   thinkingMode = "off",
   mcpEnabledCount = 0,
   queueCount = 0,
+  currentFile = null,
+  awaitingPermission = false,
 }: StatusBarProps) {
   const cols = process.stdout.columns || 80;
   const separator = "─".repeat(cols);
   const agentColor = AGENT_COLORS[agentName] || "cyan";
+
+  // Shorten file path for display
+  const displayFile = currentFile
+    ? currentFile.length > 40
+      ? "…" + currentFile.slice(-37)
+      : currentFile
+    : null;
 
   return (
     <Box flexDirection="column">
@@ -46,9 +57,16 @@ export default function StatusBar({
         {/* Right side: context */}
         <Box>
           <Text dimColor>
-            <Text color={agentColor}>⧉</Text> In {agentName} · {model}
-            {thinkingMode !== "off" ? ` · 💭 ${thinkingMode}` : ""}
+            <Text color={agentColor}>⧉</Text> In {agentName}
+            {displayFile ? ` · 📄 ${displayFile}` : ""}
+            {thinkingMode === "whale" ? (
+              <>
+                {" · "}
+                <Text backgroundColor="blue" color="white" bold> 🐋 WHALETHINK </Text>
+              </>
+            ) : ""}
             {mcpEnabledCount > 0 ? ` · MCP ${mcpEnabledCount}` : ""}
+            {awaitingPermission ? " · ⚡ permission" : ""}
             {queueCount > 0 ? ` · queue ${queueCount}` : ""}
             {tokenCount > 0 ? ` · ${tokenCount > 1000 ? `${(tokenCount / 1000).toFixed(1)}k` : tokenCount} tok` : ""}
           </Text>

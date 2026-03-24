@@ -49,17 +49,19 @@ export default function ChatPanel({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {/* Welcome screen (live-rendered for animation) */}
-      <Box marginBottom={1}>
-        <WelcomeScreen
-          version={version}
-          model={model}
-          workingDirectory={workingDirectory}
-          agentName={agentName}
-          providerType={providerType}
-          baseURL={baseURL}
-        />
-      </Box>
+      {/* Welcome screen (only show when no messages) */}
+      {messages.length === 0 && (
+        <Box marginBottom={1}>
+          <WelcomeScreen
+            version={version}
+            model={model}
+            workingDirectory={workingDirectory}
+            agentName={agentName}
+            providerType={providerType}
+            baseURL={baseURL}
+          />
+        </Box>
+      )}
 
       {/* Static items */}
       <Static items={items}>

@@ -21,17 +21,16 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/help",    description: "Show help & keybindings", category: "core", aliases: ["/?", "/shortcuts"] },
   { name: "/shortcuts", description: "Toggle shortcuts/options panel", category: "core", aliases: ["/?"] },
   { name: "/think",   description: "Set thinking mode (off/light/deep/max)", usage: "/think ", category: "core", aliases: ["/reason"] },
-  { name: "/setup",   description: "Quick setup provider/model/api key", usage: "/setup ", category: "model" },
+  { name: "/setup",   description: "Quick setup API key", usage: "/setup ", category: "model" },
   { name: "/model",   description: "Show or switch model", usage: "/model ", category: "model" },
-  { name: "/baseurl", description: "Set or clear custom endpoint", usage: "/baseurl ", category: "model", aliases: ["/endpoint"] },
   { name: "/models",  description: "List configured profiles", category: "model" },
-  { name: "/apikey",  description: "Set API key for current provider", usage: "/apikey ", category: "model", aliases: ["/key"] },
+  { name: "/apikey",  description: "Set API key", usage: "/apikey ", category: "model", aliases: ["/key"] },
   { name: "/agent",   description: "Switch agent (code / plan / review)", usage: "/agent ", category: "agent" },
   { name: "/tools",   description: "List available tools for current agent", category: "agent" },
   { name: "/mcp",     description: "Show MCP connections and toggle servers", usage: "/mcp ", category: "mcp", aliases: ["/servers"] },
   { name: "/clear",   description: "Clear conversation history", category: "session" },
   { name: "/compact", description: "Summarize conversation to save context", category: "session" },
-  { name: "/exit",    description: "Exit z-code", category: "core", aliases: ["/quit"] },
+  { name: "/exit",    description: "Exit DeepSeek Code", category: "core", aliases: ["/quit"] },
 ];
 
 function rankCommand(cmd: CommandDef, query: string): number {

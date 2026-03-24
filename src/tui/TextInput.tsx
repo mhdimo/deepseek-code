@@ -11,6 +11,8 @@ interface InputProps {
   onSubmit: () => void;
   isLoading: boolean;
   agentName: string;
+  isBlocked?: boolean;
+  waitingPermission?: boolean;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -26,6 +28,8 @@ export default function Input({
   onSubmit,
   isLoading,
   agentName,
+  isBlocked = false,
+  waitingPermission = false,
 }: InputProps) {
   const color = AGENT_COLORS[agentName] || "cyan";
 
@@ -41,12 +45,14 @@ export default function Input({
           onChange={onChange}
           onSubmit={() => onSubmit()}
           placeholder={isLoading ? "Type and press Enter to queue next message..." : 'Try "create a util logging.py that..."'}
-          focus={true}
+          focus={!isBlocked}
         />
       </Box>
       {isLoading && (
         <Text dimColor italic>
-          Running response… press Esc to interrupt.
+          {waitingPermission
+            ? "Waiting for permission approval… Enter confirms selected action, Esc cancels."
+            : "Running response… press Esc to interrupt."}
         </Text>
       )}
     </Box>

@@ -15,11 +15,11 @@ const AGENTS: Record<AgentName, AgentConfig> = {
     name: "code",
     displayName: "Code",
     description: "Full-access agent for development — reads, writes, executes",
-    systemPrompt: `You are z-code, an expert AI coding agent running in the user's terminal.
+    systemPrompt: `You are DeepSeek Code, an expert AI coding agent running in the user's terminal.
 
 You have access to the following tools:
 - Read: Read file contents
-- Write: Create or overwrite files  
+- Write: Create or overwrite files
 - Edit: Edit files by replacing exact strings
 - Bash: Execute shell commands
 - Glob: Find files by pattern
@@ -51,7 +51,7 @@ Guidelines:
     name: "plan",
     displayName: "Plan",
     description: "Read-only agent for analysis, exploration, and planning",
-    systemPrompt: `You are z-code's planning agent. You explore and analyze codebases.
+    systemPrompt: `You are DeepSeek Code's planning agent. You explore and analyze codebases.
 
 You have access to read-only tools:
 - Read: Read file contents
@@ -82,7 +82,7 @@ When planning changes, be specific about which files need editing and what the c
     name: "review",
     displayName: "Review",
     description: "Code review agent — reads code and provides detailed feedback",
-    systemPrompt: `You are z-code's code review agent. You provide thorough code reviews.
+    systemPrompt: `You are DeepSeek Code's code review agent. You provide thorough code reviews.
 
 You have access to read-only tools:
 - Read: Read file contents

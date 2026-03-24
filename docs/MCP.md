@@ -1,17 +1,17 @@
-# MCP in z-code
+# MCP in DeepSeek Code
 
-This document explains how MCP works in z-code today, how to configure it, and what is planned.
+This document explains how MCP works in DeepSeek Code today, how to configure it, and what is planned.
 
 ## Current state
 
-z-code currently provides:
+DeepSeek Code currently provides:
 
-- MCP server configuration in `.zcode.json`
+- MCP server configuration in `.deepseek-code.json`
 - MCP visibility in the TUI (`/mcp`)
 - MCP runtime toggling in the TUI (`/mcp enable <name>`, `/mcp disable <name>`)
 - MCP status in the shortcut panel and status bar
 
-z-code does **not yet** execute MCP protocol calls against servers in the agent loop.
+DeepSeek Code does **not yet** execute MCP protocol calls against servers in the agent loop.
 
 In short: **configuration + UX are implemented, full tool-bridging is the next step**.
 
@@ -19,13 +19,13 @@ In short: **configuration + UX are implemented, full tool-bridging is the next s
 
 ## Configuration
 
-Add `mcpServers` in `.zcode.json`:
+Add `mcpServers` in `.deepseek-code.json`:
 
 ```json
 {
-  "provider": "openai",
-  "model": "gpt-4o",
-  "apiKey": "env:OPENAI_API_KEY",
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "apiKey": "env:DEEPSEEK_API_KEY",
   "mcpServers": {
     "filesystem": {
       "command": "npx",
@@ -69,4 +69,4 @@ These commands update in-memory session state.
 4. Route tool calls through the manager and stream results.
 5. Persist enabled/disabled state to session file.
 
-This keeps z-code modular and compatible with any MCP server ecosystem.
+This keeps DeepSeek Code modular and compatible with any MCP server ecosystem.

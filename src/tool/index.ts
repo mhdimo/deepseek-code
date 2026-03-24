@@ -1,12 +1,12 @@
 // Tool definitions — AI SDK native tools for the agentic loop
 //
-// Returns tools as `Record<string, any>` to avoid Zod v4 ↔ AI SDK v6
-// type inference issues. The tools work correctly at runtime.
+// Uses explicit JSON Schema for parameters instead of Zod to ensure
+// compatibility with DeepSeek's OpenAI-compatible API.
 
-import { z } from "zod";
 import { readFile, writeFile, readdir, mkdir } from "fs/promises";
 import { spawn } from "child_process";
 import { resolve, relative, dirname } from "path";
+import { jsonSchema } from "ai";
 import type { PermissionRuleset } from "../core/types.js";
 
 function previewTextBlock(text: string, maxLines = 16, maxChars = 900): string {
@@ -62,7 +62,19 @@ function buildSimpleDiffPreview(oldText: string, newText: string, maxLines = 40)
 export type PermissionCallback = (
   toolName: string,
   description: string,
-) => Promise<boolean>;
+) => Promise<PermissionDecision>;
+
+export interface PermissionDecision {
+  approved: boolean;
+  feedback?: string;
+}
+
+function asAddedLines(text: string, maxLines = 40): string {
+  const lines = text.split("\n");
+  const clipped = lines.slice(0, maxLines).map((l) => `+${l}`);
+  if (lines.length > maxLines) clipped.push(`... (${lines.length - maxLines} more lines)`);
+  return clipped.join("\n");
+}
 
 // ─── Tool factory ───────────────────────────────────────────────────────────
 
@@ -79,8 +91,8 @@ export function createTools(
     return p.startsWith("/") ? p : resolve(cwd, p);
   };
 
-  const checkPermission = async (toolName: string, desc: string): Promise<boolean> => {
-    if (!requestPermission) return true;
+  const checkPermission = async (toolName: string, desc: string): Promise<PermissionDecision> => {
+    if (!requestPermission) return { approved: true };
     return requestPermission(toolName, desc);
   };
 
@@ -90,10 +102,24 @@ export function createTools(
     description:
       "Read the contents of a file. Returns lines with line numbers. " +
       "Use offset and limit for large files.",
-    parameters: z.object({
-      file_path: z.string().describe("Path to the file (relative to cwd or absolute)"),
-      offset: z.number().optional().describe("Start line (0-indexed)"),
-      limit: z.number().optional().describe("Max number of lines to read"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        file_path: {
+          type: "string",
+          description: "Path to the file (relative to cwd or absolute)",
+        },
+        offset: {
+          type: "number",
+          description: "Start line (0-indexed)",
+        },
+        limit: {
+          type: "number",
+          description: "Max number of lines to read",
+        },
+      },
+      required: ["file_path"],
+      additionalProperties: false,
     }),
     execute: async (params: Record<string, any>) => {
       if (!permissions.allowRead) return "❌ Read permission denied for this agent.";
@@ -126,9 +152,20 @@ export function createTools(
     description:
       "Create or overwrite a file with the given content. " +
       "Creates parent directories automatically.",
-    parameters: z.object({
-      file_path: z.string().describe("Path to the file"),
-      content: z.string().describe("Full file content to write"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        file_path: {
+          type: "string",
+          description: "Path to the file",
+        },
+        content: {
+          type: "string",
+          description: "Full file content to write",
+        },
+      },
+      required: ["file_path", "content"],
+      additionalProperties: false,
     }),
     execute: async (params: Record<string, any>) => {
       if (!permissions.allowWrite) return "❌ Write permission denied for this agent.";
@@ -157,16 +194,23 @@ export function createTools(
           : previewTextBlock(content, 20, 1200),
       ].join("\n");
 
-      const approved = await checkPermission("Write", writePermissionPreview);
-      if (!approved) return "⚠️ Permission denied by user.";
+      const decision = await checkPermission("Write", writePermissionPreview);
+      if (!decision.approved) {
+        return decision.feedback
+          ? `⚠️ Permission denied by user: ${decision.feedback}`
+          : "⚠️ Permission denied by user.";
+      }
       try {
         await mkdir(dirname(fullPath), { recursive: true });
         await writeFile(fullPath, content, "utf-8");
+        const diffPreview = exists
+          ? buildSimpleDiffPreview(previousContent, content, 80)
+          : asAddedLines(content, 80);
         return [
           `✅ Wrote ${relative(cwd, fullPath)} (${content.split("\n").length} lines)`,
           "",
-          "Preview:",
-          previewTextBlock(content),
+          exists ? "Diff preview:" : "Added lines:",
+          previewRawBlock(diffPreview, 80, 2500),
         ].join("\n");
       } catch (error) {
         return `❌ ${(error as Error).message}`;
@@ -180,10 +224,24 @@ export function createTools(
     description:
       "Edit a file by replacing an exact string occurrence. " +
       "Provide enough context in old_string to uniquely match.",
-    parameters: z.object({
-      file_path: z.string().describe("Path to the file"),
-      old_string: z.string().describe("Exact string to find and replace"),
-      new_string: z.string().describe("Replacement string"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        file_path: {
+          type: "string",
+          description: "Path to the file",
+        },
+        old_string: {
+          type: "string",
+          description: "Exact string to find and replace",
+        },
+        new_string: {
+          type: "string",
+          description: "Replacement string",
+        },
+      },
+      required: ["file_path", "old_string", "new_string"],
+      additionalProperties: false,
     }),
     execute: async (params: Record<string, any>) => {
       if (!permissions.allowWrite) return "❌ Write permission denied for this agent.";
@@ -199,8 +257,12 @@ export function createTools(
         "Diff preview:",
         previewRawBlock(buildSimpleDiffPreview(oldString, newString), 60, 1200),
       ].join("\n");
-      const approved = await checkPermission("Edit", editPermissionPreview);
-      if (!approved) return "⚠️ Permission denied by user.";
+      const decision = await checkPermission("Edit", editPermissionPreview);
+      if (!decision.approved) {
+        return decision.feedback
+          ? `⚠️ Permission denied by user: ${decision.feedback}`
+          : "⚠️ Permission denied by user.";
+      }
       try {
         const content = await readFile(fullPath, "utf-8");
         if (!oldString) return `❌ old_string is empty or missing.`;
@@ -213,14 +275,12 @@ export function createTools(
         }
         const newContent = content.replace(oldString, newString);
         await writeFile(fullPath, newContent, "utf-8");
+        const diffPreview = buildSimpleDiffPreview(oldString, newString, 80);
         return [
           `✅ Edited ${relative(cwd, fullPath)}`,
           "",
-          "Replacement preview:",
-          "-- old --",
-          previewTextBlock(oldString, 8, 350),
-          "-- new --",
-          previewTextBlock(newString, 8, 350),
+          "Diff preview:",
+          previewRawBlock(diffPreview, 80, 2500),
         ].join("\n");
       } catch (error) {
         return `❌ ${(error as Error).message}`;
@@ -234,14 +294,29 @@ export function createTools(
     description:
       "Execute a shell command. Use for running builds, tests, git, installs, etc. " +
       "Commands run in the working directory. Timeout default is 120s.",
-    parameters: z.object({
-      command: z.string().describe("Shell command to execute"),
-      timeout: z.number().optional().describe("Timeout in ms (default: 120000)"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Shell command to execute",
+        },
+        timeout: {
+          type: "number",
+          description: "Timeout in ms (default: 120000)",
+        },
+      },
+      required: ["command"],
+      additionalProperties: false,
     }),
     execute: async (params: { command: string; timeout?: number }) => {
       if (!permissions.allowExecute) return "❌ Execute permission denied for this agent.";
-      const approved = await checkPermission("Bash", params.command);
-      if (!approved) return "⚠️ Permission denied by user.";
+      const decision = await checkPermission("Bash", params.command);
+      if (!decision.approved) {
+        return decision.feedback
+          ? `⚠️ Permission denied by user: ${decision.feedback}`
+          : "⚠️ Permission denied by user.";
+      }
       const timeout = params.timeout ?? 120_000;
 
       return new Promise<string>((resolvePromise) => {
@@ -295,9 +370,20 @@ export function createTools(
     description:
       "Find files matching a glob-like pattern. " +
       "Returns matching file paths relative to the working directory.",
-    parameters: z.object({
-      pattern: z.string().describe("File name or extension to search for (e.g. '*.ts', 'package.json')"),
-      path: z.string().optional().describe("Directory to search in (default: cwd)"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "File name or extension to search for (e.g. '*.ts', 'package.json')",
+        },
+        path: {
+          type: "string",
+          description: "Directory to search in (default: cwd)",
+        },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
     }),
     execute: async (params: { pattern: string; path?: string }) => {
       if (!permissions.allowRead) return "❌ Read permission denied.";
@@ -329,10 +415,24 @@ export function createTools(
   const Grep = {
     description:
       "Search for a text pattern in files. Returns matching lines with file paths and line numbers.",
-    parameters: z.object({
-      pattern: z.string().describe("Regex pattern to search for"),
-      path: z.string().optional().describe("Directory or file to search in (default: cwd)"),
-      include: z.string().optional().describe("File glob to filter (e.g. '*.ts')"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Regex pattern to search for",
+        },
+        path: {
+          type: "string",
+          description: "Directory or file to search in (default: cwd)",
+        },
+        include: {
+          type: "string",
+          description: "File glob to filter (e.g. '*.ts')",
+        },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
     }),
     execute: async (params: { pattern: string; path?: string; include?: string }) => {
       if (!permissions.allowRead) return "❌ Read permission denied.";
@@ -369,8 +469,16 @@ export function createTools(
   const LS = {
     description:
       "List the contents of a directory. Shows files and subdirectories with types.",
-    parameters: z.object({
-      path: z.string().optional().describe("Directory path (default: cwd)"),
+    inputSchema: jsonSchema({
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Directory path (default: cwd)",
+        },
+      },
+      required: [],
+      additionalProperties: false,
     }),
     execute: async (params: Record<string, any>) => {
       if (!permissions.allowRead) return "❌ Read permission denied.";

@@ -25,76 +25,14 @@ import type {
   AgentName,
   ProviderConfig,
   ProviderType,
-  ZCodeConfig,
+  DeepSeekCodeConfig,
   ThinkingMode,
   MCPServerConfig,
 } from "../core/types.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
-const THINKING_CYCLE: ThinkingMode[] = ["off", "light", "deep", "max"];
-const THINKING_BUDGETS: Record<ThinkingMode, number> = {
-  off:   0,
-  light: 10_000,
-  deep:  32_000,
-  max:   128_000,
-};
 
-const OPENAI_COMPAT_ENDPOINT_HINTS: Array<{ test: RegExp; baseURL: string; label: string }> = [
-  { test: /^glm-/i, baseURL: "https://api.z.ai/api/coding/paas/v4", label: "Z.AI (GLM)" },
-  { test: /^deepseek/i, baseURL: "https://api.deepseek.com/v1", label: "DeepSeek" },
-  { test: /llama|mixtral|qwen|gemma/i, baseURL: "https://api.groq.com/openai/v1", label: "Groq/Together-style endpoint" },
-];
-
-interface QuickSetupPreset {
-  aliases: string[];
-  provider: ProviderType;
-  model: string;
-  baseURL?: string;
-  label: string;
-}
-
-const QUICK_SETUP_PRESETS: QuickSetupPreset[] = [
-  {
-    aliases: ["openai", "gpt", "gpt4o", "gpt-4o"],
-    provider: "openai",
-    model: "gpt-4o",
-    label: "OpenAI",
-  },
-  {
-    aliases: ["anthropic", "claude"],
-    provider: "anthropic",
-    model: "claude-sonnet-4-20250514",
-    label: "Anthropic",
-  },
-  {
-    aliases: ["glm", "zai", "z.ai"],
-    provider: "openai",
-    model: "glm-4.7",
-    baseURL: "https://api.z.ai/api/coding/paas/v4",
-    label: "Z.AI (GLM)",
-  },
-  {
-    aliases: ["deepseek", "ds"],
-    provider: "openai",
-    model: "deepseek-chat",
-    baseURL: "https://api.deepseek.com/v1",
-    label: "DeepSeek",
-  },
-  {
-    aliases: ["groq"],
-    provider: "openai",
-    model: "llama-3.3-70b-versatile",
-    baseURL: "https://api.groq.com/openai/v1",
-    label: "Groq",
-  },
-];
-
-interface AppProps {
-  config: ZCodeConfig;
-  workingDirectory: string;
-}
-
-export default function App({ config, workingDirectory }: AppProps) {
+export default function App({ config, workingDirectory }: { config: DeepSeekCodeConfig; workingDirectory: string }) {
   const { exit } = useApp();
 
   // ── State ─────────────────────────────────────────────────────────────
@@ -105,10 +43,11 @@ export default function App({ config, workingDirectory }: AppProps) {
   const [streamingToolUse, setStreamingToolUse] = useState<ToolUseBlock[]>([]);
   const [currentAgent, setCurrentAgent] = useState<AgentName>(config.defaultAgent || "code");
   const [tokenCount, setTokenCount] = useState(0);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<{
     toolName: string;
     description: string;
-    resolve: (approved: boolean) => void;
+    resolve: (decision: { approved: boolean; feedback?: string }) => void;
   } | null>(null);
 
   // ── Runtime-mutable provider state ────────────────────────────────────
@@ -192,7 +131,10 @@ export default function App({ config, workingDirectory }: AppProps) {
 
     // Escape: interrupt generation OR dismiss picker
     if (key.escape) {
-      if (isLoading) {
+      if (pendingPermission) {
+        pendingPermission.resolve({ approved: false, feedback: "Cancelled with Esc" });
+        setPendingPermission(null);
+      } else if (isLoading) {
         agentRef.current?.abort();
         setIsLoading(false);
         setStreamingText("");
@@ -241,21 +183,17 @@ export default function App({ config, workingDirectory }: AppProps) {
       setCommandPickerIndex(0);
     }
 
-    // Shift+Tab: cycle thinking mode  off → light → deep → max → off
+    // Shift+Tab: toggle whalethink mode
     if (key.shift && key.tab && !isLoading) {
-      setThinkingMode((prev) => {
-        const idx = THINKING_CYCLE.indexOf(prev);
-        const next = THINKING_CYCLE[(idx + 1) % THINKING_CYCLE.length]!;
-        return next;
-      });
+      setThinkingMode((prev) => prev === "off" ? "whale" : "off");
       return;
     }
   });
 
   // ── Permission callback ───────────────────────────────────────────────
   const requestPermission = useCallback(
-    (toolName: string, description: string): Promise<boolean> => {
-      if (config.dangerouslySkipPermissions) return Promise.resolve(true);
+    (toolName: string, description: string): Promise<{ approved: boolean; feedback?: string }> => {
+      if (config.dangerouslySkipPermissions) return Promise.resolve({ approved: true });
       return new Promise((resolve) => {
         setPendingPermission({ toolName, description, resolve });
       });
@@ -305,6 +243,11 @@ export default function App({ config, workingDirectory }: AppProps) {
             };
             toolUse = [...toolUse, block];
             setStreamingToolUse(toolUse);
+            // Track current file for status bar
+            const filePath = event.args?.file_path as string | undefined;
+            if (filePath) {
+              setCurrentFile(filePath);
+            }
             break;
           }
 
@@ -324,6 +267,8 @@ export default function App({ config, workingDirectory }: AppProps) {
                 : t,
             );
             setStreamingToolUse(toolUse);
+            // Clear current file when tool completes
+            setCurrentFile(null);
             // Reset streaming text for next step
             text = "";
             thinking = "";
@@ -398,13 +343,10 @@ export default function App({ config, workingDirectory }: AppProps) {
             content:
               "⚠ No API key configured.\n\n" +
               "Set one of:\n" +
-              "  /setup <preset> <your-key>        (quick setup)\n" +
-              "  /setup custom <provider> <model> <your-key> [baseurl]\n" +
-              "  /apikey <your-key>              (in-app)\n" +
-              "  export ZCODE_API_KEY=your-key    (env)\n" +
-              "  export OPENAI_API_KEY=your-key   (env)\n" +
-              "  export ANTHROPIC_API_KEY=your-key (env)\n\n" +
-              "Or switch to a model with a configured key: /model <name>",
+              "  /setup <your-key>              (quick setup)\n" +
+              "  /apikey <your-key>             (in-app)\n" +
+              "  export DEEPSEEK_API_KEY=your-key    (env)\n\n" +
+              "Get your key at: https://platform.deepseek.com/api_keys",
             timestamp: Date.now(),
           },
         ]);
@@ -417,42 +359,22 @@ export default function App({ config, workingDirectory }: AppProps) {
         const agent = agentManager.createAgent(currentAgent, providerConfig);
         agentRef.current = agent;
 
-        // Thinking budget comes from the explicit mode setting only
-        const thinkingBudget = THINKING_BUDGETS[thinkingMode];
-
         const events = agent.run(
           trimmedInput,
           messages,
           workingDirectory,
           requestPermission,
-          thinkingBudget,
         );
 
         await processAgentStream(events);
       } catch (error) {
         const raw = (error as Error).message || String(error);
-        const hint = inferBaseURLForModel(activeModel);
-        const looksLikeWrongEndpoint =
-          activeProvider === "openai" &&
-          !activeBaseURL &&
-          !!hint &&
-          /incorrect api key provided|invalid api key/i.test(raw);
-
-        const friendly = looksLikeWrongEndpoint
-          ? [
-              raw,
-              "",
-              `Tip: model '${activeModel}' likely needs a custom OpenAI-compatible endpoint.`,
-              `Try: /baseurl ${hint.baseURL}`,
-              `Then run again.`,
-            ].join("\n")
-          : `Error: ${raw}`;
 
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: friendly,
+            content: `Error: ${raw}`,
             timestamp: Date.now(),
             isError: true,
           },
@@ -518,7 +440,7 @@ export default function App({ config, workingDirectory }: AppProps) {
                 "  /clear               Clear conversation history",
                 "  /compact             Summarize conversation to save context",
                 "  /tools               List available tools",
-                "  /exit                Exit z-code",
+                "  /exit                Exit DeepSeek Code",
                 "",
                 "━━━ Agents ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 ...agents.map((a) =>
@@ -546,13 +468,11 @@ export default function App({ config, workingDirectory }: AppProps) {
                 "  Esc                Interrupt generation / dismiss picker",
                 "",
                 "━━━ Thinking ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                `  Active mode: ${thinkingMode === "off" ? "off (disabled)" : thinkingMode}`,
-                "  Shift+Tab        Cycle: off → light → deep → max → off",
+                `  Active mode: ${thinkingMode === "off" ? "off (disabled)" : "🐋 whalethink"}`,
+                "  Shift+Tab        Toggle whalethink on/off",
                 "  /think           Same via command",
-                "  /think off       Disable",
-                "  /think light     10k token budget",
-                "  /think deep      32k token budget",
-                "  /think max       128k token budget",
+                "  /think off       Disable extended thinking",
+                "  /think whale     Enable whalethink (deep reasoning)",
                 "",
                 "━━━ MCP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 `  Servers configured: ${mcpCount}`,
@@ -575,23 +495,17 @@ export default function App({ config, workingDirectory }: AppProps) {
               {
                 role: "system",
                 content: [
-                  "Quick setup (provider + model + API key in one command)",
+                  "Quick setup for DeepSeek Code",
                   "",
-                  "Presets:",
-                  "  /setup openai <api-key>",
-                  "  /setup anthropic <api-key>",
-                  "  /setup glm <api-key>",
-                  "  /setup deepseek <api-key>",
-                  "  /setup groq <api-key>",
+                  "Usage:",
+                  "  /setup <api-key>           Use deepseek-chat (default)",
+                  "  /setup <api-key> reasoner  Use deepseek-reasoner",
                   "",
-                  "Optional model override:",
-                  "  /setup openai <api-key> gpt-4.1-mini",
-                  "",
-                  "Custom provider/model:",
-                  "  /setup custom <provider> <model> <api-key> [baseurl]",
+                  "Examples:",
+                  "  /setup sk-xxxxx",
+                  "  /setup sk-xxxxx deepseek-reasoner",
                   "",
                   "Current:",
-                  `  provider: ${activeProvider}`,
                   `  model:    ${activeModel}`,
                   `  baseURL:  ${activeBaseURL || "(default)"}`,
                   `  key:      ${activeApiKey ? activeApiKey.slice(0, 8) + "…" + activeApiKey.slice(-4) : "(not set)"}`,
@@ -602,106 +516,39 @@ export default function App({ config, workingDirectory }: AppProps) {
             return true;
           }
 
-          if (mode === "custom") {
-            const provider = parts[2] as ProviderType | undefined;
-            const model = parts[3];
-            const key = parts[4];
-            const baseURL = parts[5];
-
-            if (!provider || !model || !key) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content:
-                    "Usage: /setup custom <provider> <model> <api-key> [baseurl]\n\n" +
-                    "Examples:\n" +
-                    "  /setup custom openai gpt-4o sk-...\n" +
-                    "  /setup custom openai glm-4.7 sk-... https://api.z.ai/api/coding/paas/v4\n" +
-                    "  /setup custom anthropic claude-sonnet-4-20250514 sk-ant-...",
-                  timestamp: Date.now(),
-                },
-              ]);
-              return true;
-            }
-
-            if (provider !== "openai" && provider !== "anthropic") {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content: `Unknown provider: ${provider}. Allowed: openai, anthropic`,
-                  timestamp: Date.now(),
-                },
-              ]);
-              return true;
-            }
-
-            setActiveProvider(provider);
-            setActiveModel(model);
-            setActiveApiKey(key);
-            setActiveBaseURL(baseURL || undefined);
-
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `✓ Setup complete → ${provider}/${model}` +
-                  (baseURL ? ` (${baseURL})` : "") +
-                  `\n✓ API key saved in memory (${key.slice(0, 8)}…${key.slice(-4)})`,
-                timestamp: Date.now(),
-              },
-            ]);
-            return true;
-          }
-
-          const preset = findQuickSetupPreset(mode);
-          if (!preset) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `Unknown setup preset: ${mode}\n\n` +
-                  "Try one of: openai, anthropic, glm, deepseek, groq\n" +
-                  "Or use: /setup custom <provider> <model> <api-key> [baseurl]",
-                timestamp: Date.now(),
-              },
-            ]);
-            return true;
-          }
-
+          // /setup <api-key> [model]
           const key = parts[2];
           const modelOverride = parts[3];
+
           if (!key) {
             setMessages((prev) => [
               ...prev,
               {
                 role: "system",
                 content:
-                  `Usage: /setup ${preset.aliases[0]} <api-key> [model]\n\n` +
-                  `Example: /setup ${preset.aliases[0]} your-key-here ${preset.model}`,
+                  "Usage: /setup <api-key> [model]\n\n" +
+                  "Examples:\n" +
+                  "  /setup sk-xxxxx\n" +
+                  "  /setup sk-xxxxx deepseek-reasoner\n\n" +
+                  "Models: deepseek-chat (default), deepseek-reasoner",
                 timestamp: Date.now(),
               },
             ]);
             return true;
           }
 
-          const resolvedModel = modelOverride || preset.model;
-          setActiveProvider(preset.provider);
+          const resolvedModel = modelOverride || "deepseek-chat";
+          setActiveProvider("deepseek");
           setActiveModel(resolvedModel);
           setActiveApiKey(key);
-          setActiveBaseURL(preset.baseURL);
+          setActiveBaseURL(undefined);
 
           setMessages((prev) => [
             ...prev,
             {
               role: "system",
               content:
-                `✓ Setup complete → ${preset.provider}/${resolvedModel}` +
-                (preset.baseURL ? ` (${preset.baseURL})` : "") +
-                `\n✓ Provider preset: ${preset.label}` +
+                `✓ Setup complete → deepseek/${resolvedModel}` +
                 `\n✓ API key saved in memory (${key.slice(0, 8)}…${key.slice(-4)})`,
               timestamp: Date.now(),
             },
@@ -723,9 +570,11 @@ export default function App({ config, workingDirectory }: AppProps) {
                   `Base URL: ${activeBaseURL || "(default)"}`,
                   `API Key:  ${activeApiKey ? activeApiKey.slice(0, 8) + "…" + activeApiKey.slice(-4) : "(not set)"}`,
                   "",
-                  "Quick switch:  /model <profile-name>",
-                  "Custom model:  /model set <provider> <model> [baseurl]",
+                  "Switch model:  /model <model-name>",
+                  "Use profile:   /model <profile-name>",
                   "Set API key:   /apikey <key>",
+                  "",
+                  "Available models: deepseek-chat, deepseek-reasoner",
                 ].join("\n"),
                 timestamp: Date.now(),
               },
@@ -733,51 +582,7 @@ export default function App({ config, workingDirectory }: AppProps) {
             return true;
           }
 
-          // /model set <provider> <model> [baseurl]
-          if (arg === "set") {
-            const provider = parts[2];
-            const modelName = parts[3];
-
-            if (!provider || !modelName) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content:
-                    "Usage: /model set <provider> <model> [baseurl]\n\n" +
-                    "Examples:\n" +
-                    "  /model set openai gpt-4o\n" +
-                    "  /model set openai glm-4 https://open.bigmodel.cn/api/v1\n" +
-                    "  /model set anthropic claude-sonnet-4-20250514\n" +
-                    "  /model set openai deepseek-chat https://api.deepseek.com/v1",
-                  timestamp: Date.now(),
-                },
-              ]);
-              return true;
-            }
-
-            const baseURL = parts[4];
-            const provType = provider as ProviderType;
-            setActiveProvider(provType);
-            setActiveModel(modelName);
-            if (baseURL) setActiveBaseURL(baseURL);
-            else setActiveBaseURL(provType === "anthropic" ? undefined : undefined);
-
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `✓ Model set → ${provType}/${modelName}` +
-                  (baseURL ? ` (${baseURL})` : "") +
-                  (activeApiKey ? "" : "\n⚠ No API key set. Use /apikey <key>"),
-                timestamp: Date.now(),
-              },
-            ]);
-            return true;
-          }
-
-          // /model <profile-name>
+          // /model <model-name> or /model <profile-name>
           const result = switchModel(arg);
           if (result) {
             setMessages((prev) => [
@@ -785,22 +590,13 @@ export default function App({ config, workingDirectory }: AppProps) {
               { role: "system", content: `✓ ${result}`, timestamp: Date.now() },
             ]);
           } else {
-            // Maybe the user typed a raw model name (e.g. "gpt-4.1-mini")
-            // Try as-is on the current provider
-            const hint = inferBaseURLForModel(arg);
+            // Try as a raw model name
             setActiveModel(arg);
-            if (activeProvider === "openai" && !activeBaseURL && hint) {
-              setActiveBaseURL(hint.baseURL);
-            }
             setMessages((prev) => [
               ...prev,
               {
                 role: "system",
-                content:
-                  `✓ Model changed to: ${arg} (provider: ${activeProvider})` +
-                  (activeProvider === "openai" && !activeBaseURL && hint
-                    ? `\n✓ Auto endpoint set: ${hint.baseURL} (${hint.label})`
-                    : ""),
+                content: `✓ Model changed to: ${arg}`,
                 timestamp: Date.now(),
               },
             ]);
@@ -817,7 +613,7 @@ export default function App({ config, workingDirectory }: AppProps) {
           if (profileEntries.length === 0) {
             lines.push("No profiles configured.");
             lines.push("");
-            lines.push("Add profiles to .zcode.json under \"profiles\".");
+            lines.push("Add profiles to .deepseek-code.json under \"profiles\".");
             lines.push("Or use /model set <provider> <model> [baseurl].");
           } else {
             lines.push("━━━ Your Profiles ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -1018,7 +814,7 @@ export default function App({ config, workingDirectory }: AppProps) {
                   role: "system",
                   content:
                     "No MCP servers configured.\n\n" +
-                    "Add \"mcpServers\" to your .zcode.json, e.g.:\n" +
+                    "Add \"mcpServers\" to your .deepseek-code.json, e.g.:\n" +
                     "  \"mcpServers\": {\n" +
                     "    \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"] }\n" +
                     "  }",
@@ -1089,7 +885,7 @@ export default function App({ config, workingDirectory }: AppProps) {
         }
 
         case "/think": {
-          const VALID_MODES: ThinkingMode[] = ["off", "light", "deep", "max"];
+          const VALID_MODES: ThinkingMode[] = ["off", "whale"];
           if (arg && VALID_MODES.includes(arg as ThinkingMode)) {
             const newMode = arg as ThinkingMode;
             setThinkingMode(newMode);
@@ -1099,15 +895,13 @@ export default function App({ config, workingDirectory }: AppProps) {
                 role: "system",
                 content: newMode === "off"
                   ? "💭 Thinking disabled."
-                  : `💭 Thinking → ${newMode}  (${THINKING_BUDGETS[newMode] / 1000}k token budget).`,
+                  : "🐋 Whalethink enabled — deep reasoning mode active.",
                 timestamp: Date.now(),
               },
             ]);
           } else if (!arg) {
-            // No argument → cycle to next mode
-            const cur = thinkingMode;
-            const idx = THINKING_CYCLE.indexOf(cur);
-            const next = THINKING_CYCLE[(idx + 1) % THINKING_CYCLE.length]!;
+            // No argument → toggle
+            const next = thinkingMode === "off" ? "whale" : "off";
             setThinkingMode(next);
             setMessages((prev) => [
               ...prev,
@@ -1115,7 +909,7 @@ export default function App({ config, workingDirectory }: AppProps) {
                 role: "system",
                 content: next === "off"
                   ? "💭 Thinking disabled."
-                  : `💭 Thinking → ${next}  (${THINKING_BUDGETS[next] / 1000}k token budget).`,
+                  : "🐋 Whalethink enabled — deep reasoning mode active.",
                 timestamp: Date.now(),
               },
             ]);
@@ -1125,12 +919,10 @@ export default function App({ config, workingDirectory }: AppProps) {
               {
                 role: "system",
                 content:
-                  "Usage: /think [off|light|deep|max]\n" +
-                  "Shift+Tab also cycles through modes.\n\n" +
+                  "Usage: /think [off|whale]\n" +
+                  "Shift+Tab also toggles whalethink.\n\n" +
                   "  off    disabled\n" +
-                  "  light  10k token budget\n" +
-                  "  deep   32k token budget\n" +
-                  "  max    128k token budget",
+                  "  whale  deep reasoning with extended thinking",
                 timestamp: Date.now(),
               },
             ]);
@@ -1246,12 +1038,32 @@ export default function App({ config, workingDirectory }: AppProps) {
         <PermissionPrompt
           toolName={pendingPermission.toolName}
           description={pendingPermission.description}
-          onApprove={() => {
-            pendingPermission.resolve(true);
+          onApprove={(feedback) => {
+            pendingPermission.resolve({ approved: true, feedback });
+            if (feedback) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: `Permission note (approve): ${feedback}`,
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
             setPendingPermission(null);
           }}
-          onDeny={() => {
-            pendingPermission.resolve(false);
+          onDeny={(feedback) => {
+            pendingPermission.resolve({ approved: false, feedback });
+            if (feedback) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: `Permission note (deny): ${feedback}`,
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
             setPendingPermission(null);
           }}
         />
@@ -1274,6 +1086,8 @@ export default function App({ config, workingDirectory }: AppProps) {
         thinkingMode={thinkingMode}
         mcpEnabledCount={mcpEnabledCount}
         queueCount={queuedSubmissions.length}
+        currentFile={currentFile}
+        awaitingPermission={!!pendingPermission}
       />
 
       {/* Command picker — visible while user types "/" */}
@@ -1292,6 +1106,8 @@ export default function App({ config, workingDirectory }: AppProps) {
         onSubmit={handleSubmit}
         isLoading={isLoading}
         agentName={currentAgent}
+        isBlocked={!!pendingPermission}
+        waitingPermission={!!pendingPermission}
       />
     </Box>
   );
@@ -1318,22 +1134,4 @@ function formatToolInput(toolName: string, args: Record<string, unknown>): strin
     default:
       return JSON.stringify(args);
   }
-}
-
-function inferBaseURLForModel(model: string): { baseURL: string; label: string } | null {
-  const m = model.trim();
-  for (const hint of OPENAI_COMPAT_ENDPOINT_HINTS) {
-    if (hint.test.test(m)) {
-      return { baseURL: hint.baseURL, label: hint.label };
-    }
-  }
-  return null;
-}
-
-function findQuickSetupPreset(name: string): QuickSetupPreset | null {
-  const n = name.trim().toLowerCase();
-  for (const preset of QUICK_SETUP_PRESETS) {
-    if (preset.aliases.some((a) => a.toLowerCase() === n)) return preset;
-  }
-  return null;
 }

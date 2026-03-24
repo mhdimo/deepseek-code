@@ -1,11 +1,11 @@
-// Core types for z-code
+// Core types for DeepSeek Code
 
 import type { z } from "zod";
 
 // ─── Provider ───────────────────────────────────────────────────────────────
 
-/** Provider types — "openai" works for any OpenAI-compatible endpoint */
-export type ProviderType = "openai" | "anthropic";
+/** Provider types — DeepSeek uses OpenAI-compatible API */
+export type ProviderType = "deepseek";
 
 export interface ProviderConfig {
   type: ProviderType;
@@ -72,8 +72,8 @@ export interface ToolResult {
 
 export type AgentName = "code" | "plan" | "review";
 
-/** Thinking depth for extended reasoning (Anthropic-compatible models only) */
-export type ThinkingMode = "off" | "light" | "deep" | "max";
+/** Thinking mode - whalethink enables extended reasoning with blue glow effect */
+export type ThinkingMode = "off" | "whale";
 
 export interface AgentConfig {
   name: AgentName;
@@ -131,7 +131,7 @@ export interface MCPServerConfig {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-export interface ZCodeConfig {
+export interface DeepSeekCodeConfig {
   provider: ProviderType;
   model: string;
   apiKey: string;
@@ -144,3 +144,6 @@ export interface ZCodeConfig {
   /** Optional MCP server definitions loaded from config file */
   mcpServers?: Record<string, MCPServerConfig>;
 }
+
+/** @deprecated Use DeepSeekCodeConfig */
+export type ZCodeConfig = DeepSeekCodeConfig;

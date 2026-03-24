@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-z-code is a terminal-native AI coding agent built with Bun + Ink (React TUI) + Vercel AI SDK. It supports multiple LLM providers via an adapter pattern and includes built-in tools (Read, Write, Edit, Bash, Glob, Grep, LS).
+DeepSeek Code is a terminal-native AI coding agent built with Bun + Ink (React TUI) + Vercel AI SDK. It uses DeepSeek's API (deepseek-chat, deepseek-reasoner) and includes built-in tools (Read, Write, Edit, Bash, Glob, Grep, LS).
 
 ## Commands
 
@@ -21,10 +21,10 @@ bun test             # Run tests (when present)
 src/
 ├── index.tsx         # Entry point — loads config, renders Ink app
 ├── core/
-│   ├── config.ts     # Config loading (env, CLI args, .zcode.json)
-│   └── types.ts      # All shared types (ProviderConfig, Message, AgentEvent, etc.)
+│   ├── config.ts     # Config loading (env, CLI args, .deepseek-code.json)
+│   └── types.ts      # All shared types (DeepSeekCodeConfig, Message, AgentEvent, etc.)
 ├── provider/
-│   ├── registry.ts   # Provider adapter registry + createModel()
+│   ├── registry.ts   # DeepSeek provider adapter + createModel()
 │   └── index.ts      # Public exports
 ├── agent/
 │   ├── base.ts       # Agent class — multi-step agentic loop with tool calling
@@ -40,14 +40,14 @@ src/
 
 ### Execution flow
 
-1. `src/index.tsx` loads config (env vars → CLI args → `.zcode.json`) and renders `<App>`
-2. `App.tsx` manages runtime state (provider, model, agent, messages, thinking mode)
+1. `src/index.tsx` loads config (env vars → CLI args → `.deepseek-code.json`) and renders `<App>`
+2. `App.tsx` manages runtime state (model, agent, messages, thinking mode)
 3. On message submit, `Agent.run()` streams events: text deltas, thinking, tool calls
 4. TUI consumes events and updates the display
 
 ### Key patterns
 
-**Provider abstraction**: `ProviderConfig` → `createModel(config)` → AI SDK `LanguageModel`. The `openai` type works for any OpenAI-compatible endpoint (OpenAI, GLM, DeepSeek, Groq, etc.) via `baseURL` override.
+**Provider abstraction**: `DeepSeekCodeConfig` → `createModel(config)` → AI SDK `LanguageModel`. Uses DeepSeek's OpenAI-compatible endpoint.
 
 **Agent loop**: `Agent.run()` yields `AgentEvent` objects (`text-delta`, `tool-call-start`, `tool-call-result`, `finish`, `error`). The loop continues until no tool calls or `maxSteps` reached.
 
@@ -66,11 +66,15 @@ src/
 
 ## Configuration
 
-Config sources (priority: CLI args > env vars > `.zcode.json`):
+Config sources (priority: CLI args > env vars > `.deepseek-code.json`):
 
-- `ZCODE_PROVIDER` — "openai" or "anthropic"
-- `ZCODE_MODEL` — model ID (e.g., "gpt-4o", "claude-sonnet-4-20250514")
-- `ZCODE_API_KEY` — API key
-- `ZCODE_BASE_URL` — optional endpoint override for OpenAI-compatible providers
+- `DEEPSEEK_API_KEY` — DeepSeek API key
+- `DEEPSEEK_MODEL` — Model ID (`deepseek-chat` or `deepseek-reasoner`)
+- `DEEPSEEK_BASE_URL` — optional endpoint override (for proxies)
 
-See `.zcode.example.json` for full config file structure including profiles and MCP servers.
+See `.deepseek-code.example.json` for full config file structure including profiles and MCP servers.
+
+## Available Models
+
+- `deepseek-chat` — General-purpose coding assistant (default)
+- `deepseek-reasoner` — Advanced reasoning with extended thinking
