@@ -7,9 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Add include directory
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Dependencies (optional for now - can be added later)
-# find_package(nlohmann_json 3.11.0 REQUIRED)
-# find_package(curl REQUIRED)
+# Dependencies
+find_package(nlohmann_json 3.11.0 REQUIRED)
+find_package(CURL REQUIRED)
 # find_package(sqlite3 REQUIRED)
 
 # Main executable
