@@ -24,4 +24,10 @@ std::string OpenAIModel::generateText(
     return "OpenAI response";
 }
 
+std::unique_ptr<LanguageModel> createOpenAIModel(
+    const zcode::core::ProviderConfig& config
+) {
+    return std::make_unique<OpenAIModel>(config);
+}
+
 } // namespace zcode::provider

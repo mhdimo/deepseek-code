@@ -24,4 +24,10 @@ std::string AnthropicModel::generateText(
     return "Anthropic response";
 }
 
+std::unique_ptr<LanguageModel> createAnthropicModel(
+    const zcode::core::ProviderConfig& config
+) {
+    return std::make_unique<AnthropicModel>(config);
+}
+
 } // namespace zcode::provider

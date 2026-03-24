@@ -34,4 +34,16 @@ public:
     );
 };
 
+/**
+ * Factory functions for creating provider-specific model instances.
+ * Defined in the respective adapter translation units.
+ */
+std::unique_ptr<LanguageModel> createOpenAIModel(
+    const zcode::core::ProviderConfig& config
+);
+
+std::unique_ptr<LanguageModel> createAnthropicModel(
+    const zcode::core::ProviderConfig& config
+);
+
 } // namespace zcode::provider

@@ -1,14 +1,20 @@
 #include "provider/registry.hpp"
 #include <memory>
+#include <stdexcept>
 
 namespace zcode::provider {
 
 std::unique_ptr<LanguageModel> ProviderRegistry::createModel(
     const zcode::core::ProviderConfig& config
 ) {
-    // TODO: Implement provider-specific model creation
-    // Return OpenAI adapter or Anthropic adapter based on config.type
-    return nullptr;
+    switch (config.type) {
+        case zcode::core::ProviderType::OpenAI:
+            return createOpenAIModel(config);
+        case zcode::core::ProviderType::Anthropic:
+            return createAnthropicModel(config);
+        default:
+            throw std::invalid_argument("Unsupported provider type");
+    }
 }
 
 } // namespace zcode::provider
