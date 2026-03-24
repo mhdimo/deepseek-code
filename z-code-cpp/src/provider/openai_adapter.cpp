@@ -1,0 +1,27 @@
+// OpenAI API adapter
+#include "provider/registry.hpp"
+
+namespace zcode::provider {
+
+class OpenAIModel : public LanguageModel {
+public:
+    OpenAIModel(const zcode::core::ProviderConfig& config) : config(config) {}
+    
+    std::string generateText(
+        const std::string& prompt,
+        const zcode::core::ProviderOptions& options
+    ) override;
+    
+private:
+    zcode::core::ProviderConfig config;
+};
+
+std::string OpenAIModel::generateText(
+    const std::string& prompt,
+    const zcode::core::ProviderOptions& options
+) {
+    // TODO: Implement HTTP calls to OpenAI API
+    return "OpenAI response";
+}
+
+} // namespace zcode::provider
