@@ -35,11 +35,6 @@ export default function MessageView({ message }: MessageViewProps) {
           </Box>
         )}
 
-        {/* Tool use blocks (shown before the text, like Claude Code) */}
-        {message.toolUse?.map((tool, i) => (
-          <ToolBlock key={tool.toolCallId || i} block={tool} />
-        ))}
-
         {/* Message text */}
         {message.content && (
           <Box marginTop={message.toolUse?.length ? 0 : 0}>
@@ -51,6 +46,11 @@ export default function MessageView({ message }: MessageViewProps) {
             </Text>
           </Box>
         )}
+
+        {/* Tool use blocks (shown below the text) */}
+        {message.toolUse?.map((tool, i) => (
+          <ToolBlock key={tool.toolCallId || i} block={tool} />
+        ))}
       </Box>
     );
   }

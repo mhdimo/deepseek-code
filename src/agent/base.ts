@@ -16,6 +16,46 @@ import type { AgentConfig, AgentEvent, Message, ProviderConfig } from "../core/t
 import { createModel } from "../provider/registry.js";
 import { createTools, type PermissionCallback } from "../tool/index.js";
 
+// ─── Error categorization ──────────────────────────────────────────────────
+
+type ErrorCategory = "auth" | "rate-limit" | "network" | "server" | "timeout" | "unknown";
+
+function categorizeError(error: unknown): { category: ErrorCategory; message: string; retryable: boolean } {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+
+  // DeepSeek API error codes
+  if (lower.includes("401") || lower.includes("invalid api key") || lower.includes("authentication")) {
+    return { category: "auth", message: `Authentication error: ${msg}`, retryable: false };
+  }
+  if (lower.includes("402") || lower.includes("insufficient balance")) {
+    return { category: "auth", message: `Insufficient balance: ${msg}`, retryable: false };
+  }
+  if (lower.includes("422") || lower.includes("invalid parameters")) {
+    return { category: "auth", message: `Invalid parameters: ${msg}`, retryable: false };
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    return { category: "rate-limit", message: `Rate limited — retrying automatically`, retryable: true };
+  }
+  if (lower.includes("500") || lower.includes("server error")) {
+    return { category: "server", message: `Server error — retrying automatically`, retryable: true };
+  }
+  if (lower.includes("503") || lower.includes("overloaded")) {
+    return { category: "server", message: `Server overloaded — retrying automatically`, retryable: true };
+  }
+  if (lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("etimedout") || lower.includes("network") || lower.includes("fetch failed")) {
+    return { category: "network", message: `Network error — retrying automatically`, retryable: true };
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return { category: "timeout", message: `Timeout: ${msg}`, retryable: false };
+  }
+
+  return { category: "unknown", message: msg, retryable: false };
+}
+
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1000;
+
 interface ToolCallInfo {
   toolCallId: string;
   toolName: string;
@@ -65,7 +105,7 @@ export class Agent {
     this.abortController = runAbortController;
 
     // Create tools based on agent permissions
-    const tools = createTools(workingDir, this.config.permissions, requestPermission);
+    const { tools, getLastPermissionWaitMs } = createTools(workingDir, this.config.permissions, requestPermission);
     const hasTools = Object.keys(tools).length > 0;
 
     // Build initial messages from history
@@ -99,7 +139,40 @@ export class Agent {
           abortSignal: runAbortController.signal,
         };
 
-        const result = await streamText(streamOptions);
+        let result;
+        let retries = 0;
+
+        while (true) {
+          try {
+            result = await streamText(streamOptions);
+            break; // Success — exit retry loop
+          } catch (streamError) {
+            const categorized = categorizeError(streamError);
+
+            if (!categorized.retryable || retries >= MAX_RETRIES) {
+              yield { type: "error", error: categorized.message };
+              return;
+            }
+
+            retries++;
+            const delayMs = RETRY_BASE_MS * Math.pow(2, retries - 1);
+
+            yield {
+              type: "text-delta",
+              text: `\n⏳ ${categorized.message} — retrying in ${delayMs / 1000}s (${retries}/${MAX_RETRIES})…\n`,
+            };
+
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, delayMs);
+              runAbortController.signal.addEventListener("abort", () => {
+                clearTimeout(timer);
+                resolve();
+              }, { once: true });
+            });
+
+            if (runAbortController.signal.aborted) return;
+          }
+        }
 
         // Stream events from this step
         for await (const event of result.fullStream) {
@@ -148,7 +221,8 @@ export class Agent {
               const output = tr.result ?? tr.output ?? "";
               const resultStr = typeof output === "string" ? output : JSON.stringify(output);
               const startTime = toolStartTimes.get(toolCallId) || Date.now();
-              const duration = Date.now() - startTime;
+              const permissionWait = getLastPermissionWaitMs?.() ?? 0;
+              const duration = Math.max(0, Date.now() - startTime - permissionWait);
 
               stepToolResults.push({ toolCallId, toolName, output });
 
@@ -230,7 +304,8 @@ export class Agent {
       if ((error as Error).name === "AbortError") {
         yield { type: "error", error: "Generation interrupted." };
       } else {
-        yield { type: "error", error: (error as Error).message };
+        const categorized = categorizeError(error);
+        yield { type: "error", error: categorized.message };
       }
     } finally {
       if (this.abortController === runAbortController) {

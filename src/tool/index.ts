@@ -9,20 +9,6 @@ import { resolve, relative, dirname } from "path";
 import { jsonSchema } from "ai";
 import type { PermissionRuleset } from "../core/types.js";
 
-function previewTextBlock(text: string, maxLines = 16, maxChars = 900): string {
-  const lines = text.split("\n");
-  const clipped = lines.slice(0, maxLines);
-  const numbered = clipped
-    .map((line, i) => `${String(i + 1).padStart(3)}│${line}`)
-    .join("\n");
-  const hasMoreLines = lines.length > maxLines;
-  const withLineNotice = hasMoreLines
-    ? `${numbered}\n... (${lines.length - maxLines} more lines)`
-    : numbered;
-
-  if (withLineNotice.length <= maxChars) return withLineNotice;
-  return withLineNotice.slice(0, maxChars) + "\n... (truncated)";
-}
 
 function previewRawBlock(text: string, maxLines = 40, maxChars = 1200): string {
   const lines = text.split("\n");
@@ -91,9 +77,14 @@ export function createTools(
     return p.startsWith("/") ? p : resolve(cwd, p);
   };
 
+  let lastPermissionWaitMs = 0;
+
   const checkPermission = async (toolName: string, desc: string): Promise<PermissionDecision> => {
     if (!requestPermission) return { approved: true };
-    return requestPermission(toolName, desc);
+    const start = Date.now();
+    const decision = await requestPermission(toolName, desc);
+    lastPermissionWaitMs = Date.now() - start;
+    return decision;
   };
 
   // ── Read ────────────────────────────────────────────────────────────────
@@ -191,7 +182,7 @@ export function createTools(
         exists ? "Diff preview:" : "Content preview:",
         exists
           ? previewRawBlock(buildSimpleDiffPreview(previousContent, content), 60, 1200)
-          : previewTextBlock(content, 20, 1200),
+          : asAddedLines(content, 20),
       ].join("\n");
 
       const decision = await checkPermission("Write", writePermissionPreview);
@@ -206,12 +197,13 @@ export function createTools(
         const diffPreview = exists
           ? buildSimpleDiffPreview(previousContent, content, 80)
           : asAddedLines(content, 80);
-        return [
+        const result = [
           `✅ Wrote ${relative(cwd, fullPath)} (${content.split("\n").length} lines)`,
           "",
           exists ? "Diff preview:" : "Added lines:",
           previewRawBlock(diffPreview, 80, 2500),
         ].join("\n");
+        return decision.feedback ? `${result}\n\nUser note: ${decision.feedback}` : result;
       } catch (error) {
         return `❌ ${(error as Error).message}`;
       }
@@ -276,12 +268,13 @@ export function createTools(
         const newContent = content.replace(oldString, newString);
         await writeFile(fullPath, newContent, "utf-8");
         const diffPreview = buildSimpleDiffPreview(oldString, newString, 80);
-        return [
+        const result = [
           `✅ Edited ${relative(cwd, fullPath)}`,
           "",
           "Diff preview:",
           previewRawBlock(diffPreview, 80, 2500),
         ].join("\n");
+        return decision.feedback ? `${result}\n\n💬 User note: ${decision.feedback}` : result;
       } catch (error) {
         return `❌ ${(error as Error).message}`;
       }
@@ -318,6 +311,7 @@ export function createTools(
           : "⚠️ Permission denied by user.";
       }
       const timeout = params.timeout ?? 120_000;
+      const feedback = decision.feedback;
 
       return new Promise<string>((resolvePromise) => {
         const child = spawn("sh", ["-c", params.command], {
@@ -343,17 +337,17 @@ export function createTools(
 
         const timer = setTimeout(() => {
           child.kill();
-          resolvePromise(`❌ Command timed out after ${timeout}ms\n${stdout}\n${stderr}`);
+          const base = `❌ Command timed out after ${timeout}ms\n${stdout}\n${stderr}`;
+          resolvePromise(feedback ? `${base}\n\n💬 User note: ${feedback}` : base);
         }, timeout);
 
         child.on("close", (code: number | null) => {
           clearTimeout(timer);
           const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
-          if (code === 0) {
-            resolvePromise(output || "(no output)");
-          } else {
-            resolvePromise(`Exit code ${code}\n${output}`);
-          }
+          const base = code === 0
+            ? (output || "(no output)")
+            : `Exit code ${code}\n${output}`;
+          resolvePromise(feedback ? `${base}\n\n💬 User note: ${feedback}` : base);
         });
 
         child.on("error", (error: Error) => {
@@ -523,7 +517,14 @@ export function createTools(
     tools.Bash = Bash;
   }
 
-  return tools;
+  return {
+    tools,
+    getLastPermissionWaitMs: () => {
+      const ms = lastPermissionWaitMs;
+      lastPermissionWaitMs = 0;
+      return ms;
+    },
+  };
 }
 
 /** Get all tool names and descriptions for display */

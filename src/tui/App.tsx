@@ -29,10 +29,18 @@ import type {
   ThinkingMode,
   MCPServerConfig,
 } from "../core/types.js";
+import {
+  saveSettings,
+  saveSession,
+  updateSession,
+  loadSession,
+  listSessions,
+  pruneSessions,
+} from "../core/storage.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
-export default function App({ config, workingDirectory }: { config: DeepSeekCodeConfig; workingDirectory: string }) {
+export default function App({ config, workingDirectory, resumeSessionHash: cliResumeHash }: { config: DeepSeekCodeConfig; workingDirectory: string; resumeSessionHash?: string }) {
   const { exit } = useApp();
 
   // ── State ─────────────────────────────────────────────────────────────
@@ -72,6 +80,30 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
   const agentRef = useRef<Agent | null>(null);
   /** Lets handleSubmit know the picker is intercepting Enter */
   const pickerActiveRef = useRef(false);
+  /** Ref to handleSubmit so useInput can call it without stale closure */
+  const handleSubmitRef = useRef<() => void>(() => {});
+
+  // ── Session state ────────────────────────────────────────────────────
+  const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
+
+  // ── Input history ────────────────────────────────────────────────────
+  const inputHistory = useRef<string[]>([]);
+  const historyIndex = useRef(-1); // -1 = not navigating history
+
+  // ── Persist settings helper ──────────────────────────────────────────
+  const persistSettings = useCallback((updates: {
+    apiKey?: string;
+    model?: string;
+    baseURL?: string | undefined;
+    provider?: string;
+    defaultAgent?: string;
+  }) => {
+    try {
+      saveSettings(updates);
+    } catch {
+      // Best-effort persistence
+    }
+  }, []);
 
   // Helper: yield to the event loop so React/Ink can render between tokens
   const yieldToRenderer = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -96,6 +128,58 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
     baseURL: activeBaseURL,
     model: activeModel,
   };
+
+  // ── Session auto-save ────────────────────────────────────────────────
+  // Save session whenever messages change
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try {
+      const sessionMessages = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+        isError: m.isError,
+      }));
+
+      if (activeSessionHash) {
+        updateSession(activeSessionHash, {
+          messages: sessionMessages,
+          tokenUsage: tokenCount,
+        });
+      } else {
+        const hash = saveSession({
+          messages: sessionMessages,
+          tokenUsage: tokenCount,
+          model: activeModel,
+          agent: currentAgent,
+          workingDirectory,
+        });
+        setActiveSessionHash(hash);
+        // Prune old sessions
+        pruneSessions(50);
+      }
+    } catch {
+      // Best-effort
+    }
+  }, [messages.length]);
+
+  // ── Resume session ONLY when --resume <hash> is passed explicitly ────
+  useEffect(() => {
+    if (!cliResumeHash) return; // No --resume flag → fresh session
+    try {
+      const session = loadSession(cliResumeHash);
+      if (session && session.messages.length > 0) {
+        setMessages(session.messages.map((m) => ({
+          ...m,
+          toolUse: [],
+        })));
+        setTokenCount(session.tokenUsage);
+        setActiveSessionHash(session.hash);
+      }
+    } catch {
+      // Fresh start on error
+    }
+  }, []);
 
   // Helper: switch to a named profile
   const switchModel = useCallback(
@@ -167,11 +251,18 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
         const safeIdx = Math.min(commandPickerIndex, filteredCommands.length - 1);
         const cmd = filteredCommands[safeIdx];
         if (cmd) {
-          // usage = fill text with trailing space (user adds args)
-          // no usage = fill command name exactly (user presses Enter to run)
-          setInput(cmd.usage ?? cmd.name);
-          // Remount text input so cursor lands at end after programmatic insertion
-          setInputResetKey((prev) => prev + 1);
+          if (key.return) {
+            // Enter → execute the command immediately (even ones that take args)
+            setInput(cmd.name);
+            setInputResetKey((prev) => prev + 1);
+            setTimeout(() => {
+              handleSubmitRef.current();
+            }, 0);
+          } else {
+            // Tab → autocomplete (fill usage template with trailing space)
+            setInput(cmd.usage ?? cmd.name);
+            setInputResetKey((prev) => prev + 1);
+          }
           setCommandPickerIndex(0);
         }
         return;
@@ -181,6 +272,42 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
     // Reset picker selection index on any non-navigation keypress
     if (!key.upArrow && !key.downArrow && !key.tab && !key.return) {
       setCommandPickerIndex(0);
+    }
+
+    // Input history navigation (when picker is not active)
+    if (!showCommandPicker && !isLoading) {
+      if (key.upArrow) {
+        if (inputHistory.current.length === 0) return;
+        if (historyIndex.current === -1) {
+          // Start navigating from the most recent entry
+          historyIndex.current = inputHistory.current.length - 1;
+        } else if (historyIndex.current > 0) {
+          historyIndex.current -= 1;
+        }
+        const historical = inputHistory.current[historyIndex.current];
+        if (historical !== undefined) {
+          setInput(historical);
+          setInputResetKey((prev) => prev + 1);
+        }
+        return;
+      }
+      if (key.downArrow) {
+        if (historyIndex.current === -1) return;
+        if (historyIndex.current < inputHistory.current.length - 1) {
+          historyIndex.current += 1;
+          const historical = inputHistory.current[historyIndex.current];
+          if (historical !== undefined) {
+            setInput(historical);
+            setInputResetKey((prev) => prev + 1);
+          }
+        } else {
+          // Bottom of history — clear input
+          historyIndex.current = -1;
+          setInput("");
+          setInputResetKey((prev) => prev + 1);
+        }
+        return;
+      }
     }
 
     // Shift+Tab: toggle whalethink mode
@@ -269,11 +396,26 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
             setStreamingToolUse(toolUse);
             // Clear current file when tool completes
             setCurrentFile(null);
-            // Reset streaming text for next step
+
+            // Save intermediate step as a message so the user sees it
+            if (text || toolUse.length > 0) {
+              const stepMessage: Message = {
+                role: "assistant",
+                content: text,
+                timestamp: Date.now(),
+                toolUse: toolUse.length > 0 ? [...toolUse] : undefined,
+                thinking: thinking || undefined,
+              };
+              setMessages((prev) => [...prev, stepMessage]);
+            }
+
+            // Reset streaming state for next step
             text = "";
             thinking = "";
+            toolUse = [];
             setStreamingText("");
             setStreamingThinking("");
+            setStreamingToolUse([]);
             break;
           }
 
@@ -542,6 +684,7 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
           setActiveModel(resolvedModel);
           setActiveApiKey(key);
           setActiveBaseURL(undefined);
+          persistSettings({ apiKey: key, model: resolvedModel, provider: "deepseek" });
 
           setMessages((prev) => [
             ...prev,
@@ -549,7 +692,8 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
               role: "system",
               content:
                 `✓ Setup complete → deepseek/${resolvedModel}` +
-                `\n✓ API key saved in memory (${key.slice(0, 8)}…${key.slice(-4)})`,
+                `\n✓ API key saved (${key.slice(0, 8)}…${key.slice(-4)})` +
+                `\n✓ Settings persisted to ~/.deepseek-code/settings.json`,
               timestamp: Date.now(),
             },
           ]);
@@ -585,18 +729,20 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
           // /model <model-name> or /model <profile-name>
           const result = switchModel(arg);
           if (result) {
+            persistSettings({ model: arg, apiKey: config.profiles?.[arg]?.apiKey });
             setMessages((prev) => [
               ...prev,
-              { role: "system", content: `✓ ${result}`, timestamp: Date.now() },
+              { role: "system", content: `✓ ${result}\n✓ Saved to ~/.deepseek-code/settings.json`, timestamp: Date.now() },
             ]);
           } else {
             // Try as a raw model name
             setActiveModel(arg);
+            persistSettings({ model: arg });
             setMessages((prev) => [
               ...prev,
               {
                 role: "system",
-                content: `✓ Model changed to: ${arg}`,
+                content: `✓ Model changed to: ${arg}\n✓ Saved to ~/.deepseek-code/settings.json`,
                 timestamp: Date.now(),
               },
             ]);
@@ -656,11 +802,12 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
             return true;
           }
           setActiveApiKey(key);
+          persistSettings({ apiKey: key });
           setMessages((prev) => [
             ...prev,
             {
               role: "system",
-              content: `✓ API key set (${key.slice(0, 8)}…${key.slice(-4)}) for provider: ${activeProvider}`,
+              content: `✓ API key set (${key.slice(0, 8)}…${key.slice(-4)}) for provider: ${activeProvider}\n✓ Saved to ~/.deepseek-code/settings.json`,
               timestamp: Date.now(),
             },
           ]);
@@ -931,8 +1078,84 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
         }
 
         case "/exit":
+          if (activeSessionHash) {
+            // Show resume hint before exiting — printed to stdout after Ink unmounts
+            process.stderr.write(`\n  Session saved: ${activeSessionHash}\n  Resume with: deepseek-code --resume ${activeSessionHash}\n\n`);
+          }
           exit();
           return true;
+
+        // ── /sessions ───────────────────────────────────────────────────
+        case "/sessions": {
+          const sessions = listSessions();
+          if (sessions.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "No saved sessions.", timestamp: Date.now() },
+            ]);
+            return true;
+          }
+          const lines = [
+            "Saved sessions (newest first):",
+            "",
+            ...sessions.slice(0, 20).map((s, i) => {
+              const date = new Date(s.updatedAt).toLocaleString();
+              const msgCount = s.messages.filter((m) => m.role === "user").length;
+              const active = s.hash === activeSessionHash ? " ◂ active" : "";
+              return `  ${String(i + 1).padStart(2)}. ${s.hash}  ${date}  ${msgCount} msgs  ${s.model}${active}`;
+            }),
+            "",
+            "Resume: /resume <hash>",
+            "Clear:  /sessions clear",
+          ];
+          setMessages((prev) => [
+            ...prev,
+            { role: "system", content: lines.join("\n"), timestamp: Date.now() },
+          ]);
+          return true;
+        }
+
+        // ── /resume ─────────────────────────────────────────────────────
+        case "/resume": {
+          if (!arg) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "Usage: /resume <session-hash>\n\nUse /sessions to list available sessions.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+          if (arg === "clear" || arg === "new") {
+            setMessages([]);
+            setTokenCount(0);
+            setActiveSessionHash(null);
+            setMessages([{ role: "system", content: "✓ Started a new session.", timestamp: Date.now() }]);
+            return true;
+          }
+          const session = loadSession(arg);
+          if (!session) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: `Session not found: ${arg}`, timestamp: Date.now() },
+            ]);
+            return true;
+          }
+          setMessages(session.messages.map((m) => ({ ...m, toolUse: [] })));
+          setTokenCount(session.tokenUsage);
+          setActiveSessionHash(session.hash);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `✓ Resumed session ${session.hash} (${session.messages.length} messages, ${new Date(session.createdAt).toLocaleString()})`,
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
 
         default:
           return false;
@@ -966,6 +1189,13 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
     const trimmedInput = input.trim();
     setInput("");
 
+    // Push to input history (skip duplicates)
+    if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== trimmedInput) {
+      inputHistory.current.push(trimmedInput);
+      if (inputHistory.current.length > 100) inputHistory.current.shift();
+    }
+    historyIndex.current = -1;
+
     // Slash commands while generating are blocked (except Esc interrupt), to keep state simple
     if (isLoading && trimmedInput.startsWith("/")) {
       setMessages((prev) => [
@@ -994,6 +1224,26 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
       return;
     }
 
+    // Auto-detect API key paste (starts with sk- and no key configured)
+    if (!activeApiKey && trimmedInput.startsWith("sk-") && trimmedInput.length >= 20 && !trimmedInput.includes(" ")) {
+      setActiveApiKey(trimmedInput);
+      setActiveProvider("deepseek");
+      setActiveModel("deepseek-chat");
+      persistSettings({ apiKey: trimmedInput, model: "deepseek-chat", provider: "deepseek" });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system",
+          content:
+            `✓ API key detected and saved (${trimmedInput.slice(0, 8)}…${trimmedInput.slice(-4)})\n` +
+            `✓ Using deepseek-chat. Change with /model <name>.\n` +
+            `✓ Settings persisted to ~/.deepseek-code/settings.json`,
+          timestamp: Date.now(),
+        },
+      ]);
+      return;
+    }
+
     // While generating, queue normal prompts (Claude Code style)
     if (isLoading) {
       setQueuedSubmissions((prev) => [...prev, trimmedInput]);
@@ -1002,6 +1252,11 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
 
     await submitUserPrompt(trimmedInput);
   }, [input, isLoading, handleCommand, submitUserPrompt]);
+
+  // Keep handleSubmit ref in sync so command picker Enter can call it
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
 
   // Auto-drain queued prompts once current generation is done
   useEffect(() => {
@@ -1030,6 +1285,7 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
           agentName={currentAgent}
           providerType={activeProvider}
           baseURL={activeBaseURL}
+          hasApiKey={!!activeApiKey}
         />
       </Box>
 
@@ -1040,30 +1296,10 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
           description={pendingPermission.description}
           onApprove={(feedback) => {
             pendingPermission.resolve({ approved: true, feedback });
-            if (feedback) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content: `Permission note (approve): ${feedback}`,
-                  timestamp: Date.now(),
-                },
-              ]);
-            }
             setPendingPermission(null);
           }}
           onDeny={(feedback) => {
             pendingPermission.resolve({ approved: false, feedback });
-            if (feedback) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content: `Permission note (deny): ${feedback}`,
-                  timestamp: Date.now(),
-                },
-              ]);
-            }
             setPendingPermission(null);
           }}
         />
@@ -1106,6 +1342,8 @@ export default function App({ config, workingDirectory }: { config: DeepSeekCode
         onSubmit={handleSubmit}
         isLoading={isLoading}
         agentName={currentAgent}
+        workingDirectory={workingDirectory}
+        recentFiles={currentFile ? [currentFile] : []}
         isBlocked={!!pendingPermission}
         waitingPermission={!!pendingPermission}
       />
