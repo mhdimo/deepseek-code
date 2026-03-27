@@ -24,6 +24,7 @@ src/
 ├── index.tsx         # Entry point — loads config, renders Ink <App>
 ├── core/
 │   ├── config.ts     # Config loading (defaults ← file ← env ← CLI)
+│   ├── storage.ts    # Session + settings persistence (~/.deepseek-code/)
 │   └── types.ts      # All shared types
 ├── provider/
 │   ├── registry.ts   # DeepSeek provider adapter + createModel()
@@ -56,16 +57,20 @@ src/
 
 **Agent loop**: `Agent.run()` is an `AsyncGenerator<AgentEvent>`. It calls `streamText()` per step, streams events (text-delta, reasoning, tool-call, tool-result, finish, error), and loops if the model made tool calls. History is truncated to the last 30 messages. AI SDK v6 message format is used: assistant messages use `{ type: "tool-call", input }` parts, tool results use `{ type: "tool-result", output: { type: "text", value } }` parts.
 
-**Tool system**: `createTools(workingDir, permissions, requestPermission)` returns a `Record<string, any>` of tool definitions. Tools use `jsonSchema()` for parameters (not Zod) for DeepSeek API compatibility. Write/Edit/Bash tools prompt for user permission via the `PermissionCallback`.
+**Tool system**: `createTools(workingDir, permissions, requestPermission)` returns `{ tools, getLastPermissionWaitMs }` — the `tools` record is passed to the AI SDK, while `getLastPermissionWaitMs` is used by the agent loop to subtract permission wait time from reported tool durations. Tools use `jsonSchema()` for parameters (not Zod) for DeepSeek API compatibility. Write/Edit/Bash tools prompt for user permission via the `PermissionCallback`.
 
 **Three agents** (defined in `agent/index.ts`):
 - `code`: full access (read + write + execute), 25 max steps
 - `plan`: read-only, 15 max steps — analysis and planning
 - `review`: read-only, 15 max steps — code review
 
-**Streaming in TUI**: `processAgentStream()` in App.tsx iterates the async generator and calls `setStreamingText`/`setStreamingToolUse` etc. A `yieldToRenderer()` (setTimeout 0) between events lets Ink paint updates. On `tool-call-result`, streaming text resets for the next agentic step.
+**Streaming in TUI**: `processAgentStream()` in App.tsx iterates the async generator and calls `setStreamingText`/`setStreamingToolUse` etc. A `yieldToRenderer()` (setTimeout 0) between events lets Ink paint updates. On `tool-call-result`, the current text + tool blocks are finalized as a message in history, then streaming state resets for the next agentic step.
 
-**Permission flow**: Write/Edit/Bash call `requestPermission()` which sets `pendingPermission` state, rendering `<PermissionPrompt>`. The user approves/denies, resolving the promise that unblocks tool execution.
+**Permission flow**: Write/Edit/Bash call `requestPermission()` which sets `pendingPermission` state, rendering `<PermissionPrompt>`. The user approves/denies, resolving the promise that unblocks tool execution. User feedback (via Tab on Yes/No) is embedded directly in the tool result as `💬 User note: ...`, so the model sees it immediately. Permission wait time is subtracted from the reported tool duration.
+
+**Permission prompt UI**: `<PermissionPrompt>` shows a diff preview with green background for additions (+) and red background for deletions (-). Options are navigable with arrow keys. Press Tab on Yes/No to add feedback before confirming.
+
+**Message rendering**: `<MessageView>` renders assistant messages with text first, then tool blocks below. Each agentic step is saved as a separate message so intermediate model text and tool results are visible during multi-step runs.
 
 **Zod v4 + AI SDK v6**: There are type inference issues between them — tools are typed as `Record<string, any>` and stream options use `as any` casts. This is intentional.
 
