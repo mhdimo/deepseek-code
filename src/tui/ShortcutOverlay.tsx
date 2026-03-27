@@ -17,16 +17,30 @@ export default function ShortcutOverlay({
 }: ShortcutOverlayProps) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
-      <Text bold color="yellow">Shortcuts & options</Text>
+      <Text bold color="yellow">Shortcuts</Text>
       <Text dimColor> </Text>
-      <Text>  ?                 Toggle this shortcuts panel</Text>
-      <Text>  / + ↑↓ + Enter    Open and navigate command picker</Text>
+
+      <Text color="cyan">Navigation</Text>
+      <Text>  ↑↓                Navigate command picker / input history</Text>
+      <Text>  Tab               Confirm command picker selection</Text>
+      <Text>  Esc               Interrupt generation / dismiss picker</Text>
+      <Text dimColor> </Text>
+
+      <Text color="cyan">Modes</Text>
       <Text>  Shift+Tab         Cycle thinking mode</Text>
-      <Text>  Esc               Interrupt generation / close picker</Text>
+      <Text>  ?                 Toggle this shortcuts panel</Text>
+      <Text dimColor> </Text>
+
+      <Text color="cyan">Session</Text>
       <Text>  Ctrl+C            Exit DeepSeek Code</Text>
       <Text dimColor> </Text>
-      <Text>Thinking mode: <Text color="magenta">{thinkingMode}</Text></Text>
-      <Text>MCP servers: <Text color="cyan">{mcpEnabledCount}/{mcpCount}</Text> enabled</Text>
+
+      <Box>
+        <Text>Thinking: </Text>
+        <Text color="magenta">{thinkingMode === "off" ? "off" : "🐋 whalethink"}</Text>
+        <Text> · MCP: </Text>
+        <Text color="cyan">{mcpEnabledCount}/{mcpCount}</Text>
+      </Box>
       <Text dimColor>{onCloseHint}</Text>
     </Box>
   );

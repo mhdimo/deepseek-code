@@ -21,6 +21,22 @@ const AGENT_COLORS: Record<string, string> = {
   review: "magenta",
 };
 
+// DeepSeek pricing per 1M tokens (as of 2026-03)
+// Input (cache miss): $0.28, Input (cache hit): $0.028, Output: $0.42
+// We use a conservative blended estimate (most tokens are input, cache miss)
+const PRICING: Record<string, number> = {
+  "deepseek-chat": 0.32, // ~80% input @ $0.28 + ~20% output @ $0.42
+  "deepseek-reasoner": 0.32,
+};
+
+function estimateCost(model: string, tokenCount: number): string {
+  const pricePerMillion = PRICING[model] ?? 0.69;
+  const cost = (tokenCount / 1_000_000) * pricePerMillion;
+  if (cost < 0.001) return "<$0.001";
+  if (cost < 0.01) return `$${cost.toFixed(3)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
 export default function StatusBar({
   model,
   agentName,
@@ -68,7 +84,7 @@ export default function StatusBar({
             {mcpEnabledCount > 0 ? ` · MCP ${mcpEnabledCount}` : ""}
             {awaitingPermission ? " · ⚡ permission" : ""}
             {queueCount > 0 ? ` · queue ${queueCount}` : ""}
-            {tokenCount > 0 ? ` · ${tokenCount > 1000 ? `${(tokenCount / 1000).toFixed(1)}k` : tokenCount} tok` : ""}
+            {tokenCount > 0 ? ` · ${tokenCount > 1000 ? `${(tokenCount / 1000).toFixed(1)}k` : tokenCount} tok ~${estimateCost(model, tokenCount)}` : ""}
           </Text>
         </Box>
       </Box>

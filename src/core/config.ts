@@ -1,7 +1,8 @@
-// Configuration loading — env vars → config file → CLI args
+// Configuration loading — defaults ← config file ← env vars ← persisted settings ← CLI args
 //
 // Config supports named model "profiles", each with its own API key, plus
-// optional MCP server definitions.
+// optional MCP server definitions. Runtime changes via /setup, /apikey, /model
+// are persisted to ~/.deepseek-code/settings.json.
 
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
@@ -13,6 +14,7 @@ import type {
   ModelProfile,
   MCPServerConfig,
 } from "./types.js";
+import { loadSettings } from "./storage.js";
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
@@ -110,9 +112,9 @@ function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
 
 // ─── CLI argument parsing ──────────────────────────────────────────────────
 
-function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean } {
+function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string } {
   const args = process.argv.slice(2);
-  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean } = {};
+  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -159,6 +161,13 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
       case "-v":
         config.version = true;
         break;
+      case "--resume":
+      case "-r":
+        if (next) {
+          (config as any).resumeSession = next;
+          i++;
+        }
+        break;
     }
   }
 
@@ -181,6 +190,7 @@ Options:
   -a, --agent <name>            Default agent: code, plan, review (default: code)
   --max-steps <n>               Max tool-call steps per turn (default: 25)
   --dangerously-skip-permissions  Skip permission prompts for tools
+  -r, --resume <hash>           Resume a saved session
   -h, --help                    Show this help
   -v, --version                 Show version
 
@@ -209,16 +219,18 @@ Examples:
 
 // ─── Main loader ───────────────────────────────────────────────────────────
 
-export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean } {
+export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean; resumeSession?: string } {
   const fileConfig = loadConfigFile();
   const envConfig = loadEnvConfig();
+  const persistedConfig = loadPersistedSettings();
   const cliConfig = parseCliArgs();
 
-  // Merge: defaults ← file ← env ← cli (cli wins)
+  // Merge: defaults ← file ← env ← persisted settings ← cli (cli wins)
   const merged = {
     ...DEFAULTS,
     ...fileConfig,
     ...envConfig,
+    ...persistedConfig,
     ...cliConfig,
   };
 
@@ -229,4 +241,15 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
   merged.provider = "deepseek";
 
   return merged as DeepSeekCodeConfig & { help?: boolean; version?: boolean };
+}
+
+/** Load persisted settings from ~/.deepseek-code/settings.json */
+function loadPersistedSettings(): Partial<DeepSeekCodeConfig> {
+  const settings = loadSettings();
+  const config: Partial<DeepSeekCodeConfig> = {};
+  if (settings.apiKey) config.apiKey = settings.apiKey;
+  if (settings.model) config.model = settings.model;
+  if (settings.baseURL) config.baseURL = settings.baseURL;
+  if (settings.defaultAgent) config.defaultAgent = settings.defaultAgent as AgentName;
+  return config;
 }

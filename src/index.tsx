@@ -4,11 +4,13 @@
 //   - CLI arguments: deepseek-code --model deepseek-reasoner
 //   - Environment variables: DEEPSEEK_API_KEY, DEEPSEEK_MODEL, etc.
 //   - Config file: .deepseek-code.json
+//   - Session resume: deepseek-code --resume <hash>
 
 import React from "react";
 import { render } from "ink";
 import App from "./tui/App.js";
 import { loadConfig, printHelp } from "./core/config.js";
+import { loadSettings as loadPersistedSettings } from "./core/storage.js";
 
 const VERSION = "0.1.0";
 
@@ -33,12 +35,23 @@ async function main() {
   }
 
   const workingDirectory = process.cwd();
+  const resumeHash = config.resumeSession;
 
   const { waitUntilExit } = render(
-    <App config={config} workingDirectory={workingDirectory} />,
+    <App config={config} workingDirectory={workingDirectory} resumeSessionHash={resumeHash} />,
   );
 
   await waitUntilExit();
+
+  // After TUI exits, show resume hint
+  try {
+    const settings = loadPersistedSettings();
+    if (settings.lastSessionHash) {
+      console.log(`\n  Resume this session: deepseek-code --resume ${settings.lastSessionHash}\n`);
+    }
+  } catch {
+    // Silently skip
+  }
 }
 
 main().catch((error) => {

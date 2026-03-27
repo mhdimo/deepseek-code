@@ -1,4 +1,4 @@
-// Welcome screen with DeepSeek Code branding
+// Welcome screen with DeepSeek Code branding and command reference
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
@@ -9,19 +9,20 @@ const MASCOT_FRAMES = [
   {
     top: "    ▄▄▄▄▄▄▄    ",
     mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░▄░░░░▄░░█  ",
+    bot: " █░░▄░░░░▄░░░█  ",
   },
   {
     top: "    ▄▄▄▄▄▄▄    ",
     mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░▀░░░░▀░░█  ",
+    bot: " █░░▀░░░░▀░░░█  ",
   },
   {
     top: "    ▄▄▄▄▄▄▄    ",
     mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░░░██░░░░█  ",
+    bot: " █░░░░██░░░░░█  ",
   },
 ] as const;
+
 
 interface WelcomeScreenProps {
   version: string;
@@ -30,13 +31,14 @@ interface WelcomeScreenProps {
   agentName: string;
   providerType: string;
   baseURL?: string;
+  hasApiKey?: boolean;
 }
 
 export default function WelcomeScreen({
   version,
   model,
   workingDirectory,
-  providerType,
+  hasApiKey = true,
 }: WelcomeScreenProps) {
   const [frame, setFrame] = useState(0);
 
@@ -60,6 +62,7 @@ export default function WelcomeScreen({
 
   return (
     <Box flexDirection="column" marginLeft={1} marginBottom={1}>
+      {/* Header */}
       <Box>
         <Box flexDirection="column">
           <Text color="blue">{mascot.top}</Text>
@@ -72,18 +75,38 @@ export default function WelcomeScreen({
             <Text color="blue" bold> Code</Text>
             <Text dimColor> v{version}</Text>
           </Text>
-          <Text dimColor>{model}</Text>
+          <Text dimColor>{model} · 📁 {cwdDisplay}</Text>
         </Box>
       </Box>
 
-      <Box marginTop={1}>
-        <Text dimColor>📁 {cwdDisplay}</Text>
-      </Box>
+      {/* API key warning or status */}
+      {!hasApiKey ? (
+        <Box marginTop={1} flexDirection="column">
+          <Box>
+            <Text backgroundColor="red" color="white" bold> ⚠ NO API KEY </Text>
+            <Text> </Text>
+            <Text dimColor>Paste your key below or use /setup</Text>
+          </Box>
+          <Box marginLeft={1} marginTop={1}>
+            <Text dimColor>Get a key: </Text>
+            <Text color="cyan">https://platform.deepseek.com/api_keys</Text>
+          </Box>
+        </Box>
+      ) : (
+        <Box marginTop={1}>
+          <Text backgroundColor="green" color="white" bold> ✓ READY </Text>
+        </Box>
+      )}
 
-      <Box marginTop={1}>
-        <Text dimColor>/setup for quick API key setup</Text>
-        <Text dimColor>  ·  </Text>
-        <Text dimColor>provider: {providerType}</Text>
+      {/* Footer hint */}
+      <Box>
+        <Text dimColor>Type </Text>
+        <Text color="cyan" bold>/</Text>
+        <Text dimColor> to open command picker · </Text>
+        <Text color="cyan" bold>?</Text>
+        <Text dimColor> for shortcuts · </Text>
+        <Text color="cyan" bold>↑↓</Text>
+        <Text dimColor> input history</Text>
       </Box>
     </Box>
   );

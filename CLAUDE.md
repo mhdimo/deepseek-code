@@ -15,45 +15,59 @@ bun run typecheck    # TypeScript type check (no emit)
 bun test             # Run tests (when present)
 ```
 
+No test framework is configured yet — `bun test` will work once tests are added.
+
 ## Architecture
 
 ```
 src/
-├── index.tsx         # Entry point — loads config, renders Ink app
+├── index.tsx         # Entry point — loads config, renders Ink <App>
 ├── core/
-│   ├── config.ts     # Config loading (env, CLI args, .deepseek-code.json)
-│   └── types.ts      # All shared types (DeepSeekCodeConfig, Message, AgentEvent, etc.)
+│   ├── config.ts     # Config loading (defaults ← file ← env ← CLI)
+│   └── types.ts      # All shared types
 ├── provider/
 │   ├── registry.ts   # DeepSeek provider adapter + createModel()
 │   └── index.ts      # Public exports
 ├── agent/
 │   ├── base.ts       # Agent class — multi-step agentic loop with tool calling
-│   └── index.ts      # Public exports
+│   └── index.ts      # Agent configs (code/plan/review) + AgentManager singleton
 ├── tool/
 │   └── index.ts      # Tool definitions (Read, Write, Edit, Bash, Glob, Grep, LS)
 └── tui/              # Ink React components
-    ├── App.tsx       # Main app — state management, command handling
-    ├── ChatPanel.tsx # Message rendering
+    ├── App.tsx       # Main app — state management, commands, streaming
+    ├── ChatPanel.tsx # Message rendering + streaming display
     ├── TextInput.tsx # User input
-    └── ...           # Other UI components
+    └── ...           # StatusBar, ToolBlock, PermissionPrompt, etc.
 ```
 
 ### Execution flow
 
-1. `src/index.tsx` loads config (env vars → CLI args → `.deepseek-code.json`) and renders `<App>`
-2. `App.tsx` manages runtime state (model, agent, messages, thinking mode)
-3. On message submit, `Agent.run()` streams events: text deltas, thinking, tool calls
-4. TUI consumes events and updates the display
+1. `src/index.tsx` loads config (defaults ← file ← env ← CLI) and renders `<App>`
+2. `App.tsx` manages runtime state (model, agent, messages, thinking mode, permissions)
+3. On message submit, `AgentManager.createAgent()` creates an `Agent` with the current agent config and provider
+4. `Agent.run()` streams `AgentEvent` objects: text deltas, thinking, tool calls
+5. `processAgentStream()` in App.tsx consumes events and updates React state, yielding to the renderer between events so Ink can paint
 
 ### Key patterns
 
-**Provider abstraction**: `DeepSeekCodeConfig` → `createModel(config)` → AI SDK `LanguageModel`. Uses DeepSeek's OpenAI-compatible endpoint.
+**Config merging**: `loadConfig()` merges: `DEFAULTS` ← `.deepseek-code.json` ← env vars ← CLI args. Config files support `env:VAR_NAME` references for secrets (resolved at load time). Legacy paths like `.zcode.json` are also checked.
 
-**Agent loop**: `Agent.run()` yields `AgentEvent` objects (`text-delta`, `tool-call-start`, `tool-call-result`, `finish`, `error`). The loop continues until no tool calls or `maxSteps` reached.
+**Provider**: `createModel(config)` → AI SDK `LanguageModel` via `@ai-sdk/openai`. DeepSeek uses an OpenAI-compatible endpoint at `https://api.deepseek.com/v1`. `registerProviderAdapter()` allows adding custom providers at runtime.
 
-**Tool system**: `createTools(workingDir, permissions, requestPermission)` returns AI SDK-compatible tool definitions. Tools are permission-gated and can prompt for user approval.
+**Agent loop**: `Agent.run()` is an `AsyncGenerator<AgentEvent>`. It calls `streamText()` per step, streams events (text-delta, reasoning, tool-call, tool-result, finish, error), and loops if the model made tool calls. History is truncated to the last 30 messages. AI SDK v6 message format is used: assistant messages use `{ type: "tool-call", input }` parts, tool results use `{ type: "tool-result", output: { type: "text", value } }` parts.
 
-**Zod v4 + AI SDK v6**: This project uses Zod v4 with AI SDK v6. There are type inference issues between them — tools are typed as `Record<string, any>` and stream options use `as any` casts. This is intentional.
+**Tool system**: `createTools(workingDir, permissions, requestPermission)` returns a `Record<string, any>` of tool definitions. Tools use `jsonSchema()` for parameters (not Zod) for DeepSeek API compatibility. Write/Edit/Bash tools prompt for user permission via the `PermissionCallback`.
+
+**Three agents** (defined in `agent/index.ts`):
+- `code`: full access (read + write + execute), 25 max steps
+- `plan`: read-only, 15 max steps — analysis and planning
+- `review`: read-only, 15 max steps — code review
+
+**Streaming in TUI**: `processAgentStream()` in App.tsx iterates the async generator and calls `setStreamingText`/`setStreamingToolUse` etc. A `yieldToRenderer()` (setTimeout 0) between events lets Ink paint updates. On `tool-call-result`, streaming text resets for the next agentic step.
+
+**Permission flow**: Write/Edit/Bash call `requestPermission()` which sets `pendingPermission` state, rendering `<PermissionPrompt>`. The user approves/denies, resolving the promise that unblocks tool execution.
+
+**Zod v4 + AI SDK v6**: There are type inference issues between them — tools are typed as `Record<string, any>` and stream options use `as any` casts. This is intentional.
 
 ## Bun conventions
 
@@ -66,13 +80,13 @@ src/
 
 ## Configuration
 
-Config sources (priority: CLI args > env vars > `.deepseek-code.json`):
+Config sources (priority: CLI args > persisted settings > env vars > `.deepseek-code.json` > defaults):
 
 - `DEEPSEEK_API_KEY` — DeepSeek API key
 - `DEEPSEEK_MODEL` — Model ID (`deepseek-chat` or `deepseek-reasoner`)
 - `DEEPSEEK_BASE_URL` — optional endpoint override (for proxies)
 
-See `.deepseek-code.example.json` for full config file structure including profiles and MCP servers.
+Config file lookup order: `.deepseek-code.json` (cwd) → `~/.config/deepseek-code/config.json` → `~/.deepseek-code.json`. See `.deepseek-code.example.json` for the full schema including profiles and MCP servers.
 
 ## Available Models
 

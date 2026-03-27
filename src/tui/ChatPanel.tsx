@@ -20,6 +20,7 @@ interface ChatPanelProps {
   agentName: string;
   providerType: string;
   baseURL?: string;
+  hasApiKey?: boolean;
 }
 
 type StaticItem =
@@ -37,6 +38,7 @@ export default function ChatPanel({
   agentName,
   providerType,
   baseURL,
+  hasApiKey = true,
 }: ChatPanelProps) {
   // Build static items: welcome screen + finalized messages
   const items: StaticItem[] = [
@@ -59,6 +61,7 @@ export default function ChatPanel({
             agentName={agentName}
             providerType={providerType}
             baseURL={baseURL}
+            hasApiKey={hasApiKey}
           />
         </Box>
       )}
