@@ -22,8 +22,17 @@ export default function ShortcutOverlay({
 
       <Text color="cyan">Navigation</Text>
       <Text>  ↑↓                Navigate command picker / input history</Text>
-      <Text>  Tab               Confirm command picker selection</Text>
+      <Text>  Tab               Confirm command picker selection / autocomplete</Text>
       <Text>  Esc               Interrupt generation / dismiss picker</Text>
+      <Text dimColor> </Text>
+
+      <Text color="cyan">Input editing</Text>
+      <Text>  Alt+Enter / Ctrl+J Insert newline (multiline mode)</Text>
+      <Text>  Home / End         Start / end of current line</Text>
+      <Text>  Ctrl+A / Ctrl+E    Start / end of current line</Text>
+      <Text>  Ctrl+U             Delete to start of line</Text>
+      <Text>  Ctrl+K             Delete to end of line</Text>
+      <Text>  Ctrl+W             Delete word backwards</Text>
       <Text dimColor> </Text>
 
       <Text color="cyan">Modes</Text>
@@ -32,6 +41,7 @@ export default function ShortcutOverlay({
       <Text dimColor> </Text>
 
       <Text color="cyan">Session</Text>
+      <Text>  Ctrl+Q            Clear queued prompts</Text>
       <Text>  Ctrl+C            Exit DeepSeek Code</Text>
       <Text dimColor> </Text>
 

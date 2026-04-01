@@ -16,6 +16,7 @@ import ShortcutOverlay from "./ShortcutOverlay.js";
 import StatusBar from "./StatusBar.js";
 import TextInput from "./TextInput.js";
 import PermissionPrompt from "./PermissionPrompt.js";
+import QueuePreview from "./QueuePreview.js";
 import { agentManager, Agent } from "../agent/index.js";
 import { getToolDescriptions } from "../tool/index.ts";
 import type {
@@ -113,7 +114,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // Hide picker once the user has typed an exact command name (ready to press Enter)
   const isExactCommandMatch =
     filteredCommands.length === 1 && filteredCommands[0]?.name === input.toLowerCase();
-  const showCommandPicker = filteredCommands.length > 0 && !isExactCommandMatch;
+  const showCommandPicker = filteredCommands.length > 0 && !isExactCommandMatch && !input.includes("\n");
   // Keep ref in sync every render so handleSubmit can read it without stale closure
   pickerActiveRef.current = showCommandPicker;
 
@@ -204,6 +205,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     if (key.ctrl && _input === "c") {
       agentRef.current?.abort();
       exit();
+      return;
+    }
+
+    // Ctrl+Q: clear queued prompts
+    if (key.ctrl && _input === "q" && isLoading && queuedSubmissions.length > 0) {
+      const count = queuedSubmissions.length;
+      setQueuedSubmissions([]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "system", content: `🗑 Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`, timestamp: Date.now() },
+      ]);
       return;
     }
 
@@ -578,6 +590,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 "  /mcp                 Show MCP servers and status",
                 "  /mcp enable <name>   Enable an MCP server",
                 "  /mcp disable <name>  Disable an MCP server",
+                "  /queue               Show queued prompts",
+                "  /queue clear         Clear all queued prompts",
                 "  /shortcuts           Toggle shortcuts panel",
                 "  /clear               Clear conversation history",
                 "  /compact             Summarize conversation to save context",
@@ -604,6 +618,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 "",
                 "━━━ Keyboard ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 "  Shift+Tab          Cycle thinking mode",
+                "  Ctrl+Q             Clear queued prompts",
                 "  ↑↓ arrows          Navigate command picker (type / first)",
                 "  ?                  Toggle shortcuts panel",
                 "  Ctrl+C             Exit",
@@ -1077,6 +1092,47 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
+        case "/queue": {
+          const subCmd = parts[1]?.toLowerCase();
+          if (subCmd === "clear") {
+            const count = queuedSubmissions.length;
+            setQueuedSubmissions([]);
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: count > 0
+                  ? `🗑 Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`
+                  : "Queue is already empty.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+          if (queuedSubmissions.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "Queue is empty.", timestamp: Date.now() },
+            ]);
+            return true;
+          }
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: [
+                `Queued prompts (${queuedSubmissions.length}):`,
+                "",
+                ...queuedSubmissions.map((q, i) => `  ${i + 1}. ${q.length > 80 ? q.slice(0, 79) + "…" : q}`),
+                "",
+                "Ctrl+Q or /queue clear to cancel all.",
+              ].join("\n"),
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
         case "/exit":
           if (activeSessionHash) {
             // Show resume hint before exiting — printed to stdout after Ink unmounts
@@ -1314,6 +1370,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         />
       )}
 
+      {/* Queue preview */}
+      {queuedSubmissions.length > 0 && (
+        <QueuePreview queueItems={queuedSubmissions} />
+      )}
+
       {/* Status bar */}
       <StatusBar
         model={activeModel}
@@ -1322,6 +1383,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         thinkingMode={thinkingMode}
         mcpEnabledCount={mcpEnabledCount}
         queueCount={queuedSubmissions.length}
+        queuePreview={queuedSubmissions[0]}
         currentFile={currentFile}
         awaitingPermission={!!pendingPermission}
       />
@@ -1346,6 +1408,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         recentFiles={currentFile ? [currentFile] : []}
         isBlocked={!!pendingPermission}
         waitingPermission={!!pendingPermission}
+        queueCount={queuedSubmissions.length}
       />
     </Box>
   );

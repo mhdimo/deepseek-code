@@ -1,8 +1,9 @@
-// Input component (matches Claude Code's ❯ prompt)
+// Input component with multiline support
+// Enter submits, Alt+Enter / Ctrl+J inserts newline
 
 import React, { useMemo } from "react";
 import { Box, Text, useInput } from "ink";
-import InkTextInput from "ink-text-input";
+import MultilineTextInput from "./MultilineTextInput.js";
 
 interface InputProps {
   inputResetKey?: number;
@@ -15,6 +16,7 @@ interface InputProps {
   recentFiles?: string[];
   isBlocked?: boolean;
   waitingPermission?: boolean;
+  queueCount?: number;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -57,6 +59,53 @@ function getSuggestion(
   return suggestions[idx]!;
 }
 
+/** Context-sensitive footer hints */
+function FooterHints({
+  value,
+  isLoading,
+  waitingPermission,
+}: {
+  value: string;
+  isLoading: boolean;
+  waitingPermission: boolean;
+}) {
+  const hasNewlines = value.includes("\n");
+
+  // Loading without multiline: existing behavior
+  if (isLoading && !hasNewlines) {
+    return (
+      <Text dimColor italic>
+        {waitingPermission
+          ? "Waiting for permission approval\u2026 Enter confirms selected action, Esc cancels."
+          : "Running response\u2026 press Esc to interrupt."}
+      </Text>
+    );
+  }
+
+  // Multiline hints
+  const hints: string[] = [];
+  if (hasNewlines) {
+    hints.push("Enter submit");
+    hints.push("Alt+Enter / Ctrl+J newline");
+  }
+  if (isLoading) {
+    hints.push("Esc interrupt");
+  }
+
+  if (hints.length === 0) return null;
+
+  return (
+    <Text dimColor>
+      {hints.map((h, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && " \u00b7 "}
+          <Text bold>{h}</Text>
+        </React.Fragment>
+      ))}
+    </Text>
+  );
+}
+
 export default function Input({
   inputResetKey,
   value,
@@ -68,6 +117,7 @@ export default function Input({
   recentFiles = [],
   isBlocked = false,
   waitingPermission = false,
+  queueCount = 0,
 }: InputProps) {
   const color = AGENT_COLORS[agentName] || "cyan";
 
@@ -84,31 +134,31 @@ export default function Input({
   }, { isActive: !isBlocked });
 
   const placeholder = isLoading
-    ? "Type and press Enter to queue next message..."
+    ? queueCount > 0
+      ? `Type and press Enter to queue… (${queueCount} queued)`
+      : "Type and press Enter to queue next message..."
     : `${suggestion} (tab)`;
 
   return (
     <Box flexDirection="column" paddingX={0}>
       <Box>
         <Text bold={!isLoading} dimColor={isLoading} color={color}>
-          ❯{" "}
+          {"❯ "}
         </Text>
-        <InkTextInput
+        <MultilineTextInput
           key={inputResetKey}
           value={value}
           onChange={onChange}
           onSubmit={() => onSubmit()}
-          placeholder={placeholder}
           focus={!isBlocked}
+          placeholder={placeholder}
         />
       </Box>
-      {isLoading && (
-        <Text dimColor italic>
-          {waitingPermission
-            ? "Waiting for permission approval… Enter confirms selected action, Esc cancels."
-            : "Running response… press Esc to interrupt."}
-        </Text>
-      )}
+      <FooterHints
+        value={value}
+        isLoading={isLoading}
+        waitingPermission={waitingPermission}
+      />
     </Box>
   );
 }

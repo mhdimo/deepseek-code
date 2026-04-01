@@ -11,6 +11,7 @@ interface StatusBarProps {
   thinkingMode?: ThinkingMode;
   mcpEnabledCount?: number;
   queueCount?: number;
+  queuePreview?: string;
   currentFile?: string | null;
   awaitingPermission?: boolean;
 }
@@ -44,6 +45,7 @@ export default function StatusBar({
   thinkingMode = "off",
   mcpEnabledCount = 0,
   queueCount = 0,
+  queuePreview,
   currentFile = null,
   awaitingPermission = false,
 }: StatusBarProps) {
@@ -83,7 +85,11 @@ export default function StatusBar({
             ) : ""}
             {mcpEnabledCount > 0 ? ` · MCP ${mcpEnabledCount}` : ""}
             {awaitingPermission ? " · ⚡ permission" : ""}
-            {queueCount > 0 ? ` · queue ${queueCount}` : ""}
+            {queueCount === 1 && queuePreview
+              ? ` · queue: "${queuePreview.length > 30 ? queuePreview.slice(0, 29) + "…" : queuePreview}"`
+              : queueCount > 1
+                ? ` · queue ${queueCount}`
+                : ""}
             {tokenCount > 0 ? ` · ${tokenCount > 1000 ? `${(tokenCount / 1000).toFixed(1)}k` : tokenCount} tok ~${estimateCost(model, tokenCount)}` : ""}
           </Text>
         </Box>
