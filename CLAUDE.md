@@ -21,33 +21,77 @@ No test framework is configured yet — `bun test` will work once tests are adde
 
 ```
 src/
-├── index.tsx         # Entry point — loads config, renders Ink <App>
-├── core/
-│   ├── config.ts     # Config loading (defaults ← file ← env ← CLI)
-│   ├── storage.ts    # Session + settings persistence (~/.deepseek-code/)
-│   └── types.ts      # All shared types
-├── provider/
-│   ├── registry.ts   # DeepSeek provider adapter + createModel()
-│   └── index.ts      # Public exports
-├── agent/
-│   ├── base.ts       # Agent class — multi-step agentic loop with tool calling
-│   └── index.ts      # Agent configs (code/plan/review) + AgentManager singleton
-├── tool/
-│   └── index.ts      # Tool definitions (Read, Write, Edit, Bash, Glob, Grep, LS)
-└── tui/              # Ink React components
-    ├── App.tsx       # Main app — state management, commands, streaming
-    ├── ChatPanel.tsx # Message rendering + streaming display
-    ├── TextInput.tsx # User input
-    └── ...           # StatusBar, ToolBlock, PermissionPrompt, etc.
+├── index.tsx           # Entry point — loads config, renders Ink <App>
+├── Tool.ts             # Core Tool interface, buildTool(), ToolDef, Types
+├── tools.ts            # Tool registry + AI SDK adapter (getAllBaseTools, getTools, toolsToAISDKFormat)
+├── types/
+│   └── index.ts        # All shared types (Message, AgentEvent, QueryEvent, etc.)
+├── utils/
+│   ├── config.ts       # Config loading (defaults ← file ← env ← CLI)
+│   └── toolUtils.ts    # Shared helpers (path resolution, diff preview, output formatting)
+├── state/
+│   └── storage.ts      # Session + settings persistence (~/.deepseek-code/)
+├── services/
+│   ├── provider/
+│   │   └── registry.ts # DeepSeek provider adapter + createModel()
+│   ├── agent/
+│   │   ├── base.ts     # Agent class — legacy agentic loop (kept as fallback)
+│   │   └── index.ts    # Agent configs (code/plan/review) + AgentManager singleton
+│   ├── query.ts        # Streaming query engine — AsyncGenerator-based agentic loop
+│   ├── tokenTracker.ts # Token counting + cost estimation per session
+│   ├── contextManager.ts # Auto-compaction when approaching context limits
+│   └── tasks/
+│       └── TaskStore.ts # In-memory task store
+├── tools/
+│   ├── FileReadTool/
+│   │   ├── FileReadTool.ts
+│   │   └── prompt.ts
+│   ├── FileWriteTool/ ...
+│   ├── FileEditTool/ ...
+│   ├── BashTool/ ...
+│   ├── GlobTool/ ...
+│   ├── GrepTool/ ...
+│   ├── LS/ ...
+│   ├── WebFetchTool/ ...
+│   ├── WebSearchTool/ ...
+│   ├── NotebookEditTool/ ...
+│   ├── TodoWriteTool/ ...
+│   ├── TaskCreateTool/ ...
+│   ├── TaskGetTool/ ...
+│   ├── TaskUpdateTool/ ...
+│   ├── TaskListTool/ ...
+│   ├── AgentTool/ ...
+│   ├── AskUserQuestionTool/ ...
+│   ├── EnterPlanModeTool/ ...
+│   └── ExitPlanModeTool/ ...
+└── components/         # Ink React components
+    ├── App.tsx         # Main app — state management, commands, streaming
+    ├── ChatPanel.tsx   # Message rendering + streaming display
+    ├── MessageView.tsx # Individual message rendering with Markdown
+    ├── Markdown.tsx    # Rich markdown renderer (bold, italic, code, lists, etc.)
+    ├── ToolBlock.tsx   # Tool execution display with colors + duration
+    ├── StatusBar.tsx   # Model/cost/tokens display
+    ├── PermissionPrompt.tsx # Permission approval UI with diff preview
+    ├── TextInput.tsx   # Input wrapper
+    ├── MultilineTextInput.tsx # Multi-line input
+    ├── CommandPicker.tsx # Slash command suggestions
+    ├── ShortcutOverlay.tsx # Keyboard shortcuts
+    ├── QueuePreview.tsx # Queued prompts
+    ├── Spinner.tsx     # Loading spinner
+    ├── WelcomeScreen.tsx # Initial welcome screen
+    └── index.ts        # Barrel exports
 ```
 
 ### Execution flow
 
 1. `src/index.tsx` loads config (defaults ← file ← env ← CLI) and renders `<App>`
 2. `App.tsx` manages runtime state (model, agent, messages, thinking mode, permissions)
-3. On message submit, `AgentManager.createAgent()` creates an `Agent` with the current agent config and provider
-4. `Agent.run()` streams `AgentEvent` objects: text deltas, thinking, tool calls
-5. `processAgentStream()` in App.tsx consumes events and updates React state, yielding to the renderer between events so Ink can paint
+3. On message submit, `query()` creates an AsyncGenerator that:
+   - Creates a `LanguageModel` via `createModel(providerConfig)`
+   - Gets the agent config from `AgentManager.getConfig()`
+   - Assembles tools via `getTools()` + `toolsToAISDKFormat()`
+   - Runs the streaming agentic loop with retry, auto-compaction, token tracking
+4. `processAgentStream()` in App.tsx consumes events and updates React state, yielding to the renderer between events so Ink can paint
 
 ### Key patterns
 
@@ -55,14 +99,24 @@ src/
 
 **Provider**: `createModel(config)` → AI SDK `LanguageModel` via `@ai-sdk/openai`. DeepSeek uses an OpenAI-compatible endpoint at `https://api.deepseek.com/v1`. `registerProviderAdapter()` allows adding custom providers at runtime.
 
-**Agent loop**: `Agent.run()` is an `AsyncGenerator<AgentEvent>`. It calls `streamText()` per step, streams events (text-delta, reasoning, tool-call, tool-result, finish, error), and loops if the model made tool calls. History is truncated to the last 30 messages. AI SDK v6 message format is used: assistant messages use `{ type: "tool-call", input }` parts, tool results use `{ type: "tool-result", output: { type: "text", value } }` parts.
+**Query engine**: `query()` is the main entry point in `src/services/query.ts`. It's an `AsyncGenerator<QueryEvent>` that:
+- Calls `streamText()` per step, streaming events (text-delta, reasoning, tool-call, tool-result, token-usage, compact, finish, error)
+- Loops if the model made tool calls (up to maxSteps)
+- Auto-compacts via `ContextManager` when approaching token limits
+- Tracks token usage and cost via `TokenTracker`
+- Retries on rate-limit (429), server errors (500/503), and network errors with exponential backoff
+- AI SDK v6 message format is used: assistant messages use `{ type: "tool-call", input }` parts, tool results use `{ type: "tool-result", output: { type: "text", value } }` parts
 
-**Tool system**: `createTools(workingDir, permissions, requestPermission)` returns `{ tools, getLastPermissionWaitMs }` — the `tools` record is passed to the AI SDK, while `getLastPermissionWaitMs` is used by the agent loop to subtract permission wait time from reported tool durations. Tools use `jsonSchema()` for parameters (not Zod) for DeepSeek API compatibility. Write/Edit/Bash tools prompt for user permission via the `PermissionCallback`.
+**Tool system**: Each tool is in its own directory under `src/tools/<ToolName>/` using `buildTool()` from `Tool.ts` with Zod schemas internally. The registry (`src/tools.ts`) converts tools to AI SDK format via `zodToJsonSchema()` + `jsonSchema()` for DeepSeek API compatibility. Permission checks happen per-tool in `checkPermissions()`, and the `PermissionCallback` is passed via `ToolUseContext`.
 
-**Three agents** (defined in `agent/index.ts`):
+**Three agents** (defined in `services/agent/index.ts`):
 - `code`: full access (read + write + execute), 25 max steps
 - `plan`: read-only, 15 max steps — analysis and planning
 - `review`: read-only, 15 max steps — code review
+
+**Token tracking**: `TokenTracker` (src/services/tokenTracker.ts) accumulates token usage across steps and estimates cost using DeepSeek pricing (with cache hit discount). Displayed in StatusBar via `formatTokenCount()` and `formatCost()`.
+
+**Context management**: `ContextManager` (src/services/contextManager.ts) estimates token usage (1 token ≈ 4 chars), auto-compacts when usage exceeds 80% of model context window, truncates tool outputs, and prepares messages for API calls (max 30 messages).
 
 **Streaming in TUI**: `processAgentStream()` in App.tsx iterates the async generator and calls `setStreamingText`/`setStreamingToolUse` etc. A `yieldToRenderer()` (setTimeout 0) between events lets Ink paint updates. On `tool-call-result`, the current text + tool blocks are finalized as a message in history, then streaming state resets for the next agentic step.
 
@@ -70,7 +124,7 @@ src/
 
 **Permission prompt UI**: `<PermissionPrompt>` shows a diff preview with green background for additions (+) and red background for deletions (-). Options are navigable with arrow keys. Press Tab on Yes/No to add feedback before confirming.
 
-**Message rendering**: `<MessageView>` renders assistant messages with text first, then tool blocks below. Each agentic step is saved as a separate message so intermediate model text and tool results are visible during multi-step runs.
+**Message rendering**: `<MessageView>` renders assistant messages using `<Markdown>` for rich formatting (bold, italic, code blocks, lists, headings, blockquotes). Each agentic step is saved as a separate message so intermediate model text and tool results are visible during multi-step runs.
 
 **Zod v4 + AI SDK v6**: There are type inference issues between them — tools are typed as `Record<string, any>` and stream options use `as any` casts. This is intentional.
 

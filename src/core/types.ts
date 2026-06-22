@@ -1,7 +1,5 @@
 // Core types for DeepSeek Code
 
-import type { z } from "zod";
-
 // ─── Provider ───────────────────────────────────────────────────────────────
 
 /** Provider types — DeepSeek uses OpenAI-compatible API */
@@ -147,3 +145,32 @@ export interface DeepSeekCodeConfig {
 
 /** @deprecated Use DeepSeekCodeConfig */
 export type ZCodeConfig = DeepSeekCodeConfig;
+
+// ─── Task & Todo management ─────────────────────────────────────────────────
+
+export interface TaskItem {
+  id: string;
+  subject: string;
+  description: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm?: string;
+  blocks: string[];
+  blockedBy: string[];
+  owner?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm?: string;
+}
+
+export interface AskUserQuestion {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description: string }>;
+  multiSelect?: boolean;
+}

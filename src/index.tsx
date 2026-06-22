@@ -8,9 +8,9 @@
 
 import React from "react";
 import { render } from "ink";
-import App from "./tui/App.js";
-import { loadConfig, printHelp } from "./core/config.js";
-import { loadSettings as loadPersistedSettings } from "./core/storage.js";
+import App from "./components/App.js";
+import { loadConfig, printHelp } from "./utils/config.js";
+import { loadSettings as loadPersistedSettings } from "./state/storage.js";
 
 const VERSION = "0.1.0";
 
