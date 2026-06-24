@@ -3,7 +3,6 @@
 // This is the bridge between the Tool interface and AI SDK's tool format.
 // Tools use Zod internally, but we convert to jsonSchema() for DeepSeek API.
 
-import { jsonSchema, tool as aiTool } from "ai";
 import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
 import type { PermissionRuleset } from "./types/index.js";
@@ -69,68 +68,6 @@ export function getTools(permissions: PermissionRuleset): Tools {
 // ─── AI SDK adapter ───────────────────────────────────────────────────────────
 
 let permissionWaitMs = 0;
-
-/**
- * Convert a Tool to AI SDK format for streamText().
- * Uses Zod v4 toJSONSchema + jsonSchema() for DeepSeek API compatibility.
- */
-function toolToAISDK(tool: Tool, context: ToolUseContext): Record<string, any> {
-  // Convert Zod v4 schema → JSON Schema using built-in method
-  const schemaObj = (tool.inputSchema as any).toJSONSchema();
-  // Remove $schema to keep it clean
-  delete (schemaObj as any).$schema;
-  
-  // Clean the schema object: remove any non-standard properties and ensure it's plain JSON
-  // Use JSON.parse/stringify to strip non-serializable properties like "~standard"
-  const cleanSchema = JSON.parse(JSON.stringify(schemaObj));
-
-  const desc =
-    typeof tool.description === "function" ? "" : tool.description;
-
-  return aiTool({
-    description: desc,
-    inputSchema: jsonSchema(cleanSchema) as any, // AI SDK jsonSchema wrapper for DeepSeek API
-    execute: async (params: Record<string, any>) => {
-      // 1. Permission check
-      const decision: PermissionDecision = await tool.checkPermissions(
-        params,
-        context,
-      );
-      if (!decision.approved) {
-        return decision.feedback
-          ? `Permission denied: ${decision.feedback}`
-          : "Permission denied by user.";
-      }
-
-      // 2. Execute
-      try {
-        const result = await tool.call(params, context);
-        return typeof result.data === "string"
-          ? result.data
-          : JSON.stringify(result.data, null, 2);
-      } catch (error) {
-        return `Error: ${(error as Error).message}`;
-      }
-    },
-  });
-}
-
-/**
- * Convert a set of Tools to AI SDK format for streamText().
- * This is the main entry point — the agent loop calls this.
- */
-export function toolsToAISDKFormat(
-  tools: Tools,
-  context: ToolUseContext,
-): Record<string, any> {
-  const record: Record<string, any> = {};
-  for (const tool of tools) {
-    if (tool.isEnabled()) {
-      record[tool.name] = toolToAISDK(tool, context);
-    }
-  }
-  return record;
-}
 
 /**
  * Convert Tools to ai-sdk-cpp (native) tool format. Each tool's execute runs

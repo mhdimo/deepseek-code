@@ -11,7 +11,7 @@ import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-s
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { ToolUseContext, PermissionCallback } from "../../Tool.js";
-import type { AgentConfig, ProviderConfig, MCPServerConfig } from "../../types/index.js";
+import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem } from "../../types/index.js";
 
 export interface MemorySession {
   agent: Agent;
@@ -39,20 +39,24 @@ export function getOrCreateMemorySession(opts: {
 
   const model = createModel(providerConfig);
 
-  // Per-session tool context. Shared mutable state (todos/tasks/planMode) is
-  // stubbed for now; wiring real App state through is a follow-up.
+  // Per-session mutable state — persists across turns within this session
+  // (resets on /clear or provider switch when the session is recreated).
+  let todos: TodoItem[] = [];
+  let tasks: TaskItem[] = [];
+  let planMode = false;
+
   const context: ToolUseContext = {
     workingDir,
     permissions: agentConfig.permissions,
     abortController: new AbortController(),
     requestPermission: requestPermission ?? (() => Promise.resolve({ approved: true })),
     messages: [],
-    getTodos: () => [],
-    setTodos: () => {},
-    getTasks: () => [],
-    setTasks: () => {},
-    getPlanMode: () => false,
-    setPlanMode: () => {},
+    getTodos: () => todos,
+    setTodos: (t) => { todos = t; },
+    getTasks: () => tasks,
+    setTasks: (t) => { tasks = t; },
+    getPlanMode: () => planMode,
+    setPlanMode: (m) => { planMode = m; },
     lastPermissionWaitMs: 0,
     recordPermissionWait: () => {},
     consumePermissionWaitMs: () => 0,
