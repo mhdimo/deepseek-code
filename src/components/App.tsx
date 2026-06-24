@@ -545,7 +545,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           agentConfig,
           workingDir: workingDirectory,
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-          maxContextTokens: 128 * 1024,
+          maxContextTokens: 1_000_000,
           requestPermission,
           mcpServers,
         });
