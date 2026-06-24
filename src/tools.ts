@@ -4,6 +4,7 @@
 // Tools use Zod internally, but we convert to jsonSchema() for DeepSeek API.
 
 import { jsonSchema, tool as aiTool } from "ai";
+import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
 import type { PermissionRuleset } from "./types/index.js";
 
@@ -129,6 +130,48 @@ export function toolsToAISDKFormat(
     }
   }
   return record;
+}
+
+/**
+ * Convert Tools to ai-sdk-cpp (native) tool format. Each tool's execute runs
+ * the permission check + tool.call on the JS side; the C++ loop awaits it via
+ * the async-tool bridge, so interactive permissions work.
+ */
+export function toolsToBindingFormat(
+  tools: Tools,
+  context: ToolUseContext,
+): ToolDefinition[] {
+  const out: ToolDefinition[] = [];
+  for (const tool of tools) {
+    if (!tool.isEnabled()) continue;
+    const schemaObj = (tool.inputSchema as any).toJSONSchema();
+    delete (schemaObj as any).$schema;
+    const cleanSchema = JSON.parse(JSON.stringify(schemaObj));
+    const description =
+      typeof tool.description === "string" ? tool.description : tool.name;
+    out.push(
+      bindingTool(tool.name, cleanSchema, description, async (input: Record<string, unknown>) => {
+        const decision: PermissionDecision = await tool.checkPermissions(
+          input as any,
+          context,
+        );
+        if (!decision.approved) {
+          return decision.feedback
+            ? `Permission denied: ${decision.feedback}`
+            : "Permission denied by user.";
+        }
+        try {
+          const result = await tool.call(input as any, context);
+          return typeof result.data === "string"
+            ? result.data
+            : JSON.stringify(result.data, null, 2);
+        } catch (error) {
+          return `Error: ${(error as Error).message}`;
+        }
+      }),
+    );
+  }
+  return out;
 }
 
 /**

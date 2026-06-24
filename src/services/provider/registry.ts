@@ -1,65 +1,46 @@
-// Provider registry — returns AI SDK LanguageModel instances
+// Provider registry — returns ai-sdk-cpp (native C++) Model instances.
 //
-// DeepSeek uses an OpenAI-compatible API endpoint.
-// API docs: https://api-docs.deepseek.com/
+// The engine is now the C++ SDK via the Node binding (was the Vercel AI SDK).
+// DeepSeek is OpenAI-compatible, so we use the binding's createDeepSeek, which
+// delegates to the C++ OpenAI provider with DeepSeek's base URL + API key.
 
-import type { LanguageModel } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createDeepSeek, type Model, type ProviderInstance } from "ai-sdk-cpp";
 import type { ProviderConfig, ProviderType } from "../../types/index.js";
-
-// ─── DeepSeek API Configuration ─────────────────────────────────────────────
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-chat";
 
-// ─── Provider adapters ──────────────────────────────────────────────────────
-
 export interface ProviderAdapter {
-  /** Build an AI SDK LanguageModel from a provider config */
-  createModel: (config: ProviderConfig) => LanguageModel;
-  /** Human-readable note shown in docs/help if needed */
+  /** Build a native (ai-sdk-cpp) Model from a provider config. */
+  createModel: (config: ProviderConfig) => Model;
   notes?: string;
 }
 
-/**
- * DeepSeek adapter using OpenAI-compatible API.
- * DeepSeek's API follows the OpenAI Chat Completions format.
- * Models: deepseek-chat, deepseek-reasoner
- */
-function createDeepSeekModel(config: ProviderConfig): LanguageModel {
-  const provider = createOpenAI({
+function createDeepSeekModel(config: ProviderConfig): Model {
+  const provider: ProviderInstance = createDeepSeek({
     apiKey: config.apiKey,
-    baseURL: config.baseURL || DEEPSEEK_BASE_URL,
+    baseUrl: config.baseURL || DEEPSEEK_BASE_URL,
   });
-
-  const modelId = config.model || DEEPSEEK_DEFAULT_MODEL;
-  // Use .chat() to force Chat Completions API (/chat/completions)
-  return provider.chat(modelId);
+  return provider(config.model || DEEPSEEK_DEFAULT_MODEL);
 }
 
 const PROVIDER_ADAPTERS: Record<ProviderType, ProviderAdapter> = {
   deepseek: {
     createModel: createDeepSeekModel,
-    notes: "DeepSeek API — models: deepseek-chat, deepseek-reasoner",
+    notes: "DeepSeek via ai-sdk-cpp (OpenAI-compatible)",
   },
 };
 
-/**
- * Runtime extension point for custom adapters.
- */
 export function registerProviderAdapter(type: ProviderType, adapter: ProviderAdapter): void {
   PROVIDER_ADAPTERS[type] = adapter;
 }
 
-/**
- * Create an AI SDK LanguageModel from a provider config.
- */
-export function createModel(config: ProviderConfig): LanguageModel {
+/** Create a native ai-sdk-cpp Model from a provider config. */
+export function createModel(config: ProviderConfig): Model {
   const adapter = PROVIDER_ADAPTERS[config.type] || PROVIDER_ADAPTERS.deepseek;
   return adapter.createModel(config);
 }
 
-// Export defaults for convenience
 export const DEEPSEEK_DEFAULTS = {
   baseURL: DEEPSEEK_BASE_URL,
   model: DEEPSEEK_DEFAULT_MODEL,
