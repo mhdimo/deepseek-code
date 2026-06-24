@@ -547,6 +547,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
           maxContextTokens: 128 * 1024,
           requestPermission,
+          mcpServers,
         });
 
         const events = query({

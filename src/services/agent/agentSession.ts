@@ -7,11 +7,11 @@
 // and reused across turns so the C++ retains history + memory. Call
 // resetMemorySession() on /clear or provider switch.
 
-import { Agent, Session } from "ai-sdk-cpp";
+import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-sdk-cpp";
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { ToolUseContext, PermissionCallback } from "../../Tool.js";
-import type { AgentConfig, ProviderConfig } from "../../types/index.js";
+import type { AgentConfig, ProviderConfig, MCPServerConfig } from "../../types/index.js";
 
 export interface MemorySession {
   agent: Agent;
@@ -28,6 +28,7 @@ export function getOrCreateMemorySession(opts: {
   memoryDir: string;
   maxContextTokens?: number;
   requestPermission?: PermissionCallback;
+  mcpServers?: Record<string, MCPServerConfig>;
 }): MemorySession {
   const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission } = opts;
   const key = [
@@ -57,11 +58,33 @@ export function getOrCreateMemorySession(opts: {
     consumePermissionWaitMs: () => 0,
   };
   const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
+
+  // Connect to configured MCP servers (best-effort; failures skip the server).
+  const extraToolSets: StandardToolSet[] = [];
+  if (opts.mcpServers) {
+    for (const [, srv] of Object.entries(opts.mcpServers)) {
+      if (srv.enabled === false) continue;
+      try {
+        const configJson = JSON.stringify({
+          transport: srv.command ? "stdio" : "http",
+          command: srv.command,
+          args: srv.args,
+          env: srv.env,
+          url: (srv as any).url,
+          headers: (srv as any).headers,
+        });
+        const ts = mcpToolsetFromServer(configJson);
+        if (ts) extraToolSets.push(ts);
+      } catch { /* skip failed server */ }
+    }
+  }
+
   const agent = new Agent({
     model,
     tools,
     instructions: agentConfig.systemPrompt,
     maxSteps: agentConfig.maxSteps || 25,
+    extraToolSets: extraToolSets.length > 0 ? extraToolSets : undefined,
   });
   const session = new Session(agent, { memoryDir, maxContextTokens });
 
