@@ -1,111 +1,25 @@
-// Streaming query engine — ai-sdk-cpp (native C++) backend.
+// Streaming query engine — ai-sdk-cpp (native C++) backend, memory-session mode.
 //
-// The C++ agent loop now owns the multi-step tool loop: it calls the model,
-// executes tools (via the async-tool bridge — so interactive permissions work),
-// and streams events. This module maps those native events to deepseek-code's
-// QueryEvent shape (what the Ink UI consumes) and handles TS-side history +
-// context compaction. Retry / token-cost / todo-state parity are follow-ups.
+// The C++ Session owns history + context management (memory auto-inject +
+// sliding-window auto-compact). This module just drives session.sendStream and
+// maps native events to deepseek-code's QueryEvent shape for the Ink UI.
 
-import { streamText as bindingStreamText, type Model as BindingModel } from "ai-sdk-cpp";
-import type {
-  AgentConfig,
-  Message,
-  QueryEvent,
-  TokenUsage,
-} from "../types/index.js";
-import { getTools, toolsToBindingFormat } from "../tools.js";
-import type { ToolUseContext, PermissionCallback } from "../Tool.js";
-
-// Loose subsets of TokenTracker / ContextManager (structural typing — the real
-// classes are supersets and remain assignable).
-interface QueryTokenTracker {
-  addUsage(u: TokenUsage): void;
-}
-interface QueryContextManager {
-  prepareForAPI(m: Message[]): Message[];
-  needsCompaction(m: Message[]): boolean;
-  compact(m: Message[]): { before: number; after: number; messages: Message[] };
-}
+import type { Session as BindingSession } from "ai-sdk-cpp";
+import type { AgentConfig, QueryEvent, TokenUsage } from "../types/index.js";
 
 export interface QueryParams {
-  model: BindingModel;
+  session: BindingSession;
   config: AgentConfig;
   userMessage: string;
-  history: Message[];
   workingDir: string;
   abortController: AbortController;
-  requestPermission?: PermissionCallback;
-  tokenTracker?: QueryTokenTracker;
-  contextManager?: QueryContextManager;
-}
-
-function toApiMessages(history: Message[], userMessage: string): Array<{ role: string; content: string }> {
-  const msgs = history
-    .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role, content: m.content }));
-  msgs.push({ role: "user", content: userMessage });
-  return msgs;
 }
 
 export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
-  const {
-    model, config, userMessage, history, workingDir, abortController,
-    requestPermission, tokenTracker, contextManager,
-  } = params;
-
-  // Per-query tool context. Mutable shared state (todos/tasks/planMode) is
-  // stubbed for now — wiring the real App state through is a follow-up.
-  const toolContext: ToolUseContext = {
-    workingDir,
-    permissions: config.permissions,
-    abortController,
-    requestPermission: requestPermission ?? (async () => ({ approved: true })),
-    messages: history,
-    lastPermissionWaitMs: 0,
-    recordPermissionWait: () => {},
-    consumePermissionWaitMs: () => 0,
-    getTodos: () => [],
-    setTodos: () => {},
-    getTasks: () => [],
-    setTasks: () => {},
-    getPlanMode: () => false,
-    setPlanMode: () => {},
-  };
-  const tools = toolsToBindingFormat(getTools(config.permissions), toolContext);
-
-  // Auto-compaction (TS-side; the C++ gets the already-compacted history).
-  let baseHistory = history;
-  if (contextManager && contextManager.needsCompaction(history)) {
-    const c = contextManager.compact(history);
-    if (c.before > c.after) {
-      baseHistory = c.messages;
-      yield {
-        type: "compact",
-        reason: "Context approaching token limit",
-        messagesBefore: c.before,
-        messagesAfter: c.after,
-      };
-    }
-  }
-
-  const prepared = contextManager ? contextManager.prepareForAPI(baseHistory) : baseHistory;
-  const apiMessages = toApiMessages(prepared, userMessage);
-
-  // NOTE: the native finish event currently carries no token usage, so usage
-  // stays zero here until the binding surfaces it. Cost/token parity = follow-up.
-  const total: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-  const zeroCost = { inputCost: 0, outputCost: 0, totalCost: 0 };
+  const { session, userMessage, abortController } = params;
 
   try {
-    for await (const ev of bindingStreamText({
-      model,
-      system: config.systemPrompt,
-      messages: apiMessages,
-      tools,
-      maxSteps: config.maxSteps || 25,
-      temperature: config.temperature,
-      maxOutputTokens: config.maxTokens,
-    })) {
+    for await (const ev of session.sendStream(userMessage)) {
       if (abortController.signal.aborted) break;
       switch (ev.type) {
         case "text_delta":
@@ -133,10 +47,18 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
           break;
         case "finish": {
           const u: TokenUsage = ev.usage
-            ? { promptTokens: ev.usage.inputTokens, completionTokens: ev.usage.outputTokens, totalTokens: ev.usage.inputTokens + ev.usage.outputTokens }
-            : total;
-          tokenTracker?.addUsage(u);
-          yield { type: "finish", usage: u, cost: zeroCost, finishReason: "stop" };
+            ? {
+                promptTokens: ev.usage.inputTokens,
+                completionTokens: ev.usage.outputTokens,
+                totalTokens: ev.usage.inputTokens + ev.usage.outputTokens,
+              }
+            : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          yield {
+            type: "finish",
+            usage: u,
+            cost: { inputCost: 0, outputCost: 0, totalCost: 0 },
+            finishReason: "stop",
+          };
           break;
         }
         case "error":

@@ -20,6 +20,8 @@ import QueuePreview from "./QueuePreview.js";
 import { agentManager } from "../services/agent/index.js";
 import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
+import { getOrCreateMemorySession, resetMemorySession } from "../services/agent/agentSession.js";
+import os from "node:os";
 import { TokenTracker } from "../services/tokenTracker.js";
 import { ContextManager } from "../services/contextManager.js";
 import { getToolDescriptions } from "../tools.js";
@@ -535,19 +537,24 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       contextManagerRef.current.setModel(activeModel);
 
       try {
-        const model = createModel(providerConfig);
         const agentConfig = agentManager.getConfig(currentAgent);
 
+        // C++ owns history + memory + compaction; session is persistent across turns.
+        const { session } = getOrCreateMemorySession({
+          providerConfig,
+          agentConfig,
+          workingDir: workingDirectory,
+          memoryDir: `${os.homedir()}/.deepseek-code/memory`,
+          maxContextTokens: 128 * 1024,
+          requestPermission,
+        });
+
         const events = query({
-          model,
+          session,
           config: agentConfig,
           userMessage: trimmedInput,
-          history: messages,
           workingDir: workingDirectory,
           abortController,
-          requestPermission,
-          tokenTracker: tokenTrackerRef.current,
-          contextManager: contextManagerRef.current,
         });
 
         await processAgentStream(events);
@@ -943,6 +950,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
         case "/clear":
           setMessages([]);
+          resetMemorySession();
           setTokenCount(0);
           return true;
 
@@ -1216,6 +1224,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           }
           if (arg === "clear" || arg === "new") {
             setMessages([]);
+            resetMemorySession();
             setTokenCount(0);
             setActiveSessionHash(null);
             setMessages([{ role: "system", content: "✓ Started a new session.", timestamp: Date.now() }]);
