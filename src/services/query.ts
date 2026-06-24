@@ -131,10 +131,14 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
             duration: 0,
           };
           break;
-        case "finish":
-          tokenTracker?.addUsage(total);
-          yield { type: "finish", usage: total, cost: zeroCost, finishReason: "stop" };
+        case "finish": {
+          const u: TokenUsage = ev.usage
+            ? { promptTokens: ev.usage.inputTokens, completionTokens: ev.usage.outputTokens, totalTokens: ev.usage.inputTokens + ev.usage.outputTokens }
+            : total;
+          tokenTracker?.addUsage(u);
+          yield { type: "finish", usage: u, cost: zeroCost, finishReason: "stop" };
           break;
+        }
         case "error":
           yield { type: "error", error: ev.text || "stream error" };
           return;

@@ -138,9 +138,13 @@ export class Agent {
               duration: 0,
             };
             break;
-          case "finish":
-            yield { type: "finish", usage: totalUsage, finishReason: "stop" };
+          case "finish": {
+            const u = ev.usage
+              ? { promptTokens: ev.usage.inputTokens, completionTokens: ev.usage.outputTokens, totalTokens: ev.usage.inputTokens + ev.usage.outputTokens }
+              : totalUsage;
+            yield { type: "finish", usage: u, finishReason: "stop" };
             break;
+          }
           case "error":
             yield { type: "error", error: ev.text || "stream error" };
             return;
