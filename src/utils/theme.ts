@@ -31,6 +31,10 @@ export const theme = {
   // Diff colors (dark theme)
   diffAdded: "rgb(34, 92, 43)",
   diffRemoved: "rgb(122, 41, 54)",
+  diffAddedDimmed: "rgb(71, 88, 74)",
+  diffRemovedDimmed: "rgb(105, 72, 77)",
+  diffAddedWord: "rgb(56, 166, 96)",
+  diffRemovedWord: "rgb(179, 89, 107)",
   diffAddedText: "rgb(56, 166, 96)",
   diffRemovedText: "rgb(179, 89, 107)",
 

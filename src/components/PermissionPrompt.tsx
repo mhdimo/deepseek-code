@@ -1,18 +1,7 @@
-// Permission prompt — matches Claude Code's Select-based permission UI
-//
-// Layout:
-//   Allow Bash?
-//   $ rm -rf /tmp/test
-//
-//   ❯ Yes                                        ← cyan highlight
-//     Yes, allow all commands during this session
-//     No
-//
-//   Esc to cancel
-
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme } from "../utils/theme.js";
+import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
 
 interface PermissionPromptProps {
   toolName: string;
@@ -172,6 +161,33 @@ export default function PermissionPrompt({
     ? filePath.split("/").pop() || filePath
     : null;
 
+  // Structured Diff support
+  const cols = process.stdout.columns || 80;
+  const diffWidth = Math.max(20, cols - 6);
+  const hunk = isFileEdit ? parseDiffTextToHunk(description) : null;
+
+  let headerText = "";
+  let displayHunk = hunk;
+
+  if (hunk) {
+    const firstHunkLine = hunk.lines[0];
+    if (firstHunkLine) {
+      const idx = description.indexOf(firstHunkLine);
+      if (idx !== -1) {
+        headerText = description.slice(0, idx).trim();
+      } else {
+        headerText = description.split("\n")[0] || "";
+      }
+    }
+    
+    if (hunk.lines.length > maxPreviewLines) {
+      displayHunk = {
+        ...hunk,
+        lines: hunk.lines.slice(0, maxPreviewLines),
+      };
+    }
+  }
+
   return (
     <Box
       flexDirection="column"
@@ -196,9 +212,20 @@ export default function PermissionPrompt({
       {/* Diff/content preview */}
       {previewLines.length > 0 && (
         <Box flexDirection="column" marginTop={0}>
-          {previewLines.map((line, i) => (
-            <DiffLine key={`diff-${i}`} line={line} />
-          ))}
+          {displayHunk ? (
+            <Box flexDirection="column">
+              {headerText ? (
+                <Box marginBottom={1}>
+                  <Text dimColor>{headerText}</Text>
+                </Box>
+              ) : null}
+              <StructuredDiff patch={displayHunk} width={diffWidth} />
+            </Box>
+          ) : (
+            previewLines.map((line, i) => (
+              <DiffLine key={`diff-${i}`} line={line} />
+            ))
+          )}
           {truncated && (
             <Text dimColor>
               {" "}

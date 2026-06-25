@@ -31,6 +31,12 @@ export interface ToolUseBlock {
   duration?: number;
 }
 
+export interface MessageBlock {
+  type: "text" | "tool";
+  content?: string;
+  block?: ToolUseBlock;
+}
+
 export interface Message {
   role: "user" | "assistant" | "system";
   content: string;
@@ -39,6 +45,8 @@ export interface Message {
   isError?: boolean;
   /** Extended thinking / reasoning text (collapsed by default) */
   thinking?: string;
+  /** Chronological list of text/tool blocks to prevent layout swapping */
+  blocks?: MessageBlock[];
 }
 
 // ─── Agent Events (streamed from agent → TUI) ──────────────────────────────

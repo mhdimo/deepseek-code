@@ -163,9 +163,11 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
         break;
       case "--resume":
       case "-r":
-        if (next) {
+        if (next && !next.startsWith("-")) {
           (config as any).resumeSession = next;
           i++;
+        } else {
+          (config as any).resumeSession = "latest";
         }
         break;
     }

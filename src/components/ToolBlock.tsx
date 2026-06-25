@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { ToolUseBlock } from "../types/index.js";
 import { theme } from "../utils/theme.js";
+import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
 
 // Tool label display names
 const TOOL_LABELS: Record<string, string> = {
@@ -41,9 +42,10 @@ const BLACK_CIRCLE = "⏺";
 interface ToolBlockProps {
   block: ToolUseBlock;
   isHighlighted?: boolean;
+  isTranscriptMode?: boolean;
 }
 
-export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
+export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const label = TOOL_LABELS[block.toolName] || block.toolName;
   const labelColor = theme.toolLabel[block.toolName] || theme.inactive;
   const isRunning = block.status === "running";
@@ -58,7 +60,8 @@ export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
   const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
 
   // Output lines
-  const maxOutputLines = block.isExpanded ? 200 : 12;
+  const expanded = block.isExpanded || isTranscriptMode;
+  const maxOutputLines = expanded ? (isTranscriptMode ? 1000 : 200) : 12;
   const outputText = block.output || "";
   const allLines = outputText.split("\n");
   const showLines = allLines.slice(0, maxOutputLines);
@@ -71,6 +74,34 @@ export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
     if (trimmed.startsWith("-")) return theme.diffRemovedText;
     return undefined;
   };
+
+  // Structured Diff support
+  const cols = process.stdout.columns || 80;
+  const diffWidth = Math.max(20, cols - 6);
+  const isDiffTool = block.toolName === "Edit" || block.toolName === "Write";
+  const hunk = isDiffTool && outputText ? parseDiffTextToHunk(outputText) : null;
+
+  let headerText = "";
+  let displayHunk = hunk;
+
+  if (hunk && outputText) {
+    const firstHunkLine = hunk.lines[0];
+    if (firstHunkLine) {
+      const idx = outputText.indexOf(firstHunkLine);
+      if (idx !== -1) {
+        headerText = outputText.slice(0, idx).trim();
+      } else {
+        headerText = outputText.split("\n")[0] || "";
+      }
+    }
+    
+    if (hunk.lines.length > maxOutputLines) {
+      displayHunk = {
+        ...hunk,
+        lines: hunk.lines.slice(0, maxOutputLines),
+      };
+    }
+  }
 
   return (
     <Box flexDirection="column" marginY={0}>
@@ -91,21 +122,32 @@ export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
       </Box>
 
       {/* Output preview */}
-      {outputText && (block.isExpanded || isError) && (
+      {outputText && (expanded || isError) && (
         <Box flexDirection="column" marginLeft={3}>
-          {showLines.map((line, i) => {
-            const c = lineColor(line);
-            return (
-              <Text
-                key={`${block.toolCallId}-out-${i}`}
-                color={isError ? theme.error : c}
-                dimColor={!isError && !c}
-                wrap="wrap"
-              >
-                {line || " "}
-              </Text>
-            );
-          })}
+          {displayHunk ? (
+            <Box flexDirection="column">
+              {headerText ? (
+                <Box marginBottom={1}>
+                  <Text dimColor>{headerText}</Text>
+                </Box>
+              ) : null}
+              <StructuredDiff patch={displayHunk} width={diffWidth} />
+            </Box>
+          ) : (
+            showLines.map((line, i) => {
+              const c = lineColor(line);
+              return (
+                <Text
+                  key={`${block.toolCallId}-out-${i}`}
+                  color={isError ? theme.error : c}
+                  dimColor={!isError && !c}
+                  wrap="wrap"
+                >
+                  {line || " "}
+                </Text>
+              );
+            })
+          )}
           {truncated && (
             <Text dimColor>
               … ({allLines.length - maxOutputLines} more lines)
@@ -115,12 +157,13 @@ export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
       )}
 
       {/* Result summary for done blocks */}
-      {isDone && outputText && !block.isExpanded && (
+      {isDone && outputText && !expanded && (
         <Box marginLeft={3}>
           <Text dimColor>
             {outputText.length > 120
               ? outputText.slice(0, 119) + "…"
               : outputText}
+            {" "}(ctrl+o to expand)
           </Text>
         </Box>
       )}

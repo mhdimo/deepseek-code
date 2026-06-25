@@ -1,14 +1,14 @@
 # DeepSeek Code
 
-Terminal-native AI coding agent powered by DeepSeek, with multi-agent workflow and MCP extensibility.
+A terminal-native AI coding agent — powered by DeepSeek, with multi-agent workflows, tool execution, and MCP extensibility.
 
 ## Features
 
-- Fast terminal interaction (Ink-based TUI)
-- Multi-step coding agent loop with tool execution
-- DeepSeek API integration (deepseek-chat, deepseek-reasoner)
-- Model/profile switching at runtime
-- MCP server discovery/status UX in-app
+- Native terminal UI built with Ink (React)
+- Autonomous multi-step agent loop with 19 built-in tools
+- DeepSeek models: `deepseek-chat` and `deepseek-reasoner`
+- Switch models, profiles, and agents on the fly
+- MCP server support — configure, toggle, and monitor in-app
 
 ## Documentation
 
@@ -41,7 +41,7 @@ bun run build
 
 ---
 
-## Quick configuration
+## Quick setup
 
 You can configure via environment variables or `.deepseek-code.json`.
 
@@ -57,11 +57,11 @@ export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"  # optional, for proxies
 
 Copy [.deepseek-code.example.json](.deepseek-code.example.json) and edit values.
 
-Supports:
+The config file supports:
 
-- base model/key
-- named `profiles`
-- `mcpServers`
+- default model and API key
+- named profiles for different model setups
+- MCP server definitions
 
 ---
 
@@ -74,11 +74,11 @@ Supports:
 
 ## MCP
 
-Current MCP scope in DeepSeek Code:
+DeepSeek Code supports the Model Context Protocol for extending capabilities:
 
-- Configurable `mcpServers` in `.deepseek-code.json`
-- `/mcp` command for visibility and toggling
-- MCP status shown in UI
+- Define `mcpServers` in `.deepseek-code.json`
+- `/mcp` command to view and toggle servers at runtime
+- Active MCP servers displayed in the status bar
 
 See [docs/MCP.md](docs/MCP.md) for examples and roadmap.
 
@@ -103,8 +103,8 @@ Type `/` to open the command picker. Use arrows to navigate.
 
 - Runtime: Bun
 - Language: TypeScript
-- UI: Ink
-- Model layer: AI SDK
+- UI: Ink (React TUI)
+- Agent engine: ai-sdk-cpp (native C++)
 
 For code structure and data flow, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

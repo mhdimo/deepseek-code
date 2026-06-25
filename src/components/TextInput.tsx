@@ -114,10 +114,18 @@ export default function Input({
 
   return (
     <Box flexDirection="column">
-      {/* Bordered input area */}
+      {/* Bordered input area matching Claude Code's full-width horizontal bar */}
       <Box
-        borderStyle="round"
+        flexDirection="row"
+        alignItems="flex-start"
+        justifyContent="flex-start"
         borderColor={color}
+        borderStyle="round"
+        borderLeft={false}
+        borderRight={false}
+        borderBottom={true}
+        borderTop={true}
+        width="100%"
         paddingX={1}
       >
         <Text bold={!isLoading} dimColor={isLoading} color={color}>

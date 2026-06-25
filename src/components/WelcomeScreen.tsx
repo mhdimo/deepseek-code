@@ -76,7 +76,7 @@ export default function WelcomeScreen({
             <Text color={theme.assistantDim} bold> Code</Text>
             <Text dimColor> v{version}</Text>
           </Text>
-          <Text dimColor>{model} · 📁 {cwdDisplay}</Text>
+          <Text dimColor>{model} · {cwdDisplay}</Text>
         </Box>
       </Box>
 
@@ -84,7 +84,7 @@ export default function WelcomeScreen({
       {!hasApiKey ? (
         <Box marginTop={1} flexDirection="column">
           <Box>
-            <Text backgroundColor={theme.error} color={theme.inverseText} bold> ⚠ NO API KEY </Text>
+            <Text backgroundColor={theme.error} color={theme.inverseText} bold> NO API KEY </Text>
             <Text> </Text>
             <Text dimColor>Paste your key below or use /setup</Text>
           </Box>

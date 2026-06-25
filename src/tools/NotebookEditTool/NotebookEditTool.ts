@@ -1,9 +1,10 @@
 // NotebookEditTool — read/write Jupyter .ipynb cells
 //
 // Supports replacing, inserting, and deleting cells in Jupyter notebooks.
-// Uses Bun.file() for efficient file I/O with JSON parse/stringify.
+// Uses Node.js fs/promises for file I/O with JSON parse/stringify.
 
 import { z } from "zod";
+import { readFile, writeFile, stat } from "fs/promises";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { DESCRIPTION } from "./prompt.js";
@@ -79,15 +80,21 @@ export const NotebookEditTool = buildTool({
     const fullPath = resolvePath(context.workingDir, args.notebook_path);
 
     try {
-      const file = Bun.file(fullPath);
-
       // Read and parse the notebook
-      const exists = await file.exists();
+      let exists = false;
+      try {
+        await stat(fullPath);
+        exists = true;
+      } catch {
+        exists = false;
+      }
+
       if (!exists) {
         return { data: `Notebook not found: ${args.notebook_path}` };
       }
 
-      const nb = (await file.json()) as Notebook;
+      const fileContent = await readFile(fullPath, "utf-8");
+      const nb = JSON.parse(fileContent) as Notebook;
 
       if (!Array.isArray(nb.cells)) {
         return { data: `Invalid notebook format: no cells array found.` };
@@ -103,7 +110,7 @@ export const NotebookEditTool = buildTool({
             };
           }
           const deleted = nb.cells.splice(cell_number, 1);
-          await Bun.write(fullPath, JSON.stringify(nb, null, 1) + "\n");
+          await writeFile(fullPath, JSON.stringify(nb, null, 1) + "\n", "utf-8");
           return {
             data: `Deleted cell ${cell_number} (was ${deleted[0]!.cell_type}). Notebook now has ${nb.cells.length} cells.`,
           };
@@ -115,7 +122,7 @@ export const NotebookEditTool = buildTool({
           const newCell = buildCell(type as CellType, source);
           const insertAt = Math.min(cell_number, nb.cells.length);
           nb.cells.splice(insertAt, 0, newCell);
-          await Bun.write(fullPath, JSON.stringify(nb, null, 1) + "\n");
+          await writeFile(fullPath, JSON.stringify(nb, null, 1) + "\n", "utf-8");
           return {
             data: `Inserted ${type} cell at index ${insertAt}. Notebook now has ${nb.cells.length} cells.`,
           };
@@ -143,7 +150,7 @@ export const NotebookEditTool = buildTool({
             nb.cells[cell_number]!.execution_count = existing.execution_count;
           }
 
-          await Bun.write(fullPath, JSON.stringify(nb, null, 1) + "\n");
+          await writeFile(fullPath, JSON.stringify(nb, null, 1) + "\n", "utf-8");
           return {
             data: `Replaced cell ${cell_number} (${type}). Source:\n${source.slice(0, 500)}`,
           };

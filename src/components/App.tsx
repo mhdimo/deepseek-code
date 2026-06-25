@@ -8,11 +8,12 @@
 //   - Token tracking
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Box, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import ChatPanel from "./ChatPanel.js";
 import CommandPicker, { filterCommands } from "./CommandPicker.js";
 import type { CommandDef } from "./CommandPicker.js";
 import ShortcutOverlay from "./ShortcutOverlay.js";
+import SessionPicker from "./SessionPicker.js";
 import StatusBar from "./StatusBar.js";
 import TextInput from "./TextInput.js";
 import PermissionPrompt from "./PermissionPrompt.js";
@@ -36,6 +37,7 @@ import type {
   DeepSeekCodeConfig,
   ThinkingMode,
   MCPServerConfig,
+  MessageBlock,
 } from "../types/index.js";
 import {
   saveSettings,
@@ -45,6 +47,9 @@ import {
   listSessions,
   pruneSessions,
 } from "../state/storage.js";
+import SettingsPanel from "./SettingsPanel.js";
+import type { TabType } from "./SettingsPanel.js";
+import { recordSessionStats } from "../state/stats.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
@@ -57,6 +62,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingToolUse, setStreamingToolUse] = useState<ToolUseBlock[]>([]);
+  const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
   const [currentAgent, setCurrentAgent] = useState<AgentName>(config.defaultAgent || "code");
   const [tokenCount, setTokenCount] = useState(0);
   const [cost, setCost] = useState(0);
@@ -85,6 +91,20 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Tool Inspection Mode ──────────────────────────────────────────────
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectIndex, setInspectIndex] = useState(0);
+  const [isTranscriptMode, setIsTranscriptMode] = useState(false);
+
+  // ── Session Picker Mode (ctrl+a) ──────────────────────────────────────
+  const [showSessionPicker, setShowSessionPicker] = useState(false);
+  const [sessionPickerIndex, setSessionPickerIndex] = useState(0);
+  const [sessionsList, setSessionsList] = useState<any[]>([]);
+
+  // ── Stats Tracking State & Refs ──────────────────────────────────────
+  const sessionStartMs = useRef(Date.now());
+  const [apiDurationMs, setApiDurationMs] = useState(0);
+  const [sessionLinesAdded, setSessionLinesAdded] = useState(0);
+  const [sessionLinesRemoved, setSessionLinesRemoved] = useState(0);
+  const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
+  const [settingsOverlayTab, setSettingsOverlayTab] = useState<TabType>("usage");
 
   const getFlatToolBlocks = useCallback(() => {
     const flat: Array<{ messageIdx: number; toolIdx: number; block: ToolUseBlock }> = [];
@@ -118,16 +138,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const abortRef = useRef<AbortController | null>(null);
+  const lastSubmittedPromptRef = useRef("");
+  const lastEscTimeRef = useRef(0);
   const tokenTrackerRef = useRef(new TokenTracker(activeModel));
   const contextManagerRef = useRef(new ContextManager(activeModel));
   /** Lets handleSubmit know the picker is intercepting Enter */
   const pickerActiveRef = useRef(false);
   /** Ref to handleSubmit so useInput can call it without stale closure */
-  const handleSubmitRef = useRef<() => void>(() => {});
+  const handleSubmitRef = useRef<(overrideInput?: string) => void>(() => {});
 
   const streamingTextRef = useRef("");
   const streamingThinkingRef = useRef("");
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
+  const streamingBlocksRef = useRef<MessageBlock[]>([]);
 
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
@@ -187,33 +210,90 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         isError: m.isError,
       }));
 
-      if (activeSessionHash) {
-        updateSession(activeSessionHash, {
+      let currentHash = activeSessionHash;
+      if (currentHash) {
+        updateSession(currentHash, {
           messages: sessionMessages,
           tokenUsage: tokenCount,
         });
       } else {
-        const hash = saveSession({
+        currentHash = saveSession({
           messages: sessionMessages,
           tokenUsage: tokenCount,
           model: activeModel,
           agent: currentAgent,
           workingDirectory,
         });
-        setActiveSessionHash(hash);
+        setActiveSessionHash(currentHash);
         // Prune old sessions
         pruneSessions(50);
       }
+
+      // Sync to global stats.json
+      const record = {
+        id: currentHash,
+        name: workingDirectory.split("/").pop() || "session",
+        cwd: workingDirectory,
+        model: activeModel,
+        createdAt: sessionStartMs.current,
+        updatedAt: Date.now(),
+        apiDurationMs,
+        wallDurationMs: Date.now() - sessionStartMs.current,
+        linesAdded: sessionLinesAdded,
+        linesRemoved: sessionLinesRemoved,
+        tokens: {
+          input: tokenCount,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        cost,
+      };
+      recordSessionStats(record);
     } catch {
       // Best-effort
     }
-  }, [messages.length]);
+  }, [messages.length, tokenCount, cost, apiDurationMs, sessionLinesAdded, sessionLinesRemoved]);
 
   // ── Resume session ONLY when --resume <hash> is passed explicitly ────
   useEffect(() => {
     if (!cliResumeHash) return; // No --resume flag → fresh session
     try {
-      const session = loadSession(cliResumeHash);
+      let sessionHashToLoad = cliResumeHash;
+      if (cliResumeHash === "latest") {
+        const sessions = listSessions();
+        // Find the latest session in the current directory
+        const localSession = sessions.find((s) => s.workingDirectory === workingDirectory);
+        if (localSession) {
+          sessionHashToLoad = localSession.hash;
+        } else {
+          // If no local session, check the overall newest session
+          const overallLatest = sessions[0];
+          if (overallLatest) {
+            if (overallLatest.workingDirectory !== workingDirectory) {
+              const cmd = `cd ${overallLatest.workingDirectory} && deepseek-code --resume ${overallLatest.hash}`;
+              try {
+                const { execSync } = require("child_process");
+                execSync(`echo "${cmd}" | pbcopy`);
+              } catch {}
+              process.stderr.write(`\nTo resume session ${overallLatest.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)\n\n`);
+              exit();
+              return;
+            } else {
+              sessionHashToLoad = overallLatest.hash;
+            }
+          } else {
+            // No sessions at all → starting fresh
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "No saved sessions found. Started a fresh session.", timestamp: Date.now() },
+            ]);
+            return;
+          }
+        }
+      }
+
+      const session = loadSession(sessionHashToLoad);
       if (session && session.messages.length > 0) {
         setMessages(session.messages.map((m) => ({
           ...m,
@@ -221,6 +301,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         })));
         setTokenCount(session.tokenUsage);
         setActiveSessionHash(session.hash);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: `✓ Resumed session ${session.hash} (${session.messages.length} messages, ${new Date(session.createdAt).toLocaleString()})`,
+            timestamp: Date.now(),
+          },
+        ]);
       }
     } catch {
       // Fresh start on error
@@ -246,11 +334,89 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   // ── Keybindings ───────────────────────────────────────────────────────
   useInput((_input, key) => {
-    // Ctrl+C: quit
+    // Ctrl+C: quit (if not in transcript mode, otherwise exit transcript mode)
     if (key.ctrl && _input === "c") {
+      if (isTranscriptMode) {
+        setIsTranscriptMode(false);
+        return;
+      }
+      if (showSessionPicker) {
+        setShowSessionPicker(false);
+        return;
+      }
       abortRef.current?.abort();
       exit();
       return;
+    }
+
+    // Ctrl+A: toggle session picker
+    if (key.ctrl && _input === "a") {
+      if (showSessionPicker) {
+        setShowSessionPicker(false);
+      } else if (!isLoading) {
+        const list = listSessions();
+        setSessionsList(list);
+        setSessionPickerIndex(0);
+        setShowSessionPicker(true);
+      }
+      return;
+    }
+
+    // Handle keypresses while Session Picker is open
+    if (showSessionPicker) {
+      if (key.escape || _input === "q") {
+        setShowSessionPicker(false);
+        return;
+      }
+      if (key.upArrow) {
+        setSessionPickerIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSessionPickerIndex((prev) => Math.min(sessionsList.length - 1, prev + 1));
+        return;
+      }
+      if (key.return) {
+        const selected = sessionsList[sessionPickerIndex];
+        if (selected) {
+          if (selected.workingDirectory === workingDirectory) {
+            // Resume in-place
+            const session = loadSession(selected.hash);
+            if (session) {
+              setMessages(session.messages.map((m) => ({ ...m, toolUse: [] })));
+              setTokenCount(session.tokenUsage);
+              setActiveSessionHash(session.hash);
+            }
+            setShowSessionPicker(false);
+          } else {
+            // Exit and print/copy resume command
+            const cmd = `cd ${selected.workingDirectory} && deepseek-code --resume ${selected.hash}`;
+            try {
+              const { execSync } = require("child_process");
+              execSync(`echo "${cmd}" | pbcopy`);
+            } catch {}
+            console.log(`\nTo resume session ${selected.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)`);
+            exit();
+          }
+        }
+        return;
+      }
+      return; // Eat other key inputs while in session picker mode
+    }
+
+    // Ctrl+O: toggle transcript mode (Claude Code style)
+    if (key.ctrl && _input === "o") {
+      setIsTranscriptMode((prev) => !prev);
+      return;
+    }
+
+    // Escape or q exits transcript mode if active
+    if (isTranscriptMode) {
+      if (key.escape || _input === "q") {
+        setIsTranscriptMode(false);
+        return;
+      }
+      return; // Eat other key inputs while in transcript mode
     }
 
     // Ctrl+E: toggle inspect mode
@@ -307,7 +473,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       setQueuedSubmissions([]);
       setMessages((prev) => [
         ...prev,
-        { role: "system", content: `🗑 Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`, timestamp: Date.now() },
+        { role: "system", content: `Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`, timestamp: Date.now() },
       ]);
       return;
     }
@@ -318,7 +484,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // Escape: interrupt generation OR dismiss picker
+    // Escape: interrupt generation OR dismiss picker OR clear input on double press
     if (key.escape) {
       if (pendingPermission) {
         pendingPermission.resolve({ approved: false, feedback: "Cancelled with Esc" });
@@ -334,13 +500,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         setStreamingToolUse([]);
         setMessages((prev) => [
           ...prev,
-          { role: "system", content: "⚠ Generation interrupted.", timestamp: Date.now() },
+          { role: "system", content: "Generation interrupted.", timestamp: Date.now() },
         ]);
+        if (lastSubmittedPromptRef.current) {
+          setInput(lastSubmittedPromptRef.current);
+        }
       } else if (showCommandPicker) {
         setInput("");
         setCommandPickerIndex(0);
       } else if (showShortcuts) {
         setShowShortcuts(false);
+      } else {
+        // Double Escape check to clear the input prompt
+        const now = Date.now();
+        if (now - lastEscTimeRef.current < 500 && input.length > 0) {
+          setInput("");
+        }
+        lastEscTimeRef.current = now;
       }
       return;
     }
@@ -359,15 +535,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const safeIdx = Math.min(commandPickerIndex, filteredCommands.length - 1);
         const cmd = filteredCommands[safeIdx];
         if (cmd) {
-          if (key.return) {
-            // Enter → execute the command immediately (even ones that take args)
-            setInput(cmd.name);
+          if (key.return && !cmd.usage) {
+            // Enter on no-arg command → execute immediately
+            handleSubmitRef.current(cmd.name);
             setInputResetKey((prev) => prev + 1);
-            setTimeout(() => {
-              handleSubmitRef.current();
-            }, 0);
           } else {
-            // Tab → autocomplete (fill usage template with trailing space)
+            // Tab, or Enter on command with args → autocomplete (fill usage template)
             setInput(cmd.usage ?? cmd.name);
             setInputResetKey((prev) => prev + 1);
           }
@@ -449,6 +622,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const handleToolResult = useCallback((toolName: string, input: any, output: string, isError: boolean) => {
+    if (!isError && input && typeof input === "object") {
+      if (toolName === "Edit") {
+        const added = (input.new_string || "").split("\n").length;
+        const removed = (input.old_string || "").split("\n").length;
+        setSessionLinesAdded((prev) => prev + added);
+        setSessionLinesRemoved((prev) => prev + removed);
+      } else if (toolName === "Write") {
+        const added = (input.content || "").split("\n").length;
+        setSessionLinesAdded((prev) => prev + added);
+      }
+    }
+
     let nextToolUse: ToolUseBlock[] = [];
     setStreamingToolUse((prev) => {
       let bestIndex = -1;
@@ -499,6 +684,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       };
       nextToolUse = next;
       streamingToolUseRef.current = next;
+
+      // Update chronological blocks ref & state
+      const blockInListIdx = streamingBlocksRef.current.findIndex(
+        (b) => b.type === "tool" && b.block?.toolName === toolName && b.block?.status === "running"
+      );
+      if (blockInListIdx !== -1) {
+        streamingBlocksRef.current[blockInListIdx] = {
+          type: "tool",
+          block: next[bestIndex]!,
+        };
+        setStreamingBlocks([...streamingBlocksRef.current]);
+      }
+
       return next;
     });
 
@@ -515,6 +713,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       streamingTextRef.current = "";
       streamingThinkingRef.current = "";
       streamingToolUseRef.current = [];
+      streamingBlocksRef.current = [];
+      setStreamingBlocks([]);
 
       for await (const event of events) {
         switch (event.type) {
@@ -527,6 +727,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           case "text-delta":
             streamingTextRef.current += event.text;
             setStreamingText(streamingTextRef.current);
+
+            // Update chronological blocks
+            {
+              const lastBlock = streamingBlocksRef.current[streamingBlocksRef.current.length - 1];
+              if (lastBlock && lastBlock.type === "text") {
+                lastBlock.content = (lastBlock.content || "") + event.text;
+              } else {
+                streamingBlocksRef.current.push({ type: "text", content: event.text });
+              }
+              setStreamingBlocks([...streamingBlocksRef.current]);
+            }
+
             await yieldToRenderer();
             break;
 
@@ -540,6 +752,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             };
             streamingToolUseRef.current = [...streamingToolUseRef.current, block];
             setStreamingToolUse(streamingToolUseRef.current);
+
+            // Update chronological blocks
+            streamingBlocksRef.current.push({ type: "tool", block });
+            setStreamingBlocks([...streamingBlocksRef.current]);
+
             const filePath = event.args?.file_path as string | undefined;
             if (filePath) {
               setCurrentFile(filePath);
@@ -584,6 +801,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               }
               
               setStreamingToolUse([...streamingToolUseRef.current]);
+
+              // Update in chronological blocks
+              const blockInList = streamingBlocksRef.current.find(
+                (b) => b.type === "tool" && b.block?.toolCallId === event.toolCallId
+              );
+              if (blockInList && blockInList.block) {
+                blockInList.block.input = block.input;
+                blockInList.block.argsJson = block.argsJson;
+              }
+              setStreamingBlocks([...streamingBlocksRef.current]);
+
               await yieldToRenderer();
             }
             break;
@@ -602,6 +830,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 // Keep the last input we set
               }
               setStreamingToolUse([...streamingToolUseRef.current]);
+
+              // Update in chronological blocks
+              const blockInList = streamingBlocksRef.current.find(
+                (b) => b.type === "tool" && b.block?.toolCallId === event.toolCallId
+              );
+              if (blockInList && blockInList.block) {
+                blockInList.block.input = block.input;
+              }
+              setStreamingBlocks([...streamingBlocksRef.current]);
+
               await yieldToRenderer();
             }
             break;
@@ -644,15 +882,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               timestamp: Date.now(),
               toolUse: streamingToolUseRef.current.length > 0 ? [...streamingToolUseRef.current] : undefined,
               thinking: streamingThinkingRef.current || undefined,
+              blocks: streamingBlocksRef.current.length > 0 ? [...streamingBlocksRef.current] : undefined,
               isError: true,
             };
             setMessages((prev) => [...prev, errorMsg]);
             streamingTextRef.current = "";
             streamingThinkingRef.current = "";
             streamingToolUseRef.current = [];
+            streamingBlocksRef.current = [];
             setStreamingText("");
             setStreamingThinking("");
             setStreamingToolUse([]);
+            setStreamingBlocks([]);
             setIsLoading(false);
             return;
           }
@@ -663,6 +904,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       const remainingText = streamingTextRef.current;
       const remainingThinking = streamingThinkingRef.current;
       const remainingToolUse = streamingToolUseRef.current;
+      const remainingBlocks = streamingBlocksRef.current;
 
       if (remainingText || remainingToolUse.length > 0 || remainingThinking) {
         const finalMessage: Message = {
@@ -671,15 +913,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           timestamp: Date.now(),
           toolUse: remainingToolUse.length > 0 ? [...remainingToolUse] : undefined,
           thinking: remainingThinking || undefined,
+          blocks: remainingBlocks.length > 0 ? [...remainingBlocks] : undefined,
         };
         setMessages((prev) => [...prev, finalMessage]);
       }
       streamingTextRef.current = "";
       streamingThinkingRef.current = "";
       streamingToolUseRef.current = [];
+      streamingBlocksRef.current = [];
       setStreamingText("");
       setStreamingThinking("");
       setStreamingToolUse([]);
+      setStreamingBlocks([]);
       setIsLoading(false);
     },
     [activeModel],
@@ -741,6 +986,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           history: messages,
         });
 
+        const startTime = Date.now();
         const events = query({
           session,
           config: agentConfig,
@@ -750,6 +996,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         });
 
         await processAgentStream(events);
+        const duration = Date.now() - startTime;
+        setApiDurationMs((prev) => prev + duration);
       } catch (error) {
         const raw = (error as Error).message || String(error);
 
@@ -1333,7 +1581,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               {
                 role: "system",
                 content: count > 0
-                  ? `🗑 Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`
+                  ? `Cleared ${count} queued prompt${count > 1 ? "s" : ""}.`
                   : "Queue is already empty.",
                 timestamp: Date.now(),
               },
@@ -1363,6 +1611,32 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           ]);
           return true;
         }
+
+        case "/cost":
+        case "/usage":
+          setSettingsOverlayTab("usage");
+          setShowSettingsOverlay(true);
+          return true;
+
+        case "/settings":
+          setSettingsOverlayTab("settings");
+          setShowSettingsOverlay(true);
+          return true;
+
+        case "/status":
+          setSettingsOverlayTab("status");
+          setShowSettingsOverlay(true);
+          return true;
+
+        case "/config":
+          setSettingsOverlayTab("config");
+          setShowSettingsOverlay(true);
+          return true;
+
+        case "/stats":
+          setSettingsOverlayTab("stats");
+          setShowSettingsOverlay(true);
+          return true;
 
         case "/exit":
           if (activeSessionHash) {
@@ -1470,12 +1744,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   // ── Submit handler ────────────────────────────────────────────────────
-  const handleSubmit = useCallback(async () => {
-    if (!input.trim()) return;
+  const handleSubmit = useCallback(async (overrideInput?: string) => {
+    const rawInput = overrideInput !== undefined ? overrideInput : input;
+    if (!rawInput.trim()) return;
     // Command picker is open — Enter selects a command, doesn't submit
-    if (pickerActiveRef.current) return;
+    if (pickerActiveRef.current && overrideInput === undefined) return;
 
-    const trimmedInput = input.trim();
+    const trimmedInput = rawInput.trim();
+    if (!trimmedInput.startsWith("/")) {
+      lastSubmittedPromptRef.current = trimmedInput;
+    }
     setInput("");
 
     // Push to input history (skip duplicates)
@@ -1576,6 +1854,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           baseURL={activeBaseURL}
           hasApiKey={!!activeApiKey}
           selectedToolCallId={selectedToolCallId}
+          streamingBlocks={streamingBlocks}
+          isTranscriptMode={isTranscriptMode}
         />
       </Box>
 
@@ -1598,57 +1878,106 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         />
       )}
 
-      {/* Shortcut/options panel */}
-      {showShortcuts && (
-        <ShortcutOverlay
-          thinkingMode={thinkingMode}
-          mcpCount={mcpCount}
-          mcpEnabledCount={mcpEnabledCount}
+      {showSessionPicker ? (
+        <SessionPicker
+          sessions={sessionsList}
+          selectedIndex={sessionPickerIndex}
+          currentDirectory={workingDirectory}
         />
-      )}
-
-      {/* Queue preview */}
-      {queuedSubmissions.length > 0 && (
-        <QueuePreview queueItems={queuedSubmissions} />
-      )}
-
-      {/* Status bar */}
-      <StatusBar
-        model={activeModel}
-        agentName={currentAgent}
-        tokenCount={tokenCount}
-        thinkingMode={thinkingMode}
-        mcpEnabledCount={mcpEnabledCount}
-        queueCount={queuedSubmissions.length}
-        queuePreview={queuedSubmissions[0]}
-        currentFile={currentFile}
-        awaitingPermission={!!pendingPermission}
-        cost={cost}
-        inspectMode={inspectMode}
-      />
-
-      {/* Command picker — visible while user types "/" */}
-      {showCommandPicker && (
-        <CommandPicker
-          commands={filteredCommands}
-          selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+      ) : showSettingsOverlay ? (
+        <SettingsPanel
+          onClose={() => setShowSettingsOverlay(false)}
+          config={config}
+          workingDirectory={workingDirectory}
+          activeModel={activeModel}
+          activeProvider={activeProvider}
+          activeApiKey={activeApiKey}
+          activeBaseURL={activeBaseURL}
+          tokenCount={tokenCount}
+          cost={cost}
+          apiDurationMs={apiDurationMs}
+          sessionStartMs={sessionStartMs.current}
+          linesAdded={sessionLinesAdded}
+          linesRemoved={sessionLinesRemoved}
+          mcpCount={mcpEnabledCount}
+          sessionId={activeSessionHash || "new-session"}
+          initialTab={settingsOverlayTab}
         />
-      )}
+      ) : isTranscriptMode ? (
+        /* Transcript mode footer matching Claude Code */
+        <Box
+          borderStyle="single"
+          borderTop={true}
+          borderBottom={false}
+          borderLeft={false}
+          borderRight={false}
+          borderDimColor
+          paddingLeft={2}
+          paddingRight={2}
+          width="100%"
+          height={3}
+          alignItems="center"
+        >
+          <Text dimColor>
+            Showing detailed transcript · <Text bold color="cyan">ctrl+o</Text> or <Text bold color="cyan">esc</Text> or <Text bold color="cyan">q</Text> to exit
+          </Text>
+        </Box>
+      ) : (
+        /* Normal mode elements */
+        <>
+          {/* Shortcut/options panel */}
+          {showShortcuts && (
+            <ShortcutOverlay
+              thinkingMode={thinkingMode}
+              mcpCount={mcpCount}
+              mcpEnabledCount={mcpEnabledCount}
+            />
+          )}
 
-      {/* Input prompt */}
-      <TextInput
-        inputResetKey={inputResetKey}
-        value={input}
-        onChange={handleInputChange}
-        onSubmit={handleSubmit}
-        isLoading={isLoading}
-        agentName={currentAgent}
-        workingDirectory={workingDirectory}
-        recentFiles={currentFile ? [currentFile] : []}
-        isBlocked={!!pendingPermission}
-        waitingPermission={!!pendingPermission}
-        queueCount={queuedSubmissions.length}
-      />
+          {/* Queue preview */}
+          {queuedSubmissions.length > 0 && (
+            <QueuePreview queueItems={queuedSubmissions} />
+          )}
+
+          {/* Command picker — visible while user types "/" */}
+          {showCommandPicker && (
+            <CommandPicker
+              commands={filteredCommands}
+              selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+            />
+          )}
+
+          {/* Input prompt */}
+          <TextInput
+            inputResetKey={inputResetKey}
+            value={input}
+            onChange={handleInputChange}
+            onSubmit={handleSubmit}
+            isLoading={isLoading}
+            agentName={currentAgent}
+            workingDirectory={workingDirectory}
+            recentFiles={currentFile ? [currentFile] : []}
+            isBlocked={!!pendingPermission}
+            waitingPermission={!!pendingPermission}
+            queueCount={queuedSubmissions.length}
+          />
+
+          {/* Status bar */}
+          <StatusBar
+            model={activeModel}
+            agentName={currentAgent}
+            tokenCount={tokenCount}
+            thinkingMode={thinkingMode}
+            mcpEnabledCount={mcpEnabledCount}
+            queueCount={queuedSubmissions.length}
+            queuePreview={queuedSubmissions[0]}
+            currentFile={currentFile}
+            awaitingPermission={!!pendingPermission}
+            cost={cost}
+            inspectMode={inspectMode}
+          />
+        </>
+      )}
     </Box>
   );
 }

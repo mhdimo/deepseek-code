@@ -25,7 +25,7 @@ export default function ShortcutOverlay({
       <Text>  ↑↓                Navigate command picker / input history</Text>
       <Text>  Tab               Confirm command picker selection / autocomplete</Text>
       <Text>  Esc               Interrupt generation / dismiss picker</Text>
-      <Text>  Ctrl+E            Toggle Inspect Mode (expand/collapse tool outputs)</Text>
+      <Text>  Ctrl+O / Ctrl+E   Toggle Inspect Mode (expand/collapse tool outputs)</Text>
       <Text dimColor> </Text>
 
       <Text color={theme.assistant}>Input editing</Text>

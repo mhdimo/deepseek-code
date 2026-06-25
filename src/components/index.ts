@@ -15,3 +15,4 @@ export { default as MultilineTextInput } from "./MultilineTextInput.js";
 export { default as CommandPicker } from "./CommandPicker.js";
 export { default as QueuePreview } from "./QueuePreview.js";
 export { default as ShortcutOverlay } from "./ShortcutOverlay.js";
+export { default as SessionPicker } from "./SessionPicker.js";

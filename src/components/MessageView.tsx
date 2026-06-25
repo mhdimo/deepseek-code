@@ -23,9 +23,10 @@ import { theme } from "../utils/theme.js";
 interface MessageViewProps {
   message: Message;
   selectedToolCallId?: string | null;
+  isTranscriptMode?: boolean;
 }
 
-export default function MessageView({ message, selectedToolCallId }: MessageViewProps) {
+export default function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageViewProps) {
   // ── User messages — dark grey background matching Claude Code ────────
   if (message.role === "user") {
     return (
@@ -65,28 +66,66 @@ export default function MessageView({ message, selectedToolCallId }: MessageView
           </MessageResponse>
         )}
 
-        {/* Text content — rendered as Markdown inside MessageResponse */}
-        {message.content && (
-          <MessageResponse>
-            {message.isError ? (
-              <Text color={theme.error} wrap="wrap">
-                {message.content}
-              </Text>
-            ) : (
-              <Markdown>{message.content}</Markdown>
+        {/* Chronological message blocks */}
+        {message.blocks && message.blocks.length > 0 ? (
+          message.blocks.map((block, idx) => {
+            if (block.type === "text" && block.content) {
+              return (
+                <MessageResponse key={`msg-block-${idx}`}>
+                  {message.isError ? (
+                    <Text color={theme.error} wrap="wrap">
+                      {block.content}
+                    </Text>
+                  ) : (
+                    <Markdown>{block.content}</Markdown>
+                  )}
+                </MessageResponse>
+              );
+            }
+            if (block.type === "tool" && block.block) {
+              return (
+                <MessageResponse key={`msg-block-${idx}`}>
+                  <ToolBlock
+                    block={block.block}
+                    isTranscriptMode={isTranscriptMode}
+                    isHighlighted={
+                      block.block.toolCallId
+                        ? block.block.toolCallId === selectedToolCallId
+                        : false
+                    }
+                  />
+                </MessageResponse>
+              );
+            }
+            return null;
+          })
+        ) : (
+          <>
+            {/* Text content — rendered as Markdown inside MessageResponse */}
+            {message.content && (
+              <MessageResponse>
+                {message.isError ? (
+                  <Text color={theme.error} wrap="wrap">
+                    {message.content}
+                  </Text>
+                ) : (
+                  <Markdown>{message.content}</Markdown>
+                )}
+              </MessageResponse>
             )}
-          </MessageResponse>
-        )}
 
-        {/* Tool blocks inline */}
-        {message.toolUse?.map((tool, i) => (
-          <MessageResponse key={tool.toolCallId || i}>
-            <ToolBlock
-              block={tool}
-              isHighlighted={tool.toolCallId ? tool.toolCallId === selectedToolCallId : false}
-            />
-          </MessageResponse>
-        ))}
+            {/* Tool blocks inline */}
+            {message.toolUse?.map((tool, i) => (
+              <MessageResponse key={tool.toolCallId || i}>
+                <ToolBlock
+                  block={tool}
+                  isTranscriptMode={isTranscriptMode}
+                  isHighlighted={tool.toolCallId ? tool.toolCallId === selectedToolCallId : false}
+                />
+              </MessageResponse>
+            ))}
+          </>
+        )}
       </Box>
     );
   }

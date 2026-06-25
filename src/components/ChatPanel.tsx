@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Box, Static, Text } from "ink";
-import type { Message, ToolUseBlock } from "../types/index.js";
+import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import MessageView from "./MessageView.js";
 import ToolBlock from "./ToolBlock.js";
 import Markdown from "./Markdown.js";
@@ -25,6 +25,8 @@ interface ChatPanelProps {
   baseURL?: string;
   hasApiKey?: boolean;
   selectedToolCallId?: string | null;
+  streamingBlocks?: MessageBlock[];
+  isTranscriptMode?: boolean;
 }
 
 type StaticItem =
@@ -44,6 +46,8 @@ export default function ChatPanel({
   baseURL,
   hasApiKey = true,
   selectedToolCallId = null,
+  streamingBlocks = [],
+  isTranscriptMode = false,
 }: ChatPanelProps) {
   // Build static items: welcome screen + finalized messages
   const items: StaticItem[] = [
@@ -53,6 +57,13 @@ export default function ChatPanel({
       message: m,
     })),
   ];
+
+  // Sentiment detection based on last user message
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  const hasBadWord = lastUserMessage
+    ? /\b(fuck|shit|bitch|asshole|bastard|damn|crap|cunt|dick|piss|bollocks|bugger|ass)\b/i.test(lastUserMessage.content)
+    : false;
+  const sentiment = hasBadWord ? "frustrated" : "neutral";
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -71,16 +82,35 @@ export default function ChatPanel({
         </Box>
       )}
 
-      {/* Static items */}
-      <Static items={items}>
-        {(item) => {
-          return (
-            <Box key={item.key}>
-              <MessageView message={item.message} selectedToolCallId={selectedToolCallId} />
+      {/* If transcript mode is active, render everything in a normal Box to force complete re-rendering and expansion to stdout. Otherwise, use Static to preserve terminal scrollback. */}
+      {isTranscriptMode ? (
+        <Box flexDirection="column">
+          {messages.map((m, i) => (
+            <Box key={`transcript-msg-${m.timestamp}-${i}`}>
+              <MessageView
+                message={m}
+                selectedToolCallId={selectedToolCallId}
+                isTranscriptMode={isTranscriptMode}
+              />
             </Box>
-          );
-        }}
-      </Static>
+          ))}
+        </Box>
+      ) : (
+        /* Static items */
+        <Static items={items}>
+          {(item) => {
+            return (
+              <Box key={item.key}>
+                <MessageView
+                  message={item.message}
+                  selectedToolCallId={selectedToolCallId}
+                  isTranscriptMode={isTranscriptMode}
+                />
+              </Box>
+            );
+          }}
+        </Static>
+      )}
 
       {/* Live streaming output (not yet finalized) */}
       {isLoading && (
@@ -103,29 +133,59 @@ export default function ChatPanel({
             </MessageResponse>
           ) : null}
 
-          {/* Streaming tool blocks */}
-          {streamingToolUse.map((tool, i) => (
-            <MessageResponse key={tool.toolCallId || i}>
-              <ToolBlock block={tool} />
-            </MessageResponse>
-          ))}
-
-          {/* Streaming text */}
-          {streamingText ? (
-            <MessageResponse>
-              <Box flexDirection="column">
-                <Markdown>{streamingText}</Markdown>
-                <Box>
-                  <Text color={theme.assistant}>▊</Text>
-                </Box>
-              </Box>
-            </MessageResponse>
+          {streamingBlocks && streamingBlocks.length > 0 ? (
+            streamingBlocks.map((block, idx) => {
+              const isLast = idx === streamingBlocks.length - 1;
+              if (block.type === "text" && block.content) {
+                return (
+                  <MessageResponse key={`stream-block-${idx}`}>
+                    <Box flexDirection="column">
+                      <Markdown>{block.content}</Markdown>
+                      {isLast && (
+                        <Box>
+                          <Text color={theme.assistant}>▊</Text>
+                        </Box>
+                      )}
+                    </Box>
+                  </MessageResponse>
+                );
+              }
+              if (block.type === "tool" && block.block) {
+                return (
+                  <MessageResponse key={`stream-block-${idx}`}>
+                    <ToolBlock block={block.block} isTranscriptMode={isTranscriptMode} />
+                  </MessageResponse>
+                );
+              }
+              return null;
+            })
           ) : (
-            !streamingToolUse.some((t) => t.status === "running") && (
-              <MessageResponse>
-                <Spinner label="Thinking..." />
-              </MessageResponse>
-            )
+            <>
+              {/* Streaming tool blocks */}
+              {streamingToolUse.map((tool, i) => (
+                <MessageResponse key={tool.toolCallId || i}>
+                  <ToolBlock block={tool} isTranscriptMode={isTranscriptMode} />
+                </MessageResponse>
+              ))}
+
+              {/* Streaming text */}
+              {streamingText ? (
+                <MessageResponse>
+                  <Box flexDirection="column">
+                    <Markdown>{streamingText}</Markdown>
+                    <Box>
+                      <Text color={theme.assistant}>▊</Text>
+                    </Box>
+                  </Box>
+                </MessageResponse>
+              ) : (
+                !streamingToolUse.some((t) => t.status === "running") && (
+                  <MessageResponse>
+                    <Spinner label="Thinking..." sentiment={sentiment} />
+                  </MessageResponse>
+                )
+              )}
+            </>
           )}
         </Box>
       )}

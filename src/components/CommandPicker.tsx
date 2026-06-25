@@ -23,7 +23,12 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/help",    description: "Show help & keybindings", category: "general", aliases: ["/?", "/shortcuts"] },
   { name: "/shortcuts", description: "Toggle shortcuts panel", category: "general", aliases: ["/?"] },
   { name: "/think",   description: "Toggle thinking mode (off / whale)", usage: "/think ", category: "general", aliases: ["/reason"] },
-  { name: "/cost",    description: "Show session cost and token usage", category: "general" },
+  { name: "/cost",    description: "Show session cost and token usage", category: "general", aliases: ["/usage"] },
+  { name: "/usage",   description: "Show session cost and token usage", category: "general" },
+  { name: "/settings", description: "Show general settings", category: "general" },
+  { name: "/status",   description: "Show session status and details", category: "general" },
+  { name: "/stats",    description: "Show calendar contribution and usage stats", category: "general" },
+  { name: "/config",   description: "Show loaded configuration files", category: "general" },
 
   // ─── Session ──────────────────────────────────────────────────────
   { name: "/clear",   description: "Clear conversation history and free context", category: "session" },

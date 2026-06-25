@@ -84,14 +84,14 @@ export default function StatusBar({
   parts.push("");
   parts.push(agentName);
 
-  if (displayFile) parts.push(`📄 ${displayFile}`);
+  if (displayFile) parts.push(`${displayFile}`);
 
   if (thinkingMode === "whale") {
-    parts.push("🐋 WHALE");
+    parts.push("WHALE");
   }
   if (mcpEnabledCount > 0) parts.push(`MCP ${mcpEnabledCount}`);
-  if (inspectMode) parts.push("🔍 INSPECT");
-  if (awaitingPermission) parts.push("⚡ permission");
+  if (inspectMode) parts.push("INSPECT");
+  if (awaitingPermission) parts.push("permission");
   if (queueCount === 1 && queuePreview) {
     const preview = queuePreview.length > 30 ? queuePreview.slice(0, 29) + "…" : queuePreview;
     parts.push(`queue: "${preview}"`);
@@ -104,30 +104,25 @@ export default function StatusBar({
   }
 
   return (
-    <Box flexDirection="column">
+    <Box paddingX={2} marginTop={0}>
+      {/* Left: model name */}
       <Box>
-        <Text dimColor>{separator}</Text>
+        <Text dimColor>{model} </Text>
       </Box>
-      <Box paddingX={0}>
-        {/* Left: model name */}
-        <Box>
-          <Text bold>{model} </Text>
-        </Box>
 
-        {/* Right: indicators */}
-        <Box flexGrow={1} justifyContent="flex-end">
-          <Text dimColor>
-            {parts.map((p, i) => (
-              <React.Fragment key={i}>
-                {i === 0 ? (
-                  <Text color={agentColor}>⧉</Text>
-                ) : (
-                  ` · ${p}`
-                )}
-              </React.Fragment>
-            ))}
-          </Text>
-        </Box>
+      {/* Right: indicators */}
+      <Box flexGrow={1} justifyContent="flex-end">
+        <Text dimColor>
+          {parts.map((p, i) => (
+            <React.Fragment key={i}>
+              {i === 0 ? (
+                <Text color={agentColor}>⧉</Text>
+              ) : (
+                ` · ${p}`
+              )}
+            </React.Fragment>
+          ))}
+        </Text>
       </Box>
     </Box>
   );
