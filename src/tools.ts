@@ -88,23 +88,59 @@ export function toolsToBindingFormat(
       typeof tool.description === "string" ? tool.description : tool.name;
     out.push(
       bindingTool(tool.name, cleanSchema, description, async (input: Record<string, unknown>) => {
-        const decision: PermissionDecision = await tool.checkPermissions(
-          input as any,
-          context,
-        );
-        if (!decision.approved) {
-          return decision.feedback
-            ? `Permission denied: ${decision.feedback}`
-            : "Permission denied by user.";
+        if (context.abortController.signal.aborted) {
+          throw new Error("❌ Aborted/Cancelled by user");
         }
+
+        let abortHandler: (() => void) | null = null;
+        const abortPromise = new Promise<never>((_, reject) => {
+          abortHandler = () => reject(new Error("❌ Aborted/Cancelled by user"));
+          context.abortController.signal.addEventListener("abort", abortHandler);
+        });
+
+        let resultString = "";
+        let isError = false;
         try {
-          const result = await tool.call(input as any, context);
-          return typeof result.data === "string"
-            ? result.data
-            : JSON.stringify(result.data, null, 2);
+          if (context.getPlanMode() && !tool.isReadOnly(input)) {
+            resultString = `Permission denied: Tool ${tool.name} is a write/execute action, which is disabled in plan mode (read-only). Please write your plan or exit plan mode to modify files.`;
+            isError = true;
+          } else {
+            const decision: PermissionDecision = await Promise.race([
+              tool.checkPermissions(input as any, context),
+              abortPromise,
+            ]);
+            if (!decision.approved) {
+              resultString = decision.feedback
+                ? `Permission denied: ${decision.feedback}`
+                : "Permission denied by user.";
+              isError = true;
+            } else {
+              const result = await Promise.race([
+                tool.call(input as any, context),
+                abortPromise,
+              ]);
+              resultString = typeof result.data === "string"
+                ? result.data
+                : JSON.stringify(result.data, null, 2);
+            }
+          }
         } catch (error) {
-          return `Error: ${(error as Error).message}`;
+          isError = true;
+          resultString = (error as Error).message ?? String(error);
+        } finally {
+          if (abortHandler) {
+            context.abortController.signal.removeEventListener("abort", abortHandler);
+          }
         }
+
+        if (context.onToolResult) {
+          context.onToolResult(tool.name, input, resultString, isError);
+        }
+
+        if (isError && resultString.includes("Aborted/Cancelled")) {
+          throw new Error(resultString);
+        }
+        return resultString;
       }),
     );
   }

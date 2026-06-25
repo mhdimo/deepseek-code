@@ -40,9 +40,10 @@ const BLACK_CIRCLE = "⏺";
 
 interface ToolBlockProps {
   block: ToolUseBlock;
+  isHighlighted?: boolean;
 }
 
-export default function ToolBlock({ block }: ToolBlockProps) {
+export default function ToolBlock({ block, isHighlighted }: ToolBlockProps) {
   const label = TOOL_LABELS[block.toolName] || block.toolName;
   const labelColor = theme.toolLabel[block.toolName] || theme.inactive;
   const isRunning = block.status === "running";
@@ -57,7 +58,7 @@ export default function ToolBlock({ block }: ToolBlockProps) {
   const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
 
   // Output lines
-  const maxOutputLines = 12;
+  const maxOutputLines = block.isExpanded ? 200 : 12;
   const outputText = block.output || "";
   const allLines = outputText.split("\n");
   const showLines = allLines.slice(0, maxOutputLines);
@@ -75,6 +76,7 @@ export default function ToolBlock({ block }: ToolBlockProps) {
     <Box flexDirection="column" marginY={0}>
       {/* Header: status + tool label badge + args + duration */}
       <Box>
+        {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
         <Text color={statusColor}>{statusIcon} </Text>
         <Text backgroundColor={labelColor} color={theme.inverseText} bold>
           {" "}{label}{" "}
@@ -82,6 +84,9 @@ export default function ToolBlock({ block }: ToolBlockProps) {
         <Text dimColor>{argPreview}</Text>
         {block.duration !== undefined && block.duration > 0 && (
           <Text dimColor> ({formatDuration(block.duration)})</Text>
+        )}
+        {isHighlighted && (
+          <Text color={theme.warning} bold> [Space to toggle]</Text>
         )}
       </Box>
 

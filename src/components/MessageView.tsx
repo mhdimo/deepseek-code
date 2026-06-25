@@ -22,9 +22,10 @@ import { theme } from "../utils/theme.js";
 
 interface MessageViewProps {
   message: Message;
+  selectedToolCallId?: string | null;
 }
 
-export default function MessageView({ message }: MessageViewProps) {
+export default function MessageView({ message, selectedToolCallId }: MessageViewProps) {
   // ── User messages — dark grey background matching Claude Code ────────
   if (message.role === "user") {
     return (
@@ -57,9 +58,10 @@ export default function MessageView({ message }: MessageViewProps) {
         {/* Thinking indicator — therefore sign matching Claude Code */}
         {message.thinking && (
           <MessageResponse>
-            <Text dimColor italic>
-              ∴ Thinking
-            </Text>
+            <Box flexDirection="column">
+              <Text dimColor italic>∴ Thinking</Text>
+              <Text dimColor italic wrap="wrap">{message.thinking}</Text>
+            </Box>
           </MessageResponse>
         )}
 
@@ -79,7 +81,10 @@ export default function MessageView({ message }: MessageViewProps) {
         {/* Tool blocks inline */}
         {message.toolUse?.map((tool, i) => (
           <MessageResponse key={tool.toolCallId || i}>
-            <ToolBlock block={tool} />
+            <ToolBlock
+              block={tool}
+              isHighlighted={tool.toolCallId ? tool.toolCallId === selectedToolCallId : false}
+            />
           </MessageResponse>
         ))}
       </Box>

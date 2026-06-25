@@ -24,6 +24,7 @@ interface ChatPanelProps {
   providerType: string;
   baseURL?: string;
   hasApiKey?: boolean;
+  selectedToolCallId?: string | null;
 }
 
 type StaticItem =
@@ -42,6 +43,7 @@ export default function ChatPanel({
   providerType,
   baseURL,
   hasApiKey = true,
+  selectedToolCallId = null,
 }: ChatPanelProps) {
   // Build static items: welcome screen + finalized messages
   const items: StaticItem[] = [
@@ -74,7 +76,7 @@ export default function ChatPanel({
         {(item) => {
           return (
             <Box key={item.key}>
-              <MessageView message={item.message} />
+              <MessageView message={item.message} selectedToolCallId={selectedToolCallId} />
             </Box>
           );
         }}

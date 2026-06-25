@@ -24,6 +24,7 @@ export interface ToolUseBlock {
   toolName: string;
   toolCallId?: string;
   input?: string;
+  argsJson?: string;
   output?: string;
   isExpanded?: boolean;
   status?: "running" | "done" | "error";
@@ -48,7 +49,7 @@ export type AgentEvent =
   | { type: "tool-call-start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-call-result"; toolCallId: string; toolName: string; result: string; duration: number }
   | { type: "step-finish"; stepTokens: { prompt: number; completion: number } }
-  | { type: "finish"; usage: TokenUsage; finishReason: string }
+  | { type: "finish"; usage: TokenUsage; cost?: CostEstimate; finishReason: string }
   | { type: "error"; error: string }
   | { type: "permission-request"; toolName: string; args: Record<string, unknown>; resolve: (approved: boolean) => void };
 
@@ -78,6 +79,8 @@ export type QueryEvent =
   | { type: "text-delta"; text: string }
   | { type: "thinking-delta"; text: string }
   | { type: "tool-call-start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool-call-delta"; toolCallId: string; toolName: string; text: string }
+  | { type: "tool-call-end"; toolCallId: string; toolName: string }
   | { type: "tool-call-result"; toolCallId: string; toolName: string; result: string; duration: number }
   | { type: "step-finish"; stepTokens: { prompt: number; completion: number } }
   | { type: "token-usage"; usage: TokenUsage; cost: CostEstimate }

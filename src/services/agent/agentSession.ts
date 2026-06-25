@@ -11,14 +11,15 @@ import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-s
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { ToolUseContext, PermissionCallback } from "../../Tool.js";
-import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem } from "../../types/index.js";
+import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem, Message } from "../../types/index.js";
+import { readFileSync, existsSync } from "node:fs";
 
 export interface MemorySession {
   agent: Agent;
   session: Session;
 }
 
-interface CacheEntry { key: string; ms: MemorySession; }
+interface CacheEntry { key: string; ms: MemorySession; context: ToolUseContext; }
 let cache: CacheEntry | null = null;
 
 export function getOrCreateMemorySession(opts: {
@@ -29,13 +30,27 @@ export function getOrCreateMemorySession(opts: {
   maxContextTokens?: number;
   requestPermission?: PermissionCallback;
   mcpServers?: Record<string, MCPServerConfig>;
+  abortController?: AbortController;
+  onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
+  history?: Message[];
 }): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission } = opts;
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult } = opts;
   const key = [
     providerConfig.type, providerConfig.model || "", providerConfig.baseURL || "",
     workingDir, agentConfig.name, memoryDir,
   ].join("|");
-  if (cache && cache.key === key) return cache.ms;
+  if (cache && cache.key === key) {
+    if (requestPermission) {
+      cache.context.requestPermission = requestPermission;
+    }
+    if (abortController) {
+      cache.context.abortController = abortController;
+    }
+    if (onToolResult) {
+      cache.context.onToolResult = onToolResult;
+    }
+    return cache.ms;
+  }
 
   const model = createModel(providerConfig);
 
@@ -46,9 +61,10 @@ export function getOrCreateMemorySession(opts: {
   let planMode = false;
 
   const context: ToolUseContext = {
+    providerConfig,
     workingDir,
     permissions: agentConfig.permissions,
-    abortController: new AbortController(),
+    abortController: abortController ?? new AbortController(),
     requestPermission: requestPermission ?? (() => Promise.resolve({ approved: true })),
     messages: [],
     getTodos: () => todos,
@@ -60,6 +76,7 @@ export function getOrCreateMemorySession(opts: {
     lastPermissionWaitMs: 0,
     recordPermissionWait: () => {},
     consumePermissionWaitMs: () => 0,
+    onToolResult,
   };
   const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
 
@@ -83,17 +100,41 @@ export function getOrCreateMemorySession(opts: {
     }
   }
 
+  // Auto-inject project context (CLAUDE.md / DEEP.md / AGENTS.md) into the prompt.
+  let instructions = agentConfig.systemPrompt;
+  for (const doc of ["CLAUDE.md", "DEEP.md", "AGENTS.md"]) {
+    const docPath = `${workingDir}/${doc}`;
+    if (existsSync(docPath)) {
+      try {
+        const content = readFileSync(docPath, "utf-8");
+        if (content.trim()) {
+          instructions += `\n\n--- ${doc} (project context) ---\n${content}`;
+        }
+      } catch { /* read error — skip */ }
+    }
+  }
+
   const agent = new Agent({
     model,
     tools,
-    instructions: agentConfig.systemPrompt,
+    instructions,
     maxSteps: agentConfig.maxSteps || 25,
     extraToolSets: extraToolSets.length > 0 ? extraToolSets : undefined,
   });
   const session = new Session(agent, { memoryDir, maxContextTokens });
 
+  if (opts.history && opts.history.length > 0) {
+    for (const msg of opts.history) {
+      if (msg.role === "user") {
+        session.addUser(msg.content);
+      } else if (msg.role === "assistant") {
+        session.addAssistant(msg.content);
+      }
+    }
+  }
+
   const ms: MemorySession = { agent, session };
-  cache = { key, ms };
+  cache = { key, ms, context };
   return ms;
 }
 

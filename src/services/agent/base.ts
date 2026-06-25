@@ -47,10 +47,12 @@ function categorizeError(error: unknown): { category: ErrorCategory; message: st
 export class Agent {
   private model: BindingModel;
   private config: AgentConfig;
+  private providerConfig: ProviderConfig;
   private abortController: AbortController | null = null;
 
   constructor(config: AgentConfig, providerConfig: ProviderConfig) {
     this.config = config;
+    this.providerConfig = providerConfig;
     this.model = createModel(providerConfig);
   }
 
@@ -77,6 +79,7 @@ export class Agent {
     this.abortController = runAbortController;
 
     const context: ToolUseContext = {
+      providerConfig: this.providerConfig,
       workingDir,
       permissions: this.config.permissions,
       abortController: runAbortController,

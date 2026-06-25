@@ -20,6 +20,7 @@ interface StatusBarProps {
   currentFile?: string | null;
   awaitingPermission?: boolean;
   cost?: number;
+  inspectMode?: boolean;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -62,6 +63,7 @@ export default function StatusBar({
   currentFile = null,
   awaitingPermission = false,
   cost,
+  inspectMode = false,
 }: StatusBarProps) {
   const cols = process.stdout.columns || 80;
   const separator = "─".repeat(cols);
@@ -88,6 +90,7 @@ export default function StatusBar({
     parts.push("🐋 WHALE");
   }
   if (mcpEnabledCount > 0) parts.push(`MCP ${mcpEnabledCount}`);
+  if (inspectMode) parts.push("🔍 INSPECT");
   if (awaitingPermission) parts.push("⚡ permission");
   if (queueCount === 1 && queuePreview) {
     const preview = queuePreview.length > 30 ? queuePreview.slice(0, 29) + "…" : queuePreview;

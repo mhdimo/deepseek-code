@@ -8,7 +8,7 @@
 // (DeepSeek compatibility) but Zod internally for validation.
 
 import type { z } from "zod";
-import type { PermissionRuleset } from "./types/index.js";
+import type { PermissionRuleset, ProviderConfig } from "./types/index.js";
 
 // ─── Permission types ────────────────────────────────────────────────────────
 
@@ -31,6 +31,8 @@ export interface ToolResult<T = unknown> {
 }
 
 export interface ToolUseContext {
+  /** LLM provider configuration */
+  providerConfig: ProviderConfig;
   /** Working directory for file operations */
   workingDir: string;
   /** Current agent permission set */
@@ -62,6 +64,8 @@ export interface ToolUseContext {
   askUserQuestions?: (
     questions: import("./types/index.js").AskUserQuestion[],
   ) => Promise<Record<string, string>>;
+  /** Callback when a tool completes execution (for real-time TUI updates) */
+  onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
 }
 
 // ─── Tool interface ──────────────────────────────────────────────────────────

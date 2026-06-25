@@ -36,6 +36,21 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
             args: {},
           };
           break;
+        case "tool_call_delta":
+          yield {
+            type: "tool-call-delta",
+            toolCallId: ev.toolCallId || "",
+            toolName: ev.toolName || "",
+            text: ev.text || "",
+          };
+          break;
+        case "tool_call_end":
+          yield {
+            type: "tool-call-end",
+            toolCallId: ev.toolCallId || "",
+            toolName: ev.toolName || "",
+          };
+          break;
         case "tool_result":
           yield {
             type: "tool-call-result",
@@ -43,6 +58,12 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
             toolName: ev.toolName || "",
             result: ev.text || "",
             duration: 0,
+          };
+          break;
+        case "step_finish":
+          yield {
+            type: "step-finish",
+            stepTokens: { prompt: 0, completion: 0 },
           };
           break;
         case "finish": {
@@ -53,11 +74,14 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
                 totalTokens: ev.usage.inputTokens + ev.usage.outputTokens,
               }
             : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          // DeepSeek pricing (per 1M tokens, in USD)
+          const inputCost = (u.promptTokens / 1_000_000) * 0.27;
+          const outputCost = (u.completionTokens / 1_000_000) * 1.10;
           yield {
             type: "finish",
             usage: u,
-            cost: { inputCost: 0, outputCost: 0, totalCost: 0 },
-            finishReason: "stop",
+            cost: { inputCost, outputCost, totalCost: inputCost + outputCost },
+            finishReason: "stop", // C++ finish event doesn't distinguish; will improve
           };
           break;
         }

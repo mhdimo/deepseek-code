@@ -59,12 +59,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [streamingToolUse, setStreamingToolUse] = useState<ToolUseBlock[]>([]);
   const [currentAgent, setCurrentAgent] = useState<AgentName>(config.defaultAgent || "code");
   const [tokenCount, setTokenCount] = useState(0);
+  const [cost, setCost] = useState(0);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<{
     toolName: string;
     description: string;
     resolve: (decision: { approved: boolean; feedback?: string }) => void;
   } | null>(null);
+  const [sessionAllowAll, setSessionAllowAll] = useState(false);
 
   // ── Runtime-mutable provider state ────────────────────────────────────
   const [activeProvider, setActiveProvider] = useState<ProviderType>(config.provider);
@@ -80,6 +82,36 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [inputResetKey, setInputResetKey] = useState(0);
   const [queuedSubmissions, setQueuedSubmissions] = useState<string[]>([]);
 
+  // ── Tool Inspection Mode ──────────────────────────────────────────────
+  const [inspectMode, setInspectMode] = useState(false);
+  const [inspectIndex, setInspectIndex] = useState(0);
+
+  const getFlatToolBlocks = useCallback(() => {
+    const flat: Array<{ messageIdx: number; toolIdx: number; block: ToolUseBlock }> = [];
+    messages.forEach((msg, messageIdx) => {
+      if (msg.toolUse) {
+        msg.toolUse.forEach((block, toolIdx) => {
+          flat.push({ messageIdx, toolIdx, block });
+        });
+      }
+    });
+    return flat;
+  }, [messages]);
+
+  const flatBlocks = getFlatToolBlocks();
+  const selectedBlock = flatBlocks[inspectIndex];
+  const selectedToolCallId = (inspectMode && selectedBlock) ? selectedBlock.block.toolCallId || null : null;
+
+  useEffect(() => {
+    const flatCount = getFlatToolBlocks().length;
+    if (flatCount === 0) {
+      setInspectMode(false);
+      setInspectIndex(0);
+    } else if (inspectIndex >= flatCount) {
+      setInspectIndex(Math.max(0, flatCount - 1));
+    }
+  }, [messages, inspectIndex, getFlatToolBlocks]);
+
   // MCP runtime state (loaded from config)
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>(
     config.mcpServers || {},
@@ -92,6 +124,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const pickerActiveRef = useRef(false);
   /** Ref to handleSubmit so useInput can call it without stale closure */
   const handleSubmitRef = useRef<() => void>(() => {});
+
+  const streamingTextRef = useRef("");
+  const streamingThinkingRef = useRef("");
+  const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
 
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
@@ -217,6 +253,54 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
+    // Ctrl+E: toggle inspect mode
+    if (key.ctrl && _input === "e") {
+      const flatCount = getFlatToolBlocks().length;
+      if (flatCount > 0) {
+        setInspectMode((prev) => {
+          const next = !prev;
+          if (next) {
+            setInspectIndex(flatCount - 1); // Select last block by default
+          }
+          return next;
+        });
+      }
+      return;
+    }
+
+    if (inspectMode) {
+      if (key.escape || _input === "q") {
+        setInspectMode(false);
+        return;
+      }
+      if (key.upArrow) {
+        setInspectIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setInspectIndex((prev) => Math.min(flatBlocks.length - 1, prev + 1));
+        return;
+      }
+      if (key.return || _input === " ") {
+        const selected = flatBlocks[inspectIndex];
+        if (selected) {
+          setMessages((prev) => {
+            const next = [...prev];
+            const msg = { ...next[selected.messageIdx]! };
+            const toolUse = [...(msg.toolUse || [])];
+            const target = { ...toolUse[selected.toolIdx]! };
+            target.isExpanded = !target.isExpanded;
+            toolUse[selected.toolIdx] = target;
+            msg.toolUse = toolUse;
+            next[selected.messageIdx] = msg;
+            return next;
+          });
+        }
+        return;
+      }
+      return; // Eat other key inputs while in inspect mode
+    }
+
     // Ctrl+Q: clear queued prompts
     if (key.ctrl && _input === "q" && isLoading && queuedSubmissions.length > 0) {
       const count = queuedSubmissions.length;
@@ -242,6 +326,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       } else if (isLoading) {
         abortRef.current?.abort();
         setIsLoading(false);
+        streamingTextRef.current = "";
+        streamingThinkingRef.current = "";
+        streamingToolUseRef.current = [];
         setStreamingText("");
         setStreamingThinking("");
         setStreamingToolUse([]);
@@ -341,12 +428,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Permission callback ───────────────────────────────────────────────
   const requestPermission = useCallback(
     (toolName: string, description: string): Promise<{ approved: boolean; feedback?: string }> => {
-      if (config.dangerouslySkipPermissions) return Promise.resolve({ approved: true });
+      if (config.dangerouslySkipPermissions || sessionAllowAll) {
+        return Promise.resolve({ approved: true });
+      }
       return new Promise((resolve) => {
         setPendingPermission({ toolName, description, resolve });
       });
     },
-    [config.dangerouslySkipPermissions],
+    [config.dangerouslySkipPermissions, sessionAllowAll],
   );
 
   const handleInputChange = useCallback(
@@ -359,24 +448,111 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     [showShortcuts],
   );
 
+  const handleToolResult = useCallback((toolName: string, input: any, output: string, isError: boolean) => {
+    let nextToolUse: ToolUseBlock[] = [];
+    setStreamingToolUse((prev) => {
+      let bestIndex = -1;
+      let maxScore = -1;
+
+      for (let i = 0; i < prev.length; i++) {
+        const block = prev[i]!;
+        if (block.status !== "running") continue;
+        if (block.toolName !== toolName) continue;
+
+        let score = 1;
+        try {
+          const blockInput = typeof block.input === "string" ? JSON.parse(block.input) : block.input;
+          if (blockInput && typeof blockInput === "object" && input && typeof input === "object") {
+            let matches = 0;
+            let totalKeys = 0;
+            for (const key of Object.keys(input)) {
+              totalKeys++;
+              if (blockInput[key] === input[key]) {
+                matches++;
+              }
+            }
+            score += matches / (totalKeys || 1);
+          }
+        } catch {
+          // ignore parsing error
+        }
+
+        if (score > maxScore) {
+          maxScore = score;
+          bestIndex = i;
+        }
+      }
+
+      if (bestIndex === -1) {
+        bestIndex = prev.findIndex((b) => b.status === "running" && b.toolName === toolName);
+      }
+
+      if (bestIndex === -1) return prev;
+
+      const next = [...prev];
+      const target = next[bestIndex]!;
+      next[bestIndex] = {
+        ...target,
+        status: isError ? "error" : "done",
+        output,
+        isExpanded: isError || toolName === "Write" || toolName === "Edit",
+      };
+      nextToolUse = next;
+      streamingToolUseRef.current = next;
+      return next;
+    });
+
+    setMessages((prevMessages) => {
+      const hasPending = nextToolUse.some((t) => t.status === "running");
+      if (hasPending) {
+        return prevMessages;
+      }
+
+      const currentText = streamingTextRef.current;
+      const currentThinking = streamingThinkingRef.current;
+
+      if (currentText || nextToolUse.length > 0) {
+        const stepMessage: Message = {
+          role: "assistant",
+          content: currentText,
+          timestamp: Date.now(),
+          toolUse: nextToolUse.length > 0 ? [...nextToolUse] : undefined,
+          thinking: currentThinking || undefined,
+        };
+
+        streamingTextRef.current = "";
+        streamingThinkingRef.current = "";
+        streamingToolUseRef.current = [];
+        setStreamingText("");
+        setStreamingThinking("");
+        setStreamingToolUse([]);
+
+        return [...prevMessages, stepMessage];
+      }
+
+      return prevMessages;
+    });
+  }, []);
+
   // ── Process agent/query events ──────────────────────────────────────────────
   const processAgentStream = useCallback(
     async (events: AsyncGenerator<AgentEvent | QueryEvent>) => {
-      let text = "";
-      let thinking = "";
-      let toolUse: ToolUseBlock[] = [];
+      // Reset refs before starting
+      streamingTextRef.current = "";
+      streamingThinkingRef.current = "";
+      streamingToolUseRef.current = [];
 
       for await (const event of events) {
         switch (event.type) {
           case "thinking-delta":
-            thinking += event.text;
-            setStreamingThinking(thinking);
+            streamingThinkingRef.current += event.text;
+            setStreamingThinking(streamingThinkingRef.current);
             await yieldToRenderer();
             break;
 
           case "text-delta":
-            text += event.text;
-            setStreamingText(text);
+            streamingTextRef.current += event.text;
+            setStreamingText(streamingTextRef.current);
             await yieldToRenderer();
             break;
 
@@ -385,10 +561,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               input: formatToolInput(event.toolName, event.args),
+              argsJson: "",
               status: "running",
             };
-            toolUse = [...toolUse, block];
-            setStreamingToolUse(toolUse);
+            streamingToolUseRef.current = [...streamingToolUseRef.current, block];
+            setStreamingToolUse(streamingToolUseRef.current);
             const filePath = event.args?.file_path as string | undefined;
             if (filePath) {
               setCurrentFile(filePath);
@@ -396,55 +573,78 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
           }
 
-          case "tool-call-result": {
-            toolUse = toolUse.map((t) =>
-              t.toolCallId === event.toolCallId
-                ? {
-                    ...t,
-                    output: event.result,
-                    status: event.result.startsWith("❌") ? "error" as const : "done" as const,
-                    duration: event.duration,
-                    isExpanded:
-                      event.result.startsWith("❌") ||
-                      event.toolName === "Write" ||
-                      event.toolName === "Edit",
-                  }
-                : t,
+          case "tool-call-delta": {
+            const blockIdx = streamingToolUseRef.current.findIndex(
+              (b) => b.toolCallId === event.toolCallId && b.status === "running"
             );
-            setStreamingToolUse(toolUse);
-            setCurrentFile(null);
+            if (blockIdx !== -1) {
+              const block = streamingToolUseRef.current[blockIdx]!;
+              const newArgsJson = (block.argsJson || "") + event.text;
+              block.argsJson = newArgsJson;
 
-            // Save intermediate step as a message
-            if (text || toolUse.length > 0) {
-              const stepMessage: Message = {
-                role: "assistant",
-                content: text,
-                timestamp: Date.now(),
-                toolUse: toolUse.length > 0 ? [...toolUse] : undefined,
-                thinking: thinking || undefined,
-              };
-              setMessages((prev) => [...prev, stepMessage]);
+              // Parse accumulated JSON arguments best-effort
+              let parsedInput = "";
+              try {
+                const parsed = JSON.parse(newArgsJson);
+                parsedInput = formatToolInput(event.toolName, parsed);
+              } catch {
+                // Try parsing basic fields from partial JSON string using regexes
+                const pathMatch = newArgsJson.match(/"file_path"\s*:\s*"([^"]*)/);
+                const path = pathMatch ? pathMatch[1] : "";
+                
+                if (event.toolName === "Read" || event.toolName === "Write" || event.toolName === "Edit") {
+                  if (path) {
+                    parsedInput = path;
+                  }
+                } else if (event.toolName === "Bash") {
+                  const cmdMatch = newArgsJson.match(/"command"\s*:\s*"([^"]*)/);
+                  if (cmdMatch && cmdMatch[1]) parsedInput = cmdMatch[1];
+                }
+              }
+
+              if (parsedInput) {
+                block.input = parsedInput;
+                if (event.toolName === "Write" || event.toolName === "Edit" || event.toolName === "Read") {
+                  setCurrentFile(parsedInput);
+                }
+              }
+              
+              setStreamingToolUse([...streamingToolUseRef.current]);
+              await yieldToRenderer();
             }
-
-            text = "";
-            thinking = "";
-            toolUse = [];
-            setStreamingText("");
-            setStreamingThinking("");
-            setStreamingToolUse([]);
             break;
           }
+
+          case "tool-call-end": {
+            const blockIdx = streamingToolUseRef.current.findIndex(
+              (b) => b.toolCallId === event.toolCallId && b.status === "running"
+            );
+            if (blockIdx !== -1) {
+              const block = streamingToolUseRef.current[blockIdx]!;
+              try {
+                const parsed = JSON.parse(block.argsJson || "{}");
+                block.input = formatToolInput(event.toolName, parsed);
+              } catch {
+                // Keep the last input we set
+              }
+              setStreamingToolUse([...streamingToolUseRef.current]);
+              await yieldToRenderer();
+            }
+            break;
+          }
+
+          case "tool-call-result":
+            // Managed via handleToolResult callback in real-time, skip stream event
+            break;
 
           case "step-finish":
             break;
 
           case "token-usage":
-            // New: track token usage with cost estimation
             setTokenCount(event.usage.totalTokens);
             break;
 
           case "compact":
-            // New: context was auto-compacted
             setMessages((prev) => [
               ...prev,
               {
@@ -456,7 +656,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
 
           case "finish":
-            setTokenCount((prev) => prev + event.usage.totalTokens);
+            setTokenCount(event.usage.totalTokens); // Set (not add) — finish carries cumulative
+            if (event.cost) {
+              const totalCost = event.cost.totalCost;
+              setCost((prev) => prev + totalCost);
+            }
             break;
 
           case "error": {
@@ -464,11 +668,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               role: "assistant",
               content: event.error,
               timestamp: Date.now(),
-              toolUse: toolUse.length > 0 ? toolUse : undefined,
-              thinking: thinking || undefined,
+              toolUse: streamingToolUseRef.current.length > 0 ? [...streamingToolUseRef.current] : undefined,
+              thinking: streamingThinkingRef.current || undefined,
               isError: true,
             };
             setMessages((prev) => [...prev, errorMsg]);
+            streamingTextRef.current = "";
+            streamingThinkingRef.current = "";
+            streamingToolUseRef.current = [];
             setStreamingText("");
             setStreamingThinking("");
             setStreamingToolUse([]);
@@ -479,16 +686,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
 
       // Finalize the assistant message
-      if (text || toolUse.length > 0 || thinking) {
+      const remainingText = streamingTextRef.current;
+      const remainingThinking = streamingThinkingRef.current;
+      const remainingToolUse = streamingToolUseRef.current;
+
+      if (remainingText || remainingToolUse.length > 0 || remainingThinking) {
         const finalMessage: Message = {
           role: "assistant",
-          content: text,
+          content: remainingText,
           timestamp: Date.now(),
-          toolUse: toolUse.length > 0 ? toolUse : undefined,
-          thinking: thinking || undefined,
+          toolUse: remainingToolUse.length > 0 ? [...remainingToolUse] : undefined,
+          thinking: remainingThinking || undefined,
         };
         setMessages((prev) => [...prev, finalMessage]);
       }
+      streamingTextRef.current = "";
+      streamingThinkingRef.current = "";
+      streamingToolUseRef.current = [];
       setStreamingText("");
       setStreamingThinking("");
       setStreamingToolUse([]);
@@ -545,9 +759,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           agentConfig,
           workingDir: workingDirectory,
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-          maxContextTokens: 1_000_000,
+          maxContextTokens: 1_000_000, // DeepSeek v4: 1M context window
           requestPermission,
           mcpServers,
+          abortController,
+          onToolResult: handleToolResult,
+          history: messages,
         });
 
         const events = query({
@@ -952,6 +1169,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         case "/clear":
           setMessages([]);
           resetMemorySession();
+          setSessionAllowAll(false);
           setTokenCount(0);
           return true;
 
@@ -1226,6 +1444,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           if (arg === "clear" || arg === "new") {
             setMessages([]);
             resetMemorySession();
+            setSessionAllowAll(false);
             setTokenCount(0);
             setActiveSessionHash(null);
             setMessages([{ role: "system", content: "✓ Started a new session.", timestamp: Date.now() }]);
@@ -1382,6 +1601,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           providerType={activeProvider}
           baseURL={activeBaseURL}
           hasApiKey={!!activeApiKey}
+          selectedToolCallId={selectedToolCallId}
         />
       </Box>
 
@@ -1391,6 +1611,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           toolName={pendingPermission.toolName}
           description={pendingPermission.description}
           onApprove={(feedback) => {
+            if (feedback === "__allow_all__") {
+              setSessionAllowAll(true);
+            }
             pendingPermission.resolve({ approved: true, feedback });
             setPendingPermission(null);
           }}
@@ -1426,6 +1649,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         queuePreview={queuedSubmissions[0]}
         currentFile={currentFile}
         awaitingPermission={!!pendingPermission}
+        cost={cost}
+        inspectMode={inspectMode}
       />
 
       {/* Command picker — visible while user types "/" */}
