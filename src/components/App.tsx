@@ -502,36 +502,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return next;
     });
 
-    setMessages((prevMessages) => {
-      const hasPending = nextToolUse.some((t) => t.status === "running");
-      if (hasPending) {
-        return prevMessages;
-      }
-
-      const currentText = streamingTextRef.current;
-      const currentThinking = streamingThinkingRef.current;
-
-      if (currentText || nextToolUse.length > 0) {
-        const stepMessage: Message = {
-          role: "assistant",
-          content: currentText,
-          timestamp: Date.now(),
-          toolUse: nextToolUse.length > 0 ? [...nextToolUse] : undefined,
-          thinking: currentThinking || undefined,
-        };
-
-        streamingTextRef.current = "";
-        streamingThinkingRef.current = "";
-        streamingToolUseRef.current = [];
-        setStreamingText("");
-        setStreamingThinking("");
-        setStreamingToolUse([]);
-
-        return [...prevMessages, stepMessage];
-      }
-
-      return prevMessages;
-    });
+    // NOTE: Do NOT commit intermediate steps to <Static> mid-stream.
+    // Accumulate everything in the streaming area; commit once at finish.
+    // This eliminates the flicker from tool blocks jumping between the live
+    // area and <Static> scrollback on every tool completion.
   }, []);
 
   // ── Process agent/query events ──────────────────────────────────────────────
