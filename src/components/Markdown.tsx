@@ -29,7 +29,8 @@ type BlockType =
   | "code-block"
   | "list-item"
   | "blockquote"
-  | "hr";
+  | "hr"
+  | "table";
 
 interface Block {
   type: BlockType;
@@ -40,6 +41,9 @@ interface Block {
   indent?: number;
   ordered?: boolean;
   index?: number;
+  header?: string[];
+  align?: ("left" | "center" | "right")[];
+  rows?: string[][];
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +301,33 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
+    // --- GFM table: header row | separator row | data rows ---
+    const tableSep = (l: string) =>
+      /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l) && l.includes("-") && l.includes("|");
+    if (line.includes("|") && i + 1 < lines.length && tableSep(lines[i + 1]!)) {
+      const splitRow = (l: string) =>
+        l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+      const parseAlign = (cells: string[]) =>
+        cells.map((s) => {
+          const t = s.trim();
+          const left = t.startsWith(":");
+          const right = t.endsWith(":");
+          if (left && right) return "center" as const;
+          if (right) return "right" as const;
+          return "left" as const;
+        });
+      const header = splitRow(line);
+      const align = parseAlign(splitRow(lines[i + 1]!));
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i]!.trim() !== "" && lines[i]!.includes("|")) {
+        rows.push(splitRow(lines[i]!));
+        i++;
+      }
+      blocks.push({ type: "table", header, align, rows });
+      continue;
+    }
+
     // --- Paragraph: collect consecutive non-special lines ---
     const paraLines: string[] = [];
     while (i < lines.length) {
@@ -469,6 +500,99 @@ function renderParagraph(
 // Main component
 // ---------------------------------------------------------------------------
 
+// ── Word-wrap helper for table cells ────────────────────────────────────────
+
+function wrapWords(text: string, width: number): string[] {
+  if (width <= 1) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= width) cur += " " + w;
+    else {
+      out.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [""];
+}
+
+function renderTable(block: Block, key: string): React.ReactNode {
+  const header = block.header ?? [];
+  const rows = block.rows ?? [];
+  const align = block.align ?? [];
+  const cols = header.length;
+  if (cols === 0) return null;
+
+  const termWidth = process.stdout.columns || 80;
+  const sepOverhead = Math.max(0, cols - 1) * 3; // " │ " between columns
+  const avail = Math.max(20, termWidth - sepOverhead);
+
+  // Natural column widths, shrunk proportionally to fit the terminal.
+  const widths: number[] = [];
+  for (let c = 0; c < cols; c++) {
+    let w = header[c]?.length ?? 0;
+    for (const r of rows) w = Math.max(w, r[c]?.length ?? 0);
+    widths.push(w);
+  }
+  const sum = (): number => widths.reduce((a, b) => a + b, 0);
+  if (sum() > avail) {
+    const total = sum();
+    for (let c = 0; c < cols; c++) {
+      widths[c] = Math.max(6, Math.floor(((widths[c] ?? 6) * avail) / Math.max(1, total)));
+    }
+    while (sum() > avail) {
+      let mi = 0;
+      for (let c = 0; c < cols; c++) if ((widths[c] ?? 0) > (widths[mi] ?? 0)) mi = c;
+      widths[mi] = Math.max(6, (widths[mi] ?? 6) - 1);
+    }
+  }
+
+  const padCell = (s: string, c: number): string => {
+    const w = widths[c] ?? 0;
+    const a = align[c];
+    if (a === "right") return s.padStart(w);
+    if (a === "center") {
+      const t = Math.max(0, w - s.length);
+      return " ".repeat(Math.floor(t / 2)) + s + " ".repeat(t - Math.floor(t / 2));
+    }
+    return s.padEnd(w);
+  };
+
+  const renderCells = (cells: string[]): string[] => {
+    const wrapped = cells.map((cell, c) => wrapWords(cell ?? "", widths[c] ?? 1));
+    const maxLines = Math.max(...wrapped.map((w) => w.length));
+    const out: string[] = [];
+    for (let li = 0; li < maxLines; li++) {
+      out.push(cells.map((_, c) => padCell(wrapped[c]![li] ?? "", c)).join(" │ "));
+    }
+    return out;
+  };
+
+  const headerLines = renderCells(header);
+  const sep = widths.map((w) => "─".repeat(w)).join("─┼─");
+
+  return (
+    <Box key={key} flexDirection="column" marginY={0}>
+      {headerLines.map((l, i) => (
+        <Text key={`${key}-h-${i}`} bold>
+          {l}
+        </Text>
+      ))}
+      <Text dimColor>{sep}</Text>
+      {rows.map((row, ri) =>
+        renderCells(row).map((l, li) => (
+          <Text key={`${key}-r${ri}-${li}`} wrap="truncate">
+            {l}
+          </Text>
+        )),
+      )}
+    </Box>
+  );
+}
+
 interface MarkdownProps {
   children: string;
   dim?: boolean;
@@ -496,6 +620,8 @@ export default function Markdown({
             return renderBlockquote(block, key);
           case "hr":
             return renderHR(key);
+          case "table":
+            return renderTable(block, key);
           case "paragraph":
           default:
             return renderParagraph(block, key, dim);
