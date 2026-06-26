@@ -5,6 +5,7 @@
 import React, { useMemo } from "react";
 import { Text, Box } from "ink";
 import { theme } from "../utils/theme.js";
+import { highlightLine } from "./codeHighlight.js";
 
 // ---------------------------------------------------------------------------
 // Token types — inline elements produced by the tokenizer
@@ -402,11 +403,20 @@ function renderCodeBlock(block: Block, key: string): React.ReactNode {
         </Text>
         {" ──"}
       </Text>
-      {lines.map((line, i) => (
-        <Text key={`${key}-cl-${i}`} dimColor wrap="wrap">
-          {line || " "}
-        </Text>
-      ))}
+      {lines.map((line, i) => {
+        const spans = highlightLine(line, lang);
+        return (
+          <Text key={`${key}-cl-${i}`} wrap="wrap">
+            {line === ""
+              ? " "
+              : spans.map((sp, j) => (
+                  <Text key={`${key}-cl-${i}-s${j}`} color={sp.color} bold={sp.bold}>
+                    {sp.text}
+                  </Text>
+                ))}
+          </Text>
+        );
+      })}
       <Text dimColor>{"──"}</Text>
     </Box>
   );

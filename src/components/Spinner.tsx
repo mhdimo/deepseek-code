@@ -56,6 +56,7 @@ function shuffle<T>(arr: readonly T[]): T[] {
 export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerProps) {
   const show = useBlink();
   const [verb, setVerb] = useState("Thinking");
+  const [elapsed, setElapsed] = useState(0);
   const orderRef = useRef<string[]>([]);
   const idxRef = useRef(0);
 
@@ -74,13 +75,25 @@ export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerP
     return () => clearInterval(interval);
   }, [sentiment]);
 
+  // Live elapsed-seconds counter (resets each time the spinner mounts = each turn).
+  useEffect(() => {
+    setElapsed(0);
+    const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // A custom label disables rotation entirely.
   const text = label ?? (noun ? `${verb} ${noun}…` : `${verb}…`);
 
   return (
     <Box minWidth={2}>
       <Text color={theme.assistant}>{show ? GLYPH : " "}</Text>
-      {text && <Text dimColor> {text}</Text>}
+      {text && (
+        <Text dimColor>
+          {" "}
+          {text} <Text color="gray">{elapsed}s</Text>
+        </Text>
+      )}
     </Box>
   );
 }
