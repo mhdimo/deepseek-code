@@ -141,6 +141,9 @@ export default function Input({
         />
       </Box>
 
+      {/* Separator below the prompt (hints / command list render under this) */}
+      <Text color="gray">{bottomDivider}</Text>
+
       {/* Footer hints */}
       {hints.length > 0 && (
         <Box paddingLeft={2}>
@@ -154,9 +157,6 @@ export default function Input({
           </Text>
         </Box>
       )}
-
-      {/* Separator below the prompt (command list renders under this) */}
-      <Text color="gray">{bottomDivider}</Text>
     </Box>
   );
 }
