@@ -30,6 +30,7 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/stats",    description: "Show calendar contribution and usage stats", category: "general" },
   { name: "/config",   description: "Show loaded configuration files", category: "general" },
   { name: "/doctor",   description: "Run diagnostics on git, network, and C++ bindings", category: "general" },
+  { name: "/plugin",   description: "Manage plugins and browse marketplaces", category: "general", aliases: ["/plugins"] },
 
   // ─── Session ──────────────────────────────────────────────────────
   { name: "/clear",   description: "Clear conversation history and free context", category: "session" },
@@ -75,12 +76,12 @@ function rankCommand(cmd: CommandDef, query: string): number {
   return -1;
 }
 
-export function filterCommands(query: string): CommandDef[] {
+export function filterCommands(query: string, customCommands: CommandDef[] = []): CommandDef[] {
   const q = query.trim().toLowerCase();
   if (!q.startsWith("/")) return [];
   if (q.includes(" ")) return [];
 
-  return ALL_COMMANDS
+  return [...ALL_COMMANDS, ...customCommands]
     .map((cmd) => ({ cmd, score: rankCommand(cmd, q) }))
     .filter((x) => x.score >= 0)
     .sort((a, b) => b.score - a.score || a.cmd.name.localeCompare(b.cmd.name))

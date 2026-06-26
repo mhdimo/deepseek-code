@@ -51,6 +51,8 @@ import {
 import SettingsPanel from "./SettingsPanel.js";
 import type { TabType } from "./SettingsPanel.js";
 import { recordSessionStats } from "../state/stats.js";
+import PluginPanel from "./PluginPanel.js";
+import { loadInstalledPlugins } from "../services/pluginService.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
@@ -195,6 +197,46 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     } catch {}
   }, []);
 
+  // ── Plugins state & integration ──────────────────────────────────────
+  const [showPluginOverlay, setShowPluginOverlay] = useState(false);
+  const [pluginCommands, setPluginCommands] = useState<CommandDef[]>([]);
+
+  const refreshPlugins = useCallback(() => {
+    try {
+      const plugins = loadInstalledPlugins();
+      const enabled = plugins.filter((p) => p.enabled);
+
+      const cmds: CommandDef[] = [];
+      for (const p of enabled) {
+        if (p.manifest.skills) {
+          for (const skill of p.manifest.skills) {
+            cmds.push({
+              name: `/${skill.name}`,
+              description: skill.description,
+              usage: `/${skill.name} `,
+              category: "session",
+            });
+          }
+        }
+      }
+      setPluginCommands(cmds);
+
+      const newMcp: Record<string, MCPServerConfig> = { ...config.mcpServers };
+      for (const p of enabled) {
+        if (p.manifest.mcpServers) {
+          for (const [name, srv] of Object.entries(p.manifest.mcpServers)) {
+            newMcp[name] = srv;
+          }
+        }
+      }
+      setMcpServers(newMcp);
+    } catch {}
+  }, [config.mcpServers]);
+
+  useEffect(() => {
+    refreshPlugins();
+  }, [refreshPlugins]);
+
   // ── Input history ────────────────────────────────────────────────────
   const inputHistory = useRef<string[]>([]);
   const historyIndex = useRef(-1); // -1 = not navigating history
@@ -221,7 +263,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const yieldToRenderer = () => new Promise<void>((r) => setTimeout(r, 0));
 
   // ── Command picker (derived) ──────────────────────────────────────────
-  const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input) : [];
+  const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, pluginCommands) : [];
   // Hide picker once the user has typed an exact command name (ready to press Enter)
   const isExactCommandMatch =
     filteredCommands.length === 1 && filteredCommands[0]?.name === input.toLowerCase();
@@ -2278,8 +2320,31 @@ Based on the above changes:
           return true;
         }
 
-        default:
+        // ── /plugin ─────────────────────────────────────────────────────
+        case "/plugin":
+        case "/plugins":
+          setShowPluginOverlay(true);
+          return true;
+
+        default: {
+          const skillName = command.slice(1).trim().toLowerCase(); // strip leading "/"
+          try {
+            const plugins = loadInstalledPlugins();
+            const enabled = plugins.filter((p) => p.enabled);
+            for (const p of enabled) {
+              if (p.manifest.skills) {
+                const skill = p.manifest.skills.find((s) => s.name.toLowerCase() === skillName);
+                if (skill) {
+                  const userArg = restArgs.join(" ");
+                  const fullPrompt = `${skill.prompt}\n\nUser request/argument: ${userArg || "(none)"}`;
+                  void submitUserPrompt(cmd, fullPrompt);
+                  return true;
+                }
+              }
+            }
+          } catch {}
           return false;
+        }
       }
     },
     [
@@ -2468,6 +2533,11 @@ Based on the above changes:
           onChangeThinkingMode={handleThinkingModeChange}
           dangerouslySkipPermissions={skipPermissions}
           onChangeSkipPermissions={handleSkipPermissionsChange}
+        />
+      ) : showPluginOverlay ? (
+        <PluginPanel
+          onClose={() => setShowPluginOverlay(false)}
+          onRefreshPlugins={refreshPlugins}
         />
       ) : isTranscriptMode ? (
         /* Transcript mode footer matching Claude Code */
