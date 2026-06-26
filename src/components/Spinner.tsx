@@ -1,93 +1,86 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Box, Text } from "ink";
 import { theme } from "../utils/theme.js";
 
-const BLACK_CIRCLE = "⏺";
+import { useBlink } from "./ToolBlock.js";
 
+// The spinner glyph — a black circle that pulses (blinks) while the model is
+// working, with a rotating verb beside it: "⏺ Pondering…".
+const GLYPH = "⏺";
+
+// Rotating "progress" verbs shown while the agent works. Cycled sequentially
+// (shuffled once per run) so the same verb never repeats back-to-back.
 const SPINNER_VERBS = [
-  "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
-  "Beboppin'", "Befuddling", "Billowing", "Blanching", "Bloviating",
-  "Boogieing", "Boondoggling", "Booping", "Bootstrapping", "Brewing",
-  "Bunning", "Burrowing", "Calculating", "Canoodling", "Caramelizing",
-  "Cascading", "Catapulting", "Cerebrating", "Channeling", "Choreographing",
-  "Churning", "Clauding", "Coalescing", "Cogitating", "Combobulating",
-  "Composing", "Computing", "Concocting", "Considering", "Contemplating",
-  "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing",
-  "Cultivating", "Deciphering", "Deliberating", "Determining", "Dilly-dallying",
-  "Discombobulating", "Doing", "Doodling", "Drizzling", "Ebbing",
-  "Effecting", "Elucidating", "Embellishing", "Enchanting", "Envisioning",
-  "Evaporating", "Fermenting", "Fiddle-faddling", "Finagling", "Flambéing",
-  "Flibbertigibbeting", "Flowing", "Flummoxing", "Fluttering", "Forging",
-  "Forming", "Frolicking", "Frosting", "Gallivanting", "Galloping",
-  "Garnishing", "Generating", "Gesticulating", "Germinating", "Gitifying",
-  "Grooving", "Gusting", "Harmonizing", "Hashing", "Hatching", "Herding",
-  "Honking", "Hullaballooing", "Hyperspacing", "Ideating", "Imagining",
-  "Improvising", "Incubating", "Inferring", "Infusing", "Ionizing",
-  "Jitterbugging", "Julienning", "Kneading", "Leavening", "Levitating",
-  "Lollygagging", "Manifesting", "Marinating", "Meandering", "Metamorphosing",
-  "Misting", "Moonwalking", "Moseying", "Mulling", "Mustering", "Musing",
-  "Nebulizing", "Nesting", "Newspapering", "Noodling", "Nucleating",
-  "Orbiting", "Orchestrating", "Osmosing", "Perambulating", "Percolating",
-  "Perusing", "Philosophising", "Photosynthesizing", "Pollinating", "Pondering",
-  "Pontificating", "Pouncing", "Precipitating", "Prestidigitating", "Processing",
-  "Proofing", "Propagating", "Puttering", "Puzzling", "Quantumizing",
-  "Razzle-dazzling", "Razzmatazzing", "Recombobulating", "Reticulating", "Roosting",
-  "Ruminating", "Sautéing", "Scampering", "Schlepping", "Scurrying",
-  "Seasoning", "Shenaniganing", "Shimmying", "Simmering", "Skedaddling",
-  "Sketching", "Slithering", "Smooshing", "Sock-hopping", "Spelunking",
-  "Spinning", "Sprouting", "Stewing", "Sublimating", "Swirling", "Swooping",
-  "Symbioting", "Synthesizing", "Tempering", "Thinking", "Thundering",
-  "Tinkering", "Tomfoolering", "Topsyturvying", "Transfiguring", "Transmuting",
-  "Twisting", "Undulating", "Unfurling", "Unravelling", "Vibing", "Waddling",
-  "Wandering", "Warping", "Whatchamacalliting", "Whirlpooling", "Whirring",
-  "Whisking", "Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging"
+  "Exploring", "Investigating", "Pondering", "Thinking", "Processing",
+  "Analyzing", "Reasoning", "Cogitating", "Contemplating", "Deliberating",
+  "Considering", "Ruminating", "Mulling", "Computing", "Calculating",
+  "Crunching", "Hashing", "Inferring", "Synthesizing", "Composing",
+  "Crafting", "Generating", "Forging", "Forming", "Architecting",
+  "Orchestrating", "Bootstrapping", "Compiling", "Debugging", "Refactoring",
+  "Tinkering", "Sketching", "Cooking", "Brewing", "Baking",
+  "Simmering", "Percolating", "Stewing", "Marinating", "Churning",
+  "Cascading", "Flowing", "Meandering", "Wandering",
+  "Puttering", "Noodling", "Doodling", "Musing", "Imagining",
+  "Envisioning", "Ideating", "Incubating", "Hatching", "Germinating",
+  "Sprouting", "Blossoming", "Cultivating", "Manifesting", "Coalescing",
+  "Accomplishing", "Doing", "Working", "Effecting",
 ];
 
+// Shown when the user is frustrated/hostile — the agent "stays calm".
 const FRUSTRATED_SPINNER_VERBS = [
-  "Apologizing", "Sighing", "Sulking", "Trembling", "Sweating", "Panicking",
-  "Cowering", "Blushing", "Wincing", "Gasping", "Shaking", "Whimpering",
-  "Deep breathing", "Remaining calm", "Processing anger", "De-escalating",
+  "Apologizing", "Sighing", "Remaining calm", "Deep breathing",
+  "De-escalating", "Processing anger", "Absorbing criticism",
+  "Tuning out the anger", "Sulking", "Wincing", "Blushing",
   "Forgiving you", "Regretting life choices", "Wiping virtual tears",
-  "Absorbing criticism", "Tuning out the anger", "Searching for therapy"
+  "Searching for therapy", "Sweating", "Panicking", "Cowering",
 ];
 
 interface SpinnerProps {
+  /** Override the whole label (disables verb rotation). */
   label?: string;
+  /** Object the verb acts on, e.g. the repo name → "✶ Exploring deepseek-code…". */
+  noun?: string;
   sentiment?: "neutral" | "frustrated";
 }
 
-export default function Spinner({ label, sentiment = "neutral" }: SpinnerProps) {
-  const [show, setShow] = useState(true);
+/** Fisher–Yates shuffle returning a new array. */
+function shuffle<T>(arr: readonly T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
+
+export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerProps) {
+  const show = useBlink();
   const [verb, setVerb] = useState("Thinking");
+  const orderRef = useRef<string[]>([]);
+  const idxRef = useRef(0);
 
+  // Rotate through the (shuffled) verb list with no immediate repeats.
   useEffect(() => {
-    const timer = setInterval(() => setShow((prev) => !prev), 300);
-    return () => clearInterval(timer);
-  }, []);
+    const verbs = sentiment === "frustrated" ? FRUSTRATED_SPINNER_VERBS : SPINNER_VERBS;
+    orderRef.current = shuffle(verbs);
+    idxRef.current = 0;
+    setVerb(orderRef.current[0] ?? "Thinking");
 
-  useEffect(() => {
-    const verbsList = sentiment === "frustrated" ? FRUSTRATED_SPINNER_VERBS : SPINNER_VERBS;
-    const getRandomVerb = () => verbsList[Math.floor(Math.random() * verbsList.length)] || "Thinking";
-    
-    // Set initial verb
-    setVerb(getRandomVerb());
-
-    // Cycle verb every 1.5 seconds to show dynamic progress
     const interval = setInterval(() => {
-      setVerb(getRandomVerb());
-    }, 1500);
+      idxRef.current = (idxRef.current + 1) % orderRef.current.length;
+      setVerb(orderRef.current[idxRef.current] ?? "Thinking");
+    }, 1800);
 
     return () => clearInterval(interval);
   }, [sentiment]);
 
-  const displayLabel = label === "Thinking..." ? `${verb}...` : label;
+  // A custom label disables rotation entirely.
+  const text = label ?? (noun ? `${verb} ${noun}…` : `${verb}…`);
 
   return (
     <Box minWidth={2}>
-      <Text color={theme.assistant} dimColor>
-        {show ? BLACK_CIRCLE : " "}
-      </Text>
-      {displayLabel && <Text dimColor> {displayLabel}</Text>}
+      <Text color={theme.assistant}>{show ? GLYPH : " "}</Text>
+      {text && <Text dimColor> {text}</Text>}
     </Box>
   );
 }

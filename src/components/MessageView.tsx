@@ -60,8 +60,14 @@ export default function MessageView({ message, selectedToolCallId, isTranscriptM
         {message.thinking && (
           <MessageResponse>
             <Box flexDirection="column">
-              <Text dimColor italic>∴ Thinking</Text>
-              <Text dimColor italic wrap="wrap">{message.thinking}</Text>
+              {isTranscriptMode ? (
+                <>
+                  <Text dimColor italic>∴ Thought</Text>
+                  <Text dimColor italic wrap="wrap">{message.thinking}</Text>
+                </>
+              ) : (
+                <Text dimColor italic>∴ Thought (ctrl+o to expand)</Text>
+              )}
             </Box>
           </MessageResponse>
         )}

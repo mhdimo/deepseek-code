@@ -12,6 +12,7 @@ interface MultilineTextInputProps {
   onSubmit: () => void;
   focus: boolean;
   placeholder?: string;
+  isPickerActive?: boolean;
 }
 
 // ── Cursor helpers ──────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export default function MultilineTextInput({
   onSubmit,
   focus,
   placeholder = "",
+  isPickerActive = false,
 }: MultilineTextInputProps) {
   const [cursorOffset, setCursorOffset] = useState(0);
   const prevExternalValue = useRef(value);
@@ -59,7 +61,9 @@ export default function MultilineTextInput({
     (input, key) => {
       // -- Submit: plain Enter (no meta)
       if (key.return && !key.meta) {
-        onSubmit();
+        if (!isPickerActive) {
+          onSubmit();
+        }
         return;
       }
 

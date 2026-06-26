@@ -27,7 +27,7 @@ export interface ToolUseBlock {
   argsJson?: string;
   output?: string;
   isExpanded?: boolean;
-  status?: "running" | "done" | "error";
+  status?: "running" | "done" | "error" | "rejected" | "interrupted";
   duration?: number;
 }
 

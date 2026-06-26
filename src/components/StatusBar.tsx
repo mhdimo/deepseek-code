@@ -13,6 +13,10 @@ interface StatusBarProps {
   model: string;
   agentName: AgentName;
   tokenCount?: number;
+  /** Prompt/context tokens (→ in). Preferred over tokenCount when > 0. */
+  inputTokens?: number;
+  /** Completion tokens (↑ out). */
+  outputTokens?: number;
   thinkingMode?: ThinkingMode;
   mcpEnabledCount?: number;
   queueCount?: number;
@@ -56,6 +60,8 @@ export default function StatusBar({
   model,
   agentName,
   tokenCount = 0,
+  inputTokens = 0,
+  outputTokens = 0,
   thinkingMode = "off",
   mcpEnabledCount = 0,
   queueCount = 0,
@@ -75,7 +81,8 @@ export default function StatusBar({
       : currentFile
     : null;
 
-  const calculatedCost = cost ?? estimateCost(model, tokenCount);
+  const totalForCost = inputTokens + outputTokens > 0 ? inputTokens + outputTokens : tokenCount;
+  const calculatedCost = cost ?? estimateCost(model, totalForCost);
 
   // Right-side indicators
   const parts: string[] = [];
@@ -98,8 +105,16 @@ export default function StatusBar({
   } else if (queueCount > 1) {
     parts.push(`queue ${queueCount}`);
   }
-  if (tokenCount > 0) {
+  if (inputTokens > 0 || outputTokens > 0) {
+    // ↓ in / ↑ out — input (prompt/context) and output (completion) tokens
+    parts.push(`↓ ${formatTokens(inputTokens)} ↑ ${formatTokens(outputTokens)}`);
+    const remainingPercent = Math.max(0, 100 - Math.round((inputTokens / 1_000_000) * 100));
+    parts.push(`ctx ${remainingPercent}%`);
+    parts.push(`~${formatCost(calculatedCost)}`);
+  } else if (tokenCount > 0) {
     parts.push(`${formatTokens(tokenCount)} tok`);
+    const remainingPercent = Math.max(0, 100 - Math.round((tokenCount / 1_000_000) * 100));
+    parts.push(`ctx ${remainingPercent}%`);
     parts.push(`~${formatCost(calculatedCost)}`);
   }
 

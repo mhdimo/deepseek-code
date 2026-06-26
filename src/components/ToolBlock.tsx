@@ -1,8 +1,34 @@
-import React from "react";
+import React, { useSyncExternalStore } from "react";
 import { Box, Text } from "ink";
 import type { ToolUseBlock } from "../types/index.js";
 import { theme } from "../utils/theme.js";
 import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
+
+// Shared blink store
+let blinkState = true;
+const listeners = new Set<() => void>();
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    blinkState = !blinkState;
+    listeners.forEach((l) => l());
+  }, 400);
+}
+
+const blinkStore = {
+  subscribe(listener: () => void) {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+  getSnapshot() {
+    return blinkState;
+  },
+};
+
+export function useBlink() {
+  return useSyncExternalStore(blinkStore.subscribe, blinkStore.getSnapshot);
+}
 
 // Tool label display names
 const TOOL_LABELS: Record<string, string> = {
@@ -46,18 +72,30 @@ interface ToolBlockProps {
 }
 
 export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
+  const show = useBlink();
   const label = TOOL_LABELS[block.toolName] || block.toolName;
+  const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
+
+  if (block.status === "rejected" || block.status === "interrupted") {
+    return (
+      <Box flexDirection="row" marginY={0}>
+        {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
+        <Text color="gray">✗ </Text>
+        <Text color="gray" dimColor>
+          {label}{argPreview} [{block.status}]
+        </Text>
+      </Box>
+    );
+  }
+
   const labelColor = theme.toolLabel[block.toolName] || theme.inactive;
   const isRunning = block.status === "running";
   const isError = block.status === "error";
   const isDone = block.status === "done";
 
   // Status icon — ⏺ for running matching Claude Code, ✓/✗ for done/error
-  const statusIcon = isRunning ? BLACK_CIRCLE : isDone ? "✓" : "✗";
+  const statusIcon = isRunning ? (show ? BLACK_CIRCLE : " ") : isDone ? "✓" : "✗";
   const statusColor = isRunning ? theme.assistant : isDone ? theme.success : theme.error;
-
-  // Build argument preview
-  const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
 
   // Output lines
   const expanded = block.isExpanded || isTranscriptMode;
@@ -131,7 +169,26 @@ export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: To
                   <Text dimColor>{headerText}</Text>
                 </Box>
               ) : null}
-              <StructuredDiff patch={displayHunk} width={diffWidth} />
+              <Box
+                borderStyle={{
+                  top: "╌",
+                  left: "╎",
+                  right: "╎",
+                  bottom: "╌",
+                  topLeft: " ",
+                  topRight: " ",
+                  bottomLeft: " ",
+                  bottomRight: " ",
+                }}
+                borderLeft={false}
+                borderRight={false}
+                borderTop={true}
+                borderBottom={true}
+                borderColor="gray"
+                paddingX={1}
+              >
+                <StructuredDiff patch={displayHunk} width={diffWidth} />
+              </Box>
             </Box>
           ) : (
             showLines.map((line, i) => {

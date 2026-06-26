@@ -23,6 +23,7 @@ interface InputProps {
   isBlocked?: boolean;
   waitingPermission?: boolean;
   queueCount?: number;
+  isPickerActive?: boolean;
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -77,6 +78,7 @@ export default function Input({
   isBlocked = false,
   waitingPermission = false,
   queueCount = 0,
+  isPickerActive = false,
 }: InputProps) {
   const color = AGENT_COLORS[agentName] || theme.assistant;
 
@@ -138,6 +140,7 @@ export default function Input({
           onSubmit={() => onSubmit()}
           focus={!isBlocked}
           placeholder={placeholder}
+          isPickerActive={isPickerActive}
         />
       </Box>
 

@@ -65,6 +65,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
   const [currentAgent, setCurrentAgent] = useState<AgentName>(config.defaultAgent || "code");
   const [tokenCount, setTokenCount] = useState(0);
+  const [inputTokens, setInputTokens] = useState(0);
+  const [outputTokens, setOutputTokens] = useState(0);
   const [cost, setCost] = useState(0);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<{
@@ -140,6 +142,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const abortRef = useRef<AbortController | null>(null);
   const lastSubmittedPromptRef = useRef("");
   const lastEscTimeRef = useRef(0);
+  const lastCtrlCTimeRef = useRef(0);
   const tokenTrackerRef = useRef(new TokenTracker(activeModel));
   const contextManagerRef = useRef(new ContextManager(activeModel));
   /** Lets handleSubmit know the picker is intercepting Enter */
@@ -277,8 +280,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 execSync(`echo "${cmd}" | pbcopy`);
               } catch {}
               process.stderr.write(`\nTo resume session ${overallLatest.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)\n\n`);
-              exit();
-              return;
+              process.exit(0);
             } else {
               sessionHashToLoad = overallLatest.hash;
             }
@@ -294,7 +296,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
 
       const session = loadSession(sessionHashToLoad);
-      if (session && session.messages.length > 0) {
+      if (session) {
         setMessages(session.messages.map((m) => ({
           ...m,
           toolUse: [],
@@ -344,8 +346,38 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         setShowSessionPicker(false);
         return;
       }
-      abortRef.current?.abort();
-      exit();
+      if (showSettingsOverlay) {
+        setShowSettingsOverlay(false);
+        return;
+      }
+
+      const now = Date.now();
+      if (isLoading) {
+        // Interrupt on first Ctrl+C
+        abortRef.current?.abort();
+        lastCtrlCTimeRef.current = now;
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: "Generation interrupted. Press Ctrl+C again to exit.",
+            timestamp: now,
+          },
+        ]);
+      } else if (now - lastCtrlCTimeRef.current < 1500) {
+        // Exit on second Ctrl+C within 1.5s
+        exit();
+      } else {
+        lastCtrlCTimeRef.current = now;
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: "Press Ctrl+C again to exit.",
+            timestamp: now,
+          },
+        ]);
+      }
       return;
     }
 
@@ -396,7 +428,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               execSync(`echo "${cmd}" | pbcopy`);
             } catch {}
             console.log(`\nTo resume session ${selected.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)`);
-            exit();
+            process.exit(0);
           }
         }
         return;
@@ -854,6 +886,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
           case "token-usage":
             setTokenCount(event.usage.totalTokens);
+            setInputTokens(event.usage.promptTokens);
+            setOutputTokens(event.usage.completionTokens);
             break;
 
           case "compact":
@@ -869,6 +903,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
           case "finish":
             setTokenCount(event.usage.totalTokens); // Set (not add) — finish carries cumulative
+            setInputTokens(event.usage.promptTokens);
+            setOutputTokens(event.usage.completionTokens);
             if (event.cost) {
               const totalCost = event.cost.totalCost;
               setCost((prev) => prev + totalCost);
@@ -931,7 +967,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const submitUserPrompt = useCallback(
-    async (trimmedInput: string) => {
+    async (trimmedInput: string, promptOverride?: string) => {
       // Add user message
       const userMessage: Message = {
         role: "user",
@@ -990,7 +1026,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const events = query({
           session,
           config: agentConfig,
-          userMessage: trimmedInput,
+          userMessage: promptOverride !== undefined ? promptOverride : trimmedInput,
           workingDir: workingDirectory,
           abortController,
         });
@@ -1072,6 +1108,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 "  /shortcuts           Toggle shortcuts panel",
                 "  /clear               Clear conversation history",
                 "  /compact             Summarize conversation to save context",
+                "  /doctor              Run diagnostics on git, network, and bindings",
+                "  /commit              Create a git commit from changes",
+                "  /pr                  Commit, push, and create a GitHub pull request",
+                "  /copy                Copy last assistant response to clipboard",
+                "  /diff                Show git diff of working directory changes",
+                "  /history             Show message history numbers for rewinding",
+                "  /rewind              Truncate conversation back to a message number",
                 "  /tools               List available tools",
                 "  /exit                Exit DeepSeek Code",
                 "",
@@ -1393,6 +1436,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           resetMemorySession();
           setSessionAllowAll(false);
           setTokenCount(0);
+          setInputTokens(0);
+          setOutputTokens(0);
           return true;
 
         case "/compact": {
@@ -1720,6 +1765,448 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
+        // ── /commit ─────────────────────────────────────────────────────
+        case "/commit": {
+          const { execSync } = require("child_process");
+          let isGit = false;
+          try {
+            execSync("git rev-parse --is-inside-work-tree", { cwd: workingDirectory, stdio: "ignore" });
+            isGit = true;
+          } catch {
+            isGit = false;
+          }
+
+          if (!isGit) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "Not a git repository (or git is not installed).",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          let gitStatus = "";
+          let gitDiff = "";
+          let gitBranch = "";
+          let gitLog = "";
+          try {
+            gitStatus = execSync("git status", { cwd: workingDirectory }).toString();
+            gitDiff = execSync("git diff HEAD", { cwd: workingDirectory }).toString();
+            gitBranch = execSync("git branch --show-current", { cwd: workingDirectory }).toString();
+            gitLog = execSync("git log --oneline -10", { cwd: workingDirectory }).toString();
+          } catch (e) {
+            // Safe fallback
+          }
+
+          const prompt = `## Context
+
+- Current git status:
+\`\`\`
+${gitStatus}
+\`\`\`
+
+- Current git diff (staged and unstaged changes):
+\`\`\`
+${gitDiff}
+\`\`\`
+
+- Current branch: ${gitBranch.trim()}
+
+- Recent commits:
+\`\`\`
+${gitLog}
+\`\`\`
+
+## Git Safety Protocol
+
+- NEVER update the git config
+- NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
+- CRITICAL: ALWAYS create NEW commits. NEVER use git commit --amend, unless the user explicitly requests it
+- Do not commit files that likely contain secrets (.env, credentials.json, etc). Warn the user if they specifically request to commit those files
+- If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit
+- Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported
+
+## Your task
+
+Based on the above changes, create a git commit:
+
+1. Analyze all staged changes and draft a commit message:
+   - Summarize the nature of the changes (new feature, enhancement, bug fix, refactoring, test, docs, etc.)
+   - Draft a concise (1-2 sentences) commit message that focuses on the "why" rather than the "what"
+
+2. Stage relevant files and create the commit:
+   - Use the Bash tool to run "git add" and "git commit -m '<message>'".
+   - You can call multiple tools or run commands sequentially. Stage and commit in one go if possible.`;
+
+          void submitUserPrompt("/commit", prompt);
+          return true;
+        }
+
+        // ── /pr ─────────────────────────────────────────────────────────
+        case "/pr": {
+          const { execSync } = require("child_process");
+          let isGit = false;
+          try {
+            execSync("git rev-parse --is-inside-work-tree", { cwd: workingDirectory, stdio: "ignore" });
+            isGit = true;
+          } catch {
+            isGit = false;
+          }
+
+          if (!isGit) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "Not a git repository (or git is not installed).",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          let gitStatus = "";
+          let gitDiff = "";
+          let gitBranch = "";
+          let gitLog = "";
+          let defaultBranch = "main";
+          try {
+            gitStatus = execSync("git status", { cwd: workingDirectory }).toString();
+            gitDiff = execSync("git diff HEAD", { cwd: workingDirectory }).toString();
+            gitBranch = execSync("git branch --show-current", { cwd: workingDirectory }).toString();
+            gitLog = execSync("git log --oneline -10", { cwd: workingDirectory }).toString();
+            try {
+              defaultBranch = execSync("git symbol-ref refs/remotes/origin/HEAD --short", { cwd: workingDirectory }).toString().replace("origin/", "").trim();
+            } catch {
+              try {
+                defaultBranch = execSync("git config init.defaultBranch", { cwd: workingDirectory }).toString().trim() || "main";
+              } catch {}
+            }
+          } catch (e) {
+            // Safe fallback
+          }
+
+          const prompt = `## Context
+
+- Current git status:
+\`\`\`
+${gitStatus}
+\`\`\`
+
+- Current git diff (staged and unstaged changes):
+\`\`\`
+${gitDiff}
+\`\`\`
+
+- Current branch: ${gitBranch.trim()}
+
+- Recent commits:
+\`\`\`
+${gitLog}
+\`\`\`
+
+## Git Safety Protocol
+
+- NEVER update the git config
+- NEVER run destructive/irreversible git commands (like push --force, hard reset, etc) unless the user explicitly requests them
+- NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
+- NEVER run force push to main/master, warn the user if they request it
+- Do not commit files that likely contain secrets (.env, credentials.json, etc)
+- Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported
+
+## Your task
+
+Analyze all changes that will be included in the pull request, making sure to look at all relevant commits.
+
+Based on the above changes:
+1. Create a new branch if on ${defaultBranch} (use appropriate username/feature-name prefix)
+2. Create a single commit with an appropriate message:
+   - Use the Bash tool to run "git add" and "git commit -m '<message>'".
+3. Push the branch to origin
+4. Create a pull request using \`gh pr create\` (or tell the user if the gh CLI tool is missing):
+   - Keep PR titles short (under 70 characters). Use the body for details.
+   - Stage, commit, push, and create PR using the Bash tool.`;
+
+          void submitUserPrompt("/pr", prompt);
+          return true;
+        }
+
+        // ── /copy ───────────────────────────────────────────────────────
+        case "/copy": {
+          const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isError && m.content);
+          if (assistantMsgs.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "No assistant responses found to copy.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          let N = 1;
+          if (arg) {
+            N = parseInt(arg, 10);
+            if (isNaN(N) || N <= 0) {
+              N = 1;
+            }
+          }
+
+          if (N > assistantMsgs.length) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `Index too large. Only ${assistantMsgs.length} assistant responses available.`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const targetMsg = assistantMsgs[assistantMsgs.length - N]!;
+          const contentToCopy = targetMsg.content;
+
+          try {
+            const { execSync } = require("child_process");
+            execSync("pbcopy", { input: contentToCopy });
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `✓ Copied assistant response to clipboard (${contentToCopy.length} characters, ${contentToCopy.split("\n").length} lines).`,
+                timestamp: Date.now(),
+              },
+            ]);
+          } catch (e) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `✗ Failed to copy to clipboard: ${(e as Error).message}`,
+                timestamp: Date.now(),
+              },
+            ]);
+          }
+          return true;
+        }
+
+        // ── /diff ───────────────────────────────────────────────────────
+        case "/diff": {
+          const { execSync } = require("child_process");
+          let isGit = false;
+          try {
+            execSync("git rev-parse --is-inside-work-tree", { cwd: workingDirectory, stdio: "ignore" });
+            isGit = true;
+          } catch {
+            isGit = false;
+          }
+
+          if (!isGit) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "Not a git repository (or git is not installed).",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          try {
+            const diffOutput = execSync("git diff", { cwd: workingDirectory }).toString();
+            if (!diffOutput.trim()) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: "No changes in the working directory (git diff is empty).",
+                  timestamp: Date.now(),
+                },
+              ]);
+            } else {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: [
+                    "━━━ Git Changes (Working Directory) ━━━━━━━━━━━━━━",
+                    diffOutput,
+                  ].join("\n"),
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
+          } catch (e) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `✗ Failed to get git diff: ${(e as Error).message}`,
+                timestamp: Date.now(),
+              },
+            ]);
+          }
+          return true;
+        }
+
+        // ── /history ────────────────────────────────────────────────────
+        case "/messages":
+        case "/history": {
+          const lines = messages.map((m, i) => {
+            const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : "";
+            const contentPreview = m.content.split("\n")[0] || "";
+            const truncated = contentPreview.length > 60 ? contentPreview.slice(0, 59) + "…" : contentPreview;
+            return `  [${i + 1}] ${m.role.padEnd(9)} | ${time.padEnd(10)} | ${truncated}`;
+          });
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: [
+                "━━━ Chat Message History ━━━━━━━━━━━━━━━━━━━━━━━━",
+                ...lines,
+                "",
+                "Use /rewind <number> to truncate the history back to that message.",
+              ].join("\n"),
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
+        // ── /rewind ─────────────────────────────────────────────────────
+        case "/rewind": {
+          if (!arg) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "Usage: /rewind <message-number>\n\nUse /history to view message numbers.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+          const idx = parseInt(arg, 10) - 1;
+          if (isNaN(idx) || idx < 0 || idx >= messages.length) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `Invalid message number: ${arg}. Must be between 1 and ${messages.length}.`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+          const truncated = messages.slice(0, idx + 1);
+          setMessages(truncated);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `✓ Rewound conversation back to message #${idx + 1}.`,
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
+        // ── /doctor ─────────────────────────────────────────────────────
+        case "/doctor": {
+          const lines: string[] = ["━━━ DeepSeek Code Diagnostic (Doctor) ━━━━━━━━━━━━", ""];
+
+          // 1. Check Bun/Node version
+          const isBun = typeof Bun !== "undefined";
+          lines.push(`  ${isBun ? "✓" : "✓"} Runtime:      ${isBun ? `Bun v${Bun.version}` : `Node ${process.version}`}`);
+
+          // 2. Check native C++ bindings
+          let bindingsOk = false;
+          let bindingsError = "";
+          try {
+            const { getOrCreateMemorySession } = require("ai-sdk-cpp");
+            bindingsOk = typeof getOrCreateMemorySession === "function";
+          } catch (e) {
+            bindingsError = (e as Error).message;
+          }
+          lines.push(`  ${bindingsOk ? "✓" : "✗"} C++ Native:   ${bindingsOk ? "Loaded successfully" : `Failed to load: ${bindingsError}`}`);
+
+          // 3. Check Git installation
+          let gitOk = false;
+          let gitVersion = "";
+          try {
+            const { execSync } = require("child_process");
+            gitVersion = execSync("git --version").toString().trim();
+            gitOk = true;
+          } catch {
+            gitOk = false;
+          }
+          lines.push(`  ${gitOk ? "✓" : "✗"} Git CLI:      ${gitOk ? gitVersion : "Not found or not executable"}`);
+
+          // 4. Check Config
+          const keySet = !!activeApiKey;
+          lines.push(`  ${keySet ? "✓" : "⚠"} API Key:      ${keySet ? `Configured (${activeApiKey.slice(0, 8)}…${activeApiKey.slice(-4)})` : "Not set (set with /setup or /apikey)"}`);
+          lines.push(`  ✓ Active Model: ${activeProvider}/${activeModel}`);
+
+          // Initial render before network check
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: lines.join("\n") + "\n\n  Checking network connection...",
+              timestamp: Date.now(),
+            },
+          ]);
+
+          // Asynchronously test network so we don't freeze the TUI
+          setTimeout(async () => {
+            let connOk = false;
+            let timeMs = 0;
+            const start = Date.now();
+            try {
+              const targetUrl = activeBaseURL || "https://api.deepseek.com/v1";
+              const controller = new AbortController();
+              const id = setTimeout(() => controller.abort(), 3000);
+              await fetch(targetUrl, { signal: controller.signal }).catch(() => {});
+              clearTimeout(id);
+              timeMs = Date.now() - start;
+              connOk = true;
+            } catch {
+              connOk = false;
+            }
+
+            setMessages((prev) => {
+              const newLines = [...lines];
+              newLines.push(`  ${connOk ? "✓" : "✗"} Network Connection: ${connOk ? `Connected to DeepSeek API endpoint (${timeMs}ms)` : "Failed to connect to DeepSeek API endpoint"}`);
+              newLines.push("");
+              newLines.push(connOk && bindingsOk && gitOk && keySet
+                ? "  ✓ Everything looks healthy! You are ready to code."
+                : "  ⚠ Diagnostics finished with warnings. Review the issues above.");
+
+              const last = prev[prev.length - 1];
+              if (last && last.role === "system" && last.content.includes("Diagnostic")) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...last, content: newLines.join("\n"), timestamp: Date.now() }
+                ];
+              }
+              return [
+                ...prev,
+                { role: "system", content: newLines.join("\n"), timestamp: Date.now() }
+              ];
+            });
+          }, 50);
+
+          return true;
+        }
+
         default:
           return false;
       }
@@ -1740,6 +2227,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       mcpCount,
       mcpEnabledCount,
       mcpServers,
+      workingDirectory,
+      submitUserPrompt,
     ],
   );
 
@@ -1960,6 +2449,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             isBlocked={!!pendingPermission}
             waitingPermission={!!pendingPermission}
             queueCount={queuedSubmissions.length}
+            isPickerActive={showCommandPicker}
           />
 
           {/* Status bar */}
@@ -1967,6 +2457,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             model={activeModel}
             agentName={currentAgent}
             tokenCount={tokenCount}
+            inputTokens={inputTokens}
+            outputTokens={outputTokens}
             thinkingMode={thinkingMode}
             mcpEnabledCount={mcpEnabledCount}
             queueCount={queuedSubmissions.length}

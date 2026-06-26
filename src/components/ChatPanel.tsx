@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Box, Static, Text } from "ink";
+import { basename } from "node:path";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import MessageView from "./MessageView.js";
 import ToolBlock from "./ToolBlock.js";
@@ -181,7 +182,7 @@ export default function ChatPanel({
               ) : (
                 !streamingToolUse.some((t) => t.status === "running") && (
                   <MessageResponse>
-                    <Spinner label="Thinking..." sentiment={sentiment} />
+                    <Spinner noun={basename(workingDirectory)} sentiment={sentiment} />
                   </MessageResponse>
                 )
               )}

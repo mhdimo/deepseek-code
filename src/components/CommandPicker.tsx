@@ -29,12 +29,19 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/status",   description: "Show session status and details", category: "general" },
   { name: "/stats",    description: "Show calendar contribution and usage stats", category: "general" },
   { name: "/config",   description: "Show loaded configuration files", category: "general" },
+  { name: "/doctor",   description: "Run diagnostics on git, network, and C++ bindings", category: "general" },
 
   // ─── Session ──────────────────────────────────────────────────────
   { name: "/clear",   description: "Clear conversation history and free context", category: "session" },
   { name: "/compact", description: "Summarize conversation to save context. Optional: /compact [instructions]", category: "session" },
   { name: "/sessions", description: "List saved sessions", category: "session" },
   { name: "/resume",  description: "Resume a saved session by hash", usage: "/resume ", category: "session" },
+  { name: "/commit",  description: "Create a git commit from staged/unstaged changes", category: "session" },
+  { name: "/pr",      description: "Commit, push, and create a GitHub pull request", category: "session" },
+  { name: "/copy",     description: "Copy last response (or /copy N) to clipboard", usage: "/copy ", category: "session" },
+  { name: "/diff",     description: "Show git diff of the current changes", category: "session" },
+  { name: "/history",  description: "Show conversation history message numbers", category: "session", aliases: ["/messages"] },
+  { name: "/rewind",   description: "Rewind conversation back to a specific message", usage: "/rewind ", category: "session" },
   { name: "/exit",    description: "Exit DeepSeek Code", category: "session", aliases: ["/quit"] },
 
   // ─── Model ────────────────────────────────────────────────────────

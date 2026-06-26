@@ -26,7 +26,7 @@ export interface ToolUseBlock {
   input?: string;
   output?: string;
   isExpanded?: boolean;
-  status?: "running" | "done" | "error";
+  status?: "running" | "done" | "error" | "rejected" | "interrupted";
   duration?: number;
 }
 
