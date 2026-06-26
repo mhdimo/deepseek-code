@@ -30,6 +30,7 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/stats",    description: "Show calendar contribution and usage stats", category: "general" },
   { name: "/config",   description: "Show loaded configuration files", category: "general" },
   { name: "/doctor",   description: "Run diagnostics on git, network, and C++ bindings", category: "general" },
+  { name: "/hooks",    description: "List configured lifecycle hooks", category: "general" },
   { name: "/plugin",   description: "Manage plugins and browse marketplaces", category: "general", aliases: ["/plugins"] },
 
   // ─── Session ──────────────────────────────────────────────────────

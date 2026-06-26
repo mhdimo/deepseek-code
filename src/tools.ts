@@ -6,6 +6,7 @@
 import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
 import type { PermissionRuleset } from "./types/index.js";
+import { runPreToolUse, runHooksFireAndForget } from "./services/hooks.js";
 
 // ─── Tool imports ─────────────────────────────────────────────────────────────
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.js";
@@ -115,13 +116,27 @@ export function toolsToBindingFormat(
                 : "Permission denied by user.";
               isError = true;
             } else {
-              const result = await Promise.race([
-                tool.call(input as any, context),
-                abortPromise,
-              ]);
-              resultString = typeof result.data === "string"
-                ? result.data
-                : JSON.stringify(result.data, null, 2);
+              // PreToolUse hooks — may block the tool (exit 2 / JSON decision).
+              const pre = await runPreToolUse(tool.name, input, context.workingDir);
+              if (pre.blocked) {
+                resultString = `Blocked by PreToolUse hook: ${pre.reason ?? ""}`.trim();
+                isError = true;
+              } else {
+                const result = await Promise.race([
+                  tool.call(input as any, context),
+                  abortPromise,
+                ]);
+                resultString = typeof result.data === "string"
+                  ? result.data
+                  : JSON.stringify(result.data, null, 2);
+                // PostToolUse hooks — non-blocking notification.
+                runHooksFireAndForget("PostToolUse", {
+                  tool: tool.name,
+                  input,
+                  output: resultString,
+                  cwd: context.workingDir,
+                });
+              }
             }
           }
         } catch (error) {

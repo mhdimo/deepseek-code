@@ -54,6 +54,7 @@ import {
 import SettingsPanel from "./SettingsPanel.js";
 import type { TabType } from "./SettingsPanel.js";
 import { recordSessionStats } from "../state/stats.js";
+import { loadHooks, runHooksFireAndForget } from "../services/hooks.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
 import TodoList from "./TodoList.js";
@@ -804,7 +805,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return Promise.resolve({ approved: true });
       }
       return new Promise((resolve) => {
-        setPendingPermission({ toolName, description, resolve });
+        runHooksFireAndForget("Notification", {
+        notification: `Permission required: ${toolName}`,
+        tool: toolName,
+        cwd: workingDirectory,
+      });
+      setPendingPermission({ toolName, description, resolve });
       });
     },
     [config.dangerouslySkipPermissions, sessionAllowAll],
@@ -1115,6 +1121,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               const totalCost = event.cost.totalCost;
               setCost((prev) => prev + totalCost);
             }
+            runHooksFireAndForget("Stop", { cwd: workingDirectory });
             break;
 
           case "error": {
@@ -1174,6 +1181,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const submitUserPrompt = useCallback(
     async (trimmedInput: string, promptOverride?: string) => {
+      // UserPromptSubmit hooks (non-blocking).
+      runHooksFireAndForget("UserPromptSubmit", { prompt: trimmedInput, cwd: workingDirectory });
+
       // Add user message
       const userMessage: Message = {
         role: "user",
@@ -1324,6 +1334,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 "  /history             Show message history numbers for rewinding",
                 "  /rewind              Truncate conversation back to a message number",
                 "  /tools               List available tools",
+                "  /hooks               List configured lifecycle hooks (PreToolUse, etc.)",
                 "  /exit                Exit DeepSeek Code",
                 "",
                 "━━━ Agents ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1688,6 +1699,42 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                   .join("\n"),
               timestamp: Date.now(),
             },
+          ]);
+          return true;
+        }
+
+        case "/hooks": {
+          const hooks = loadHooks();
+          const events = Object.keys(hooks) as Array<keyof typeof hooks>;
+          const lines: string[] = ["── Lifecycle Hooks ──", ""];
+          if (events.length === 0) {
+            lines.push("  No hooks configured.");
+            lines.push("");
+            lines.push("  Configure in ~/.deepseek-code/settings.json:");
+            lines.push('  {');
+            lines.push('    "hooks": {');
+            lines.push('      "PreToolUse": [');
+            lines.push('        { "matcher": "Bash", "hooks": [ { "type": "command", "command": "your-script.sh" } ] }');
+            lines.push('      ]');
+            lines.push('    }');
+            lines.push('  }');
+            lines.push("");
+            lines.push("  Events: PreToolUse · PostToolUse · UserPromptSubmit · Stop · Notification");
+            lines.push('  PreToolUse can block a tool: exit code 2, or JSON {"decision":"block","reason":"..."}.');
+          } else {
+            for (const ev of events) {
+              const groups = hooks[ev] || [];
+              lines.push(`  ${String(ev)}:`);
+              for (const g of groups) {
+                for (const h of g.hooks || []) {
+                  lines.push(`    [${g.matcher || "*"}] ${h.command}`);
+                }
+              }
+            }
+          }
+          setMessages((prev) => [
+            ...prev,
+            { role: "system", content: lines.join("\n"), timestamp: Date.now() },
           ]);
           return true;
         }
