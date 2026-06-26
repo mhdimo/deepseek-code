@@ -39,6 +39,7 @@ export const TodoWriteTool = buildTool({
     }));
 
     context.setTodos(todos);
+    context.onTodosChange?.(todos);
 
     const summary = todos
       .map((t) => {

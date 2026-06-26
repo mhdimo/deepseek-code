@@ -33,9 +33,10 @@ export function getOrCreateMemorySession(opts: {
   abortController?: AbortController;
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
   onToolOutput?: (toolName: string, text: string) => void;
+  onTodosChange?: (todos: TodoItem[]) => void;
   history?: Message[];
 }): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput } = opts;
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
   const key = [
     providerConfig.type, providerConfig.model || "", providerConfig.baseURL || "",
     workingDir, agentConfig.name, memoryDir,
@@ -52,6 +53,9 @@ export function getOrCreateMemorySession(opts: {
     }
     if (onToolOutput) {
       cache.context.onToolOutput = onToolOutput;
+    }
+    if (onTodosChange) {
+      cache.context.onTodosChange = onTodosChange;
     }
     return cache.ms;
   }
@@ -82,6 +86,7 @@ export function getOrCreateMemorySession(opts: {
     consumePermissionWaitMs: () => 0,
     onToolResult,
     onToolOutput,
+    onTodosChange,
   };
   const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
 

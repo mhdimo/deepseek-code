@@ -54,6 +54,8 @@ export interface ToolUseContext {
   /** Todo list state (for TodoWriteTool) */
   getTodos(): import("./types/index.js").TodoItem[];
   setTodos(todos: import("./types/index.js").TodoItem[]): void;
+  /** Notify the TUI that the todo list changed (drives the live TodoList panel). */
+  onTodosChange?(todos: import("./types/index.js").TodoItem[]): void;
   /** Task list state (for Task* tools) */
   getTasks(): import("./types/index.js").TaskItem[];
   setTasks(tasks: import("./types/index.js").TaskItem[]): void;

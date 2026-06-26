@@ -38,6 +38,7 @@ import type {
   ThinkingMode,
   MCPServerConfig,
   MessageBlock,
+  TodoItem,
 } from "../types/index.js";
 import {
   saveSettings,
@@ -53,6 +54,7 @@ import type { TabType } from "./SettingsPanel.js";
 import { recordSessionStats } from "../state/stats.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
+import TodoList from "./TodoList.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
@@ -200,6 +202,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Plugins state & integration ──────────────────────────────────────
   const [showPluginOverlay, setShowPluginOverlay] = useState(false);
   const [pluginCommands, setPluginCommands] = useState<CommandDef[]>([]);
+
+  // ── Live todo list (driven by the TodoWrite tool via onTodosChange) ────
+  const [todos, setTodos] = useState<TodoItem[]>([]);
 
   const refreshPlugins = useCallback(() => {
     try {
@@ -850,6 +855,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     });
   }, []);
 
+  // Live todo list — driven by the TodoWrite tool via onTodosChange.
+  const handleTodosChange = useCallback((next: TodoItem[]) => {
+    setTodos(next);
+  }, []);
+
   // ── Process agent/query events ──────────────────────────────────────────────
   const processAgentStream = useCallback(
     async (events: AsyncGenerator<AgentEvent | QueryEvent>) => {
@@ -1132,6 +1142,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           abortController,
           onToolResult: handleToolResult,
           onToolOutput: handleToolOutput,
+          onTodosChange: handleTodosChange,
           history: messages,
         });
 
@@ -1551,6 +1562,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           setTokenCount(0);
           setInputTokens(0);
           setOutputTokens(0);
+          setTodos([]);
           return true;
 
         case "/compact": {
@@ -2582,6 +2594,9 @@ Based on the above changes:
               selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
             />
           )}
+
+          {/* Live todo list (driven by the TodoWrite tool) */}
+          <TodoList todos={todos} />
 
           {/* Input prompt */}
           <TextInput
