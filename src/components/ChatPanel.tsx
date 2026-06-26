@@ -1,7 +1,7 @@
 // Chat panel — renders welcome screen + scrolling messages + streaming state
 
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Static, Text } from "ink";
 import { basename } from "node:path";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import MessageView from "./MessageView.js";
@@ -30,10 +30,11 @@ interface ChatPanelProps {
   isTranscriptMode?: boolean;
 }
 
-// Cap on how many recent messages we render in the live tree. Older messages
-// scroll into the terminal scrollback as frozen snapshots; bounding this keeps
-// re-renders cheap during streaming.
-const MAX_RENDERED = 150;
+// Old messages render via <Static> (written once to scrollback). Only the last
+// RECENT_RENDERED messages live in a re-rendering Box so tool blocks there can
+// expand/collapse. Bounding the live region keeps streaming re-renders cheap
+// and prevents Ink from choking when the transcript is taller than the terminal.
+const RECENT_RENDERED = 12;
 
 export default function ChatPanel({
   messages,
@@ -76,22 +77,39 @@ export default function ChatPanel({
         </Box>
       )}
 
-      {/* Committed messages — a re-rendering Box (not <Static>) so tool blocks
-          can expand/collapse live. MessageView/ToolBlock are memoized, so only
-          changed blocks re-render. Older messages scroll into terminal scrollback. */}
-      <Box flexDirection="column">
-        {messages.map((m, i) => {
-          if (i < messages.length - MAX_RENDERED) return null;
-          return (
-            <MessageView
-              key={`msg-${m.timestamp}-${i}`}
-              message={m}
-              selectedToolCallId={selectedToolCallId}
-              isTranscriptMode={isTranscriptMode}
-            />
-          );
-        })}
-      </Box>
+      {/* Old messages → <Static> (rendered once into scrollback). Recent ones →
+          a re-rendering Box so their tool blocks can expand/collapse. */}
+      {(() => {
+        const splitAt = Math.max(0, messages.length - RECENT_RENDERED);
+        const oldItems = messages.slice(0, splitAt).map((m, i) => ({
+          key: `msg-${m.timestamp}-${i}`,
+          message: m,
+        }));
+        return (
+          <>
+            <Static items={oldItems}>
+              {(item) => (
+                <MessageView
+                  key={item.key}
+                  message={item.message}
+                  selectedToolCallId={selectedToolCallId}
+                  isTranscriptMode={isTranscriptMode}
+                />
+              )}
+            </Static>
+            <Box flexDirection="column">
+              {messages.slice(splitAt).map((m, idx) => (
+                <MessageView
+                  key={`msg-${m.timestamp}-${splitAt + idx}`}
+                  message={m}
+                  selectedToolCallId={selectedToolCallId}
+                  isTranscriptMode={isTranscriptMode}
+                />
+              ))}
+            </Box>
+          </>
+        );
+      })()}
 
       {/* Live streaming output (not yet finalized) */}
       {isLoading && (

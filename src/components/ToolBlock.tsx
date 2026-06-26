@@ -81,6 +81,58 @@ function truncateArg(input: string, maxLen = 60): string {
   return s.length > maxLen ? s.slice(0, maxLen - 1) + "…" : s;
 }
 
+function relPath(p: string): string {
+  if (!p) return "";
+  const cwd = process.cwd();
+  if (cwd && (p.startsWith(cwd + "/") || p === cwd)) return p.slice(cwd.length + 1) || ".";
+  return p;
+}
+
+// Compact, Claude-style argument summary — extracts the meaningful arg from the
+// tool's JSON input instead of dumping raw {"file_path": "..."}.
+function formatToolArgs(toolName: string, input: unknown): string {
+  let obj: Record<string, unknown> | undefined;
+  if (typeof input === "string") {
+    try {
+      obj = JSON.parse(input) as Record<string, unknown>;
+    } catch {
+      return truncateArg(input);
+    }
+  } else if (input && typeof input === "object") {
+    obj = input as Record<string, unknown>;
+  }
+  if (!obj) return "";
+  const str = (v: unknown, max = 70): string => truncateArg(typeof v === "string" ? v : String(v ?? ""), max);
+  switch (toolName) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "NotebookEdit":
+      return relPath(String(obj["file_path"] ?? obj["notebook_path"] ?? ""));
+    case "Bash":
+      return str(obj["command"], 90);
+    case "Glob":
+      return str(obj["pattern"]);
+    case "Grep":
+      return str(obj["pattern"]);
+    case "LS":
+      return relPath(String(obj["path"] ?? ".")) || ".";
+    case "WebFetch":
+      return str(obj["url"]);
+    case "WebSearch":
+      return str(obj["query"]);
+    case "TodoWrite":
+      return Array.isArray(obj["todos"]) ? `${obj["todos"].length} todos` : "";
+    case "Agent":
+    case "Task":
+      return str(obj["description"], 50);
+    default: {
+      const firstVal = Object.values(obj)[0];
+      return firstVal ? str(firstVal) : "";
+    }
+  }
+}
+
 const BLACK_CIRCLE = "⏺";
 
 interface ToolBlockProps {
@@ -91,7 +143,8 @@ interface ToolBlockProps {
 
 function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const label = TOOL_LABELS[block.toolName] || block.toolName;
-  const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
+  const argPreviewRaw = formatToolArgs(block.toolName, block.input);
+  const argPreview = argPreviewRaw ? ` ${argPreviewRaw}` : "";
 
   if (block.status === "rejected" || block.status === "interrupted") {
     return (
@@ -119,6 +172,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const allLines = outputText.split("\n");
   const showLines = allLines.slice(0, maxOutputLines);
   const truncated = allLines.length > maxOutputLines;
+  const outputLines = outputText.trim() ? outputText.replace(/\n+$/, "").split("\n").length : 0;
 
   // Line color for diff-style output
   const lineColor = (line: string): string | undefined => {
@@ -228,13 +282,13 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
         </Box>
       )}
 
-      {/* Result summary for done blocks */}
+      {/* Result summary for done blocks — line count, not content */}
       {isDone && outputText && !expanded && (
         <Box marginLeft={3}>
           <Text dimColor>
-            {outputText.length > 120
-              ? outputText.slice(0, 119) + "…"
-              : outputText}
+            {outputLines > 0
+              ? `${outputLines} line${outputLines === 1 ? "" : "s"}`
+              : "done"}
             {" "}(ctrl+o to expand)
           </Text>
         </Box>

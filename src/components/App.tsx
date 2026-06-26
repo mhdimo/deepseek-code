@@ -1226,11 +1226,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
       }
 
-      // Finalize the assistant message
+      // Finalize the assistant message. Drop any still-running tool blocks
+      // (starts whose results never matched — e.g. concurrent same-tool calls)
+      // so they don't leave empty ⏺ entries in the committed transcript.
       const remainingText = streamingTextRef.current;
       const remainingThinking = streamingThinkingRef.current;
-      const remainingToolUse = streamingToolUseRef.current;
-      const remainingBlocks = streamingBlocksRef.current;
+      const remainingToolUse = streamingToolUseRef.current.filter(
+        (b) => b.status !== "running",
+      );
+      const remainingBlocks = streamingBlocksRef.current.filter(
+        (b) => !(b.type === "tool" && b.block?.status === "running"),
+      );
 
       if (remainingText || remainingToolUse.length > 0 || remainingThinking) {
         const finalMessage: Message = {
