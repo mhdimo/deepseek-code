@@ -30,6 +30,10 @@ interface SettingsPanelProps {
   onChangeThinkingMode: (mode: any) => void;
   dangerouslySkipPermissions: boolean;
   onChangeSkipPermissions: (val: boolean) => void;
+  /** Snapshot of all persisted settings (for reading field values). */
+  settings: Record<string, unknown>;
+  /** Generic setter for any persisted setting key. */
+  onUpdateSetting: (key: string, value: unknown) => void;
 }
 
 export type TabType = "settings" | "status" | "config" | "usage" | "stats";
@@ -65,10 +69,29 @@ export default function SettingsPanel({
   onChangeThinkingMode,
   dangerouslySkipPermissions,
   onChangeSkipPermissions,
+  settings,
+  onUpdateSetting,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [statsView, setStatsView] = useState<"overview" | "models">("overview");
   const [settingsCursor, setSettingsCursor] = useState(0);
+
+  // Data-driven settings editor. Each row reads its value and applies changes.
+  const CLEANUP_OPTS = [7, 14, 30, 90];
+  const OUTPUT_OPTS = ["default", "explanatory", "learning"];
+  const settingRows = useMemo(
+    () => [
+      { key: "theme", label: "Theme Mode", value: themeMode, opts: ["dark", "light"], apply: (v: string) => onChangeThemeMode(v as "dark" | "light") },
+      { key: "thinking", label: "Thinking Mode", value: thinkingMode === "whale" ? "whale" : "off", opts: ["off", "whale"], apply: (v: string) => onChangeThinkingMode(v as never) },
+      { key: "skip", label: "Skip Permissions", value: dangerouslySkipPermissions ? "yes" : "no", opts: ["no", "yes"], apply: (v: string) => onChangeSkipPermissions(v === "yes") },
+      { key: "coauth", label: "Co-Authored-By", value: settings.includeCoAuthoredBy ? "yes" : "no", opts: ["no", "yes"], apply: (v: string) => onUpdateSetting("includeCoAuthoredBy", v === "yes") },
+      { key: "tips", label: "Spinner Tips", value: settings.spinnerTipsEnabled === false ? "off" : "on", opts: ["on", "off"], apply: (v: string) => onUpdateSetting("spinnerTipsEnabled", v === "on") },
+      { key: "verbose", label: "Verbose Logging", value: settings.verbose ? "on" : "off", opts: ["off", "on"], apply: (v: string) => onUpdateSetting("verbose", v === "on") },
+      { key: "cleanup", label: "Cleanup Period", value: String(settings.cleanupPeriodDays ?? 30), opts: CLEANUP_OPTS.map(String), apply: (v: string) => onUpdateSetting("cleanupPeriodDays", Number(v)) },
+      { key: "style", label: "Output Style", value: (settings.outputStyle as string) ?? "default", opts: OUTPUT_OPTS, apply: (v: string) => onUpdateSetting("outputStyle", v) },
+    ],
+    [themeMode, thinkingMode, dangerouslySkipPermissions, settings, onChangeThemeMode, onChangeThinkingMode, onChangeSkipPermissions, onUpdateSetting],
+  );
 
   // Load global historical stats from disk
   const globalStats = useMemo(() => {
@@ -156,17 +179,18 @@ export default function SettingsPanel({
         return;
       }
       if (key.downArrow) {
-        setSettingsCursor((prev) => Math.min(2, prev + 1));
+        setSettingsCursor((prev) => Math.min(settingRows.length - 1, prev + 1));
         return;
       }
-      if (key.leftArrow || key.rightArrow) {
-        // Toggle value
-        if (settingsCursor === 0) {
-          onChangeThemeMode(themeMode === "dark" ? "light" : "dark");
-        } else if (settingsCursor === 1) {
-          onChangeThinkingMode(thinkingMode === "off" ? "whale" : "off");
-        } else if (settingsCursor === 2) {
-          onChangeSkipPermissions(!dangerouslySkipPermissions);
+      if (key.leftArrow || key.rightArrow || key.return) {
+        // Cycle the selected row through its options.
+        const row = settingRows[settingsCursor];
+        if (row) {
+          const idx = row.opts.indexOf(String(row.value));
+          const nextIdx = key.leftArrow
+            ? (idx - 1 + row.opts.length) % row.opts.length
+            : (idx + 1) % row.opts.length;
+          row.apply(row.opts[nextIdx] ?? row.opts[0]!);
         }
         return;
       }
@@ -351,57 +375,49 @@ export default function SettingsPanel({
     : "NOT_SET";
 
   return (
-    <Box flexDirection="column" width="100%" paddingX={1} marginY={0}>
-      <Text color="gray">{dividerLine}</Text>
-      
-      {/* Tab bar header */}
-      <Box flexDirection="row" paddingBottom={1} paddingLeft={2}>
-        {TABS.map((t) => {
-          const active = activeTab === t.id;
-          return (
-            <Box key={t.id} marginRight={3}>
-              <Text bold={active} color={active ? "cyan" : "gray"}>
-                {t.label}
-              </Text>
-            </Box>
-          );
-        })}
-      </Box>
+    <Box flexDirection="column" width="100%" marginY={0}>
+      <Box flexDirection="column" borderStyle="single" borderColor="yellow" paddingX={1}>
+        {/* Tab bar header */}
+        <Box flexDirection="row" paddingBottom={0} marginTop={0}>
+          {TABS.map((t) => {
+            const active = activeTab === t.id;
+            return (
+              <Box key={t.id} marginRight={3}>
+                <Text bold={active} color={active ? "yellow" : "gray"}>
+                  {active ? "▸ " : "  "}
+                  {t.label}
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
 
       {/* Settings Tab */}
       {activeTab === "settings" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
-          <Text bold color="white">Interactive Settings</Text>
+          <Text bold color="white">Settings</Text>
           <Box flexDirection="column" marginTop={1}>
-            <Box flexDirection="row">
-              <Text color={settingsCursor === 0 ? "cyan" : "white"}>
-                {settingsCursor === 0 ? "▶ " : "  "}Theme Mode:            
-              </Text>
-              <Text bold color={themeMode === "dark" ? "cyan" : "gray"}> [Dark]</Text>
-              <Text color="gray"> / </Text>
-              <Text bold color={themeMode === "light" ? "cyan" : "gray"}>[Light]</Text>
-            </Box>
-
-            <Box flexDirection="row" marginTop={0}>
-              <Text color={settingsCursor === 1 ? "cyan" : "white"}>
-                {settingsCursor === 1 ? "▶ " : "  "}Thinking Mode:         
-              </Text>
-              <Text bold color={thinkingMode === "off" ? "cyan" : "gray"}> [off]</Text>
-              <Text color="gray"> / </Text>
-              <Text bold color={thinkingMode === "whale" ? "cyan" : "gray"}>[whale]</Text>
-            </Box>
-
-            <Box flexDirection="row" marginTop={0}>
-              <Text color={settingsCursor === 2 ? "cyan" : "white"}>
-                {settingsCursor === 2 ? "▶ " : "  "}Skip Permissions:      
-              </Text>
-              <Text bold color={!dangerouslySkipPermissions ? "cyan" : "gray"}> [No]</Text>
-              <Text color="gray"> / </Text>
-              <Text bold color={dangerouslySkipPermissions ? "cyan" : "gray"}>[Yes]</Text>
-            </Box>
+            {settingRows.map((row, i) => (
+              <Box key={row.key} flexDirection="row">
+                <Text color={settingsCursor === i ? "yellow" : "white"}>
+                  {settingsCursor === i ? "▶ " : "  "}
+                  {row.label.padEnd(18)}
+                </Text>
+                {row.opts.map((opt) => (
+                  <Text
+                    key={opt}
+                    bold={String(row.value) === opt}
+                    color={String(row.value) === opt ? "yellow" : "gray"}
+                  >
+                    {opt}
+                    {"  "}
+                  </Text>
+                ))}
+              </Box>
+            ))}
           </Box>
           <Box marginTop={1}>
-            <Text dimColor>↑↓ select setting · ←→ change value · Tab switch tabs · Esc exit</Text>
+            <Text dimColor>↑↓ select · ←→/Enter change · Tab switch tabs · Esc exit</Text>
           </Box>
         </Box>
       )}
@@ -564,11 +580,11 @@ export default function SettingsPanel({
         </Box>
       )}
 
-      {/* Footer controls instruction */}
-      <Box paddingLeft={2} marginTop={1} marginBottom={0}>
-        <Text dimColor>Esc to cancel · ←→ switch tabs</Text>
+        {/* Footer controls instruction */}
+        <Box paddingLeft={1} marginTop={1} marginBottom={0}>
+          <Text dimColor>Esc cancel · Tab switch tabs · ←→ navigate settings</Text>
+        </Box>
       </Box>
-      <Text color="gray">{dividerLine}</Text>
     </Box>
   );
 }

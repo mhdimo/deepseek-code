@@ -42,6 +42,19 @@ async function main() {
   const { setThemeMode } = require("./utils/theme.js");
   setThemeMode(themeMode);
 
+  // Apply configured env vars to the process environment (inherited by BashTool).
+  try {
+    const { loadSettings } = require("./state/storage.js");
+    const env = loadSettings().env;
+    if (env && typeof env === "object") {
+      for (const [k, v] of Object.entries(env)) {
+        if (typeof v === "string") process.env[k] = v;
+      }
+    }
+  } catch {
+    // best-effort
+  }
+
   const { waitUntilExit } = render(
     <App config={config} workingDirectory={workingDirectory} resumeSessionHash={resumeHash} />,
   );

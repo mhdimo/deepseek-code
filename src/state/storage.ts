@@ -30,6 +30,21 @@ export interface PersistedSettings {
   themeMode?: "dark" | "light";
   /** The hash of the last active session (for resume) */
   lastSessionHash?: string;
+  // ── Claude-style settings ──────────────────────────────────────────────
+  /** Add a Co-Authored-By trailer to /commit messages (default false). */
+  includeCoAuthoredBy?: boolean;
+  /** Delete saved sessions older than N days on startup (default 30). */
+  cleanupPeriodDays?: number;
+  /** Show the spinner tip/elapsed line (default true). */
+  spinnerTipsEnabled?: boolean;
+  /** Verbose/debug logging (default false). */
+  verbose?: boolean;
+  /** Default output style label (default "default"). */
+  outputStyle?: string;
+  /** Environment variables injected into the session/tool environment. */
+  env?: Record<string, string>;
+  /** Tool permission rules: allow / deny / ask (Tool(spec:pattern) syntax). */
+  permissions?: { allow?: string[]; deny?: string[]; ask?: string[] };
 }
 
 export interface SessionData {
@@ -199,6 +214,24 @@ export function pruneSessions(keepCount = 50): void {
       // Silently fail
     }
   }
+}
+
+/** Delete sessions older than `days` days (by updatedAt). */
+export function pruneOldSessions(days = 30): number {
+  const sessions = listSessions();
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  for (const session of sessions) {
+    if (session.updatedAt < cutoff) {
+      try {
+        unlinkSync(join(SESSIONS_DIR, `${session.hash}.json`));
+        removed++;
+      } catch {
+        // Silently fail
+      }
+    }
+  }
+  return removed;
 }
 
 /** Get the data directory path (for display) */

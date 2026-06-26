@@ -50,6 +50,7 @@ import {
   loadSession,
   listSessions,
   pruneSessions,
+  pruneOldSessions,
 } from "../state/storage.js";
 import SettingsPanel from "./SettingsPanel.js";
 import type { TabType } from "./SettingsPanel.js";
@@ -187,6 +188,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   });
 
   const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
+
+  // Snapshot of all persisted settings (drives the Settings editor + behavior flags).
+  const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, unknown>>(() => {
+    try {
+      return loadSettings() as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  });
+  const handleUpdateSetting = useCallback((key: string, value: unknown) => {
+    try {
+      saveSettings({ [key]: value } as any);
+      setSettingsSnapshot(loadSettings() as Record<string, unknown>);
+    } catch {
+      // best-effort
+    }
+  }, []);
 
   const handleThemeModeChange = useCallback((mode: "dark" | "light") => {
     const { setThemeMode } = require("../utils/theme.js");
@@ -331,6 +349,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
     try {
       setCustomCommands(loadCustomCommands(workingDirectory));
+    } catch {
+      // best-effort
+    }
+    // Prune sessions older than the configured cutoff (default 30 days).
+    try {
+      pruneOldSessions(loadSettings().cleanupPeriodDays ?? 30);
     } catch {
       // best-effort
     }
@@ -2114,7 +2138,11 @@ Based on the above changes, create a git commit:
 
 2. Stage relevant files and create the commit:
    - Use the Bash tool to run "git add" and "git commit -m '<message>'".
-   - You can call multiple tools or run commands sequentially. Stage and commit in one go if possible.`;
+   - You can call multiple tools or run commands sequentially. Stage and commit in one go if possible.${
+          settingsSnapshot.includeCoAuthoredBy
+            ? "\n\n3. After the commit message body, append a trailer line:\n   Co-Authored-By: DeepSeek Code <noreply@deepseek.com>"
+            : ""
+        }`;
 
           void submitUserPrompt("/commit", prompt);
           return true;
@@ -2715,6 +2743,8 @@ Based on the above changes:
           onChangeThinkingMode={handleThinkingModeChange}
           dangerouslySkipPermissions={skipPermissions}
           onChangeSkipPermissions={handleSkipPermissionsChange}
+          settings={settingsSnapshot}
+          onUpdateSetting={handleUpdateSetting}
         />
       ) : showPluginOverlay ? (
         <PluginPanel
