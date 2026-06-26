@@ -2,12 +2,13 @@
 // Adapted from Claude Code's theme structure with DeepSeek branding.
 
 export const theme = {
-  // Brand
-  assistant: "rgb(0, 180, 216)",       // DeepSeek teal
-  assistantDim: "rgb(0, 140, 170)",
+  // Brand — lighter teal (deepseek-code identity); all other colors match the
+  // reference dark theme.
+  assistant: "rgb(95, 217, 226)",       // Lighter teal
+  assistantDim: "rgb(0, 180, 216)",     // Previous teal as the dim variant
 
   // Permission
-  permission: "rgb(147, 165, 255)",
+  permission: "rgb(177, 185, 249)",
   permissionShimmer: "rgb(207, 215, 255)",
 
   // Borders
@@ -63,8 +64,8 @@ export const theme = {
 };
 
 const darkPalette = {
-  assistant: "rgb(0, 180, 216)",
-  assistantDim: "rgb(0, 140, 170)",
+  assistant: "rgb(95, 217, 226)",
+  assistantDim: "rgb(0, 180, 216)",
   text: "rgb(255, 255, 255)",
   inverseText: "rgb(0, 0, 0)",
   subtle: "rgb(80, 80, 80)",
