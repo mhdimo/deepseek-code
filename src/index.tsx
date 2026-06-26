@@ -37,6 +37,11 @@ async function main() {
   const workingDirectory = process.cwd();
   const resumeHash = config.resumeSession;
 
+  // Initialize theme mode
+  const themeMode = (config as any).themeMode || "dark";
+  const { setThemeMode } = require("./utils/theme.js");
+  setThemeMode(themeMode);
+
   const { waitUntilExit } = render(
     <App config={config} workingDirectory={workingDirectory} resumeSessionHash={resumeHash} />,
   );

@@ -60,6 +60,40 @@ export const theme = {
   // Indicators
   fastMode: "rgb(255, 120, 20)",
   thinking: "rgb(177, 185, 249)",
-} as const;
+};
 
-export type ThemeColor = keyof typeof theme;
+const darkPalette = {
+  assistant: "rgb(0, 180, 216)",
+  assistantDim: "rgb(0, 140, 170)",
+  text: "rgb(255, 255, 255)",
+  inverseText: "rgb(0, 0, 0)",
+  subtle: "rgb(80, 80, 80)",
+  inactive: "rgb(153, 153, 153)",
+  userMessageBg: "rgb(55, 55, 55)",
+  toolMessageBg: "rgb(55, 55, 55)",
+  promptBorder: "rgb(136, 136, 136)",
+};
+
+const lightPalette = {
+  assistant: "rgb(0, 140, 170)",
+  assistantDim: "rgb(0, 100, 120)",
+  text: "rgb(0, 0, 0)",
+  inverseText: "rgb(255, 255, 255)",
+  subtle: "rgb(150, 150, 150)",
+  inactive: "rgb(100, 100, 100)",
+  userMessageBg: "rgb(230, 230, 230)",
+  toolMessageBg: "rgb(230, 230, 230)",
+  promptBorder: "rgb(180, 180, 180)",
+};
+
+let currentThemeMode: "dark" | "light" = "dark";
+
+export function getThemeMode(): "dark" | "light" {
+  return currentThemeMode;
+}
+
+export function setThemeMode(mode: "dark" | "light"): void {
+  currentThemeMode = mode;
+  const palette = mode === "light" ? lightPalette : darkPalette;
+  Object.assign(theme, palette);
+}

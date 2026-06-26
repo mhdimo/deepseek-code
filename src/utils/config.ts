@@ -246,12 +246,13 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
 }
 
 /** Load persisted settings from ~/.deepseek-code/settings.json */
-function loadPersistedSettings(): Partial<DeepSeekCodeConfig> {
+function loadPersistedSettings(): Partial<DeepSeekCodeConfig> & { themeMode?: "dark" | "light" } {
   const settings = loadSettings();
-  const config: Partial<DeepSeekCodeConfig> = {};
+  const config: Partial<DeepSeekCodeConfig> & { themeMode?: "dark" | "light" } = {};
   if (settings.apiKey) config.apiKey = settings.apiKey;
   if (settings.model) config.model = settings.model;
   if (settings.baseURL) config.baseURL = settings.baseURL;
   if (settings.defaultAgent) config.defaultAgent = settings.defaultAgent as AgentName;
+  if (settings.themeMode) config.themeMode = settings.themeMode;
   return config;
 }

@@ -41,6 +41,7 @@ import type {
 } from "../types/index.js";
 import {
   saveSettings,
+  loadSettings,
   saveSession,
   updateSession,
   loadSession,
@@ -158,6 +159,42 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
 
+  // ── Theme / Settings states ──────────────────────────────────────────
+  const [themeMode, setThemeModeState] = useState<"dark" | "light">(() => {
+    try {
+      const settings = loadSettings();
+      return settings.themeMode || "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
+
+  const handleThemeModeChange = useCallback((mode: "dark" | "light") => {
+    const { setThemeMode } = require("../utils/theme.js");
+    setThemeMode(mode);
+    setThemeModeState(mode);
+    try {
+      saveSettings({ themeMode: mode });
+    } catch {}
+  }, []);
+
+  const handleSkipPermissionsChange = useCallback((val: boolean) => {
+    setSkipPermissions(val);
+    config.dangerouslySkipPermissions = val;
+    try {
+      saveSettings({ dangerouslySkipPermissions: val } as any);
+    } catch {}
+  }, [config]);
+
+  const handleThinkingModeChange = useCallback((mode: ThinkingMode) => {
+    setThinkingMode(mode);
+    try {
+      saveSettings({ thinkingMode: mode } as any);
+    } catch {}
+  }, []);
+
   // ── Input history ────────────────────────────────────────────────────
   const inputHistory = useRef<string[]>([]);
   const historyIndex = useRef(-1); // -1 = not navigating history
@@ -169,6 +206,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     baseURL?: string | undefined;
     provider?: string;
     defaultAgent?: string;
+    themeMode?: "dark" | "light";
+    dangerouslySkipPermissions?: boolean;
+    thinkingMode?: string;
   }) => {
     try {
       saveSettings(updates);
@@ -2391,6 +2431,12 @@ Based on the above changes:
           mcpCount={mcpEnabledCount}
           sessionId={activeSessionHash || "new-session"}
           initialTab={settingsOverlayTab}
+          themeMode={themeMode}
+          onChangeThemeMode={handleThemeModeChange}
+          thinkingMode={thinkingMode}
+          onChangeThinkingMode={handleThinkingModeChange}
+          dangerouslySkipPermissions={skipPermissions}
+          onChangeSkipPermissions={handleSkipPermissionsChange}
         />
       ) : isTranscriptMode ? (
         /* Transcript mode footer matching Claude Code */

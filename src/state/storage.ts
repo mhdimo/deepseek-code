@@ -25,6 +25,7 @@ export interface PersistedSettings {
   provider?: string;
   defaultAgent?: string;
   thinkingMode?: string;
+  themeMode?: "dark" | "light";
   /** The hash of the last active session (for resume) */
   lastSessionHash?: string;
 }

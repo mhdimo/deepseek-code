@@ -24,6 +24,12 @@ interface SettingsPanelProps {
   mcpCount: number;
   sessionId: string;
   initialTab?: "settings" | "status" | "config" | "usage" | "stats";
+  themeMode: "dark" | "light";
+  onChangeThemeMode: (mode: "dark" | "light") => void;
+  thinkingMode: string;
+  onChangeThinkingMode: (mode: any) => void;
+  dangerouslySkipPermissions: boolean;
+  onChangeSkipPermissions: (val: boolean) => void;
 }
 
 export type TabType = "settings" | "status" | "config" | "usage" | "stats";
@@ -53,9 +59,16 @@ export default function SettingsPanel({
   mcpCount,
   sessionId,
   initialTab = "usage",
+  themeMode,
+  onChangeThemeMode,
+  thinkingMode,
+  onChangeThinkingMode,
+  dangerouslySkipPermissions,
+  onChangeSkipPermissions,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [statsView, setStatsView] = useState<"overview" | "models">("overview");
+  const [settingsCursor, setSettingsCursor] = useState(0);
 
   // Load global historical stats from disk
   const globalStats = useMemo(() => {
@@ -127,18 +140,50 @@ export default function SettingsPanel({
       return;
     }
 
-    if (key.leftArrow) {
+    // Tab / Shift+Tab to switch tabs
+    if (key.tab) {
       const idx = TABS.findIndex((t) => t.id === activeTab);
-      const nextIdx = (idx - 1 + TABS.length) % TABS.length;
+      const nextIdx = key.shift
+        ? (idx - 1 + TABS.length) % TABS.length
+        : (idx + 1) % TABS.length;
       setActiveTab(TABS[nextIdx]!.id);
       return;
     }
 
-    if (key.rightArrow) {
-      const idx = TABS.findIndex((t) => t.id === activeTab);
-      const nextIdx = (idx + 1) % TABS.length;
-      setActiveTab(TABS[nextIdx]!.id);
-      return;
+    if (activeTab === "settings") {
+      if (key.upArrow) {
+        setSettingsCursor((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSettingsCursor((prev) => Math.min(2, prev + 1));
+        return;
+      }
+      if (key.leftArrow || key.rightArrow) {
+        // Toggle value
+        if (settingsCursor === 0) {
+          onChangeThemeMode(themeMode === "dark" ? "light" : "dark");
+        } else if (settingsCursor === 1) {
+          onChangeThinkingMode(thinkingMode === "off" ? "whale" : "off");
+        } else if (settingsCursor === 2) {
+          onChangeSkipPermissions(!dangerouslySkipPermissions);
+        }
+        return;
+      }
+    } else {
+      if (key.leftArrow) {
+        const idx = TABS.findIndex((t) => t.id === activeTab);
+        const nextIdx = (idx - 1 + TABS.length) % TABS.length;
+        setActiveTab(TABS[nextIdx]!.id);
+        return;
+      }
+
+      if (key.rightArrow) {
+        const idx = TABS.findIndex((t) => t.id === activeTab);
+        const nextIdx = (idx + 1) % TABS.length;
+        setActiveTab(TABS[nextIdx]!.id);
+        return;
+      }
     }
 
     if (activeTab === "stats") {
@@ -326,24 +371,37 @@ export default function SettingsPanel({
       {/* Settings Tab */}
       {activeTab === "settings" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
-          <Text bold color="white">Session</Text>
+          <Text bold color="white">Interactive Settings</Text>
           <Box flexDirection="column" marginTop={1}>
-            <Text><Text color="gray">  Total cost:            </Text><Text bold>${totals.totalCost.toFixed(2)}</Text><Text dimColor> (costs may be inaccurate due to usage of unknown models)</Text></Text>
-            <Text><Text color="gray">  Total duration (API):  </Text><Text bold>{formatDuration(totals.totalApiMs)}</Text></Text>
-            <Text><Text color="gray">  Total duration (wall): </Text><Text bold>{formatDuration(totals.totalWallMs)}</Text></Text>
-            <Text><Text color="gray">  Total code changes:    </Text><Text bold>{totals.totalLinesAdded} lines added, {totals.totalLinesRemoved} lines removed</Text></Text>
-            
-            <Box marginTop={1}><Text color="white" bold>Usage by model:</Text></Box>
-            {Object.entries(totals.modelTotals).map(([m, usage]) => (
-              <Text key={m}>
-                <Text color="cyan">    {m.padEnd(20)}: </Text>
-                <Text bold>{(usage.input / 1000).toFixed(1)}k</Text><Text dimColor> input, </Text>
-                <Text bold>{(usage.output / 1000).toFixed(1)}k</Text><Text dimColor> output, </Text>
-                <Text bold>{(usage.cacheRead / 1000).toFixed(1)}k</Text><Text dimColor> cache read, </Text>
-                <Text bold>{(usage.cacheWrite / 1000).toFixed(1)}k</Text><Text dimColor> cache write </Text>
-                <Text bold color="green">(${usage.cost.toFixed(2)})</Text>
+            <Box flexDirection="row">
+              <Text color={settingsCursor === 0 ? "cyan" : "white"}>
+                {settingsCursor === 0 ? "▶ " : "  "}Theme Mode:            
               </Text>
-            ))}
+              <Text bold color={themeMode === "dark" ? "cyan" : "gray"}> [Dark]</Text>
+              <Text color="gray"> / </Text>
+              <Text bold color={themeMode === "light" ? "cyan" : "gray"}>[Light]</Text>
+            </Box>
+
+            <Box flexDirection="row" marginTop={0}>
+              <Text color={settingsCursor === 1 ? "cyan" : "white"}>
+                {settingsCursor === 1 ? "▶ " : "  "}Thinking Mode:         
+              </Text>
+              <Text bold color={thinkingMode === "off" ? "cyan" : "gray"}> [off]</Text>
+              <Text color="gray"> / </Text>
+              <Text bold color={thinkingMode === "whale" ? "cyan" : "gray"}>[whale]</Text>
+            </Box>
+
+            <Box flexDirection="row" marginTop={0}>
+              <Text color={settingsCursor === 2 ? "cyan" : "white"}>
+                {settingsCursor === 2 ? "▶ " : "  "}Skip Permissions:      
+              </Text>
+              <Text bold color={!dangerouslySkipPermissions ? "cyan" : "gray"}> [No]</Text>
+              <Text color="gray"> / </Text>
+              <Text bold color={dangerouslySkipPermissions ? "cyan" : "gray"}>[Yes]</Text>
+            </Box>
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>↑↓ select setting · ←→ change value · Tab switch tabs · Esc exit</Text>
           </Box>
         </Box>
       )}
