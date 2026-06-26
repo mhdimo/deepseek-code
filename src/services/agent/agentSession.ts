@@ -32,9 +32,10 @@ export function getOrCreateMemorySession(opts: {
   mcpServers?: Record<string, MCPServerConfig>;
   abortController?: AbortController;
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
+  onToolOutput?: (toolName: string, text: string) => void;
   history?: Message[];
 }): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult } = opts;
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput } = opts;
   const key = [
     providerConfig.type, providerConfig.model || "", providerConfig.baseURL || "",
     workingDir, agentConfig.name, memoryDir,
@@ -48,6 +49,9 @@ export function getOrCreateMemorySession(opts: {
     }
     if (onToolResult) {
       cache.context.onToolResult = onToolResult;
+    }
+    if (onToolOutput) {
+      cache.context.onToolOutput = onToolOutput;
     }
     return cache.ms;
   }
@@ -77,6 +81,7 @@ export function getOrCreateMemorySession(opts: {
     recordPermissionWait: () => {},
     consumePermissionWaitMs: () => 0,
     onToolResult,
+    onToolOutput,
   };
   const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
 

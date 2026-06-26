@@ -778,6 +778,36 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     // area and <Static> scrollback on every tool completion.
   }, []);
 
+  const handleToolOutput = useCallback((toolName: string, text: string) => {
+    if (toolName !== "Bash") return; // Only bash streams live output
+    setStreamingToolUse((prev) => {
+      const runningIdx = prev.findIndex((b) => b.toolName === "Bash" && b.status === "running");
+      if (runningIdx === -1) return prev;
+
+      const next = [...prev];
+      const block = next[runningIdx]!;
+      next[runningIdx] = {
+        ...block,
+        output: (block.output || "") + text,
+      };
+      streamingToolUseRef.current = next;
+
+      // Update chronological blocks ref & state
+      const blockInListIdx = streamingBlocksRef.current.findIndex(
+        (b) => b.type === "tool" && b.block?.toolName === "Bash" && b.block?.status === "running"
+      );
+      if (blockInListIdx !== -1) {
+        streamingBlocksRef.current[blockInListIdx] = {
+          type: "tool",
+          block: next[runningIdx]!,
+        };
+        setStreamingBlocks([...streamingBlocksRef.current]);
+      }
+
+      return next;
+    });
+  }, []);
+
   // ── Process agent/query events ──────────────────────────────────────────────
   const processAgentStream = useCallback(
     async (events: AsyncGenerator<AgentEvent | QueryEvent>) => {
@@ -1059,6 +1089,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           mcpServers,
           abortController,
           onToolResult: handleToolResult,
+          onToolOutput: handleToolOutput,
           history: messages,
         });
 

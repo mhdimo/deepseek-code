@@ -66,6 +66,8 @@ export interface ToolUseContext {
   ) => Promise<Record<string, string>>;
   /** Callback when a tool completes execution (for real-time TUI updates) */
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
+  /** Callback for live streaming output from a tool during execution */
+  onToolOutput?: (toolName: string, text: string) => void;
 }
 
 // ─── Tool interface ──────────────────────────────────────────────────────────

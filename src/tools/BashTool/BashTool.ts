@@ -65,7 +65,11 @@ export const BashTool = buildTool({
       let stderr = "";
 
       child.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        if (context.onToolOutput) {
+          context.onToolOutput("Bash", chunk);
+        }
         if (stdout.length > MAX_OUTPUT_BYTES) {
           child.kill();
           resolvePromise({
@@ -75,7 +79,11 @@ export const BashTool = buildTool({
       });
 
       child.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        stderr += chunk;
+        if (context.onToolOutput) {
+          context.onToolOutput("Bash", chunk);
+        }
       });
 
       const timer = setTimeout(() => {
