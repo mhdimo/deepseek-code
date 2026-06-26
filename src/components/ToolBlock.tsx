@@ -282,15 +282,20 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
         </Box>
       )}
 
-      {/* Result summary for done blocks — line count, not content */}
+      {/* Result summary for done blocks */}
       {isDone && outputText && !expanded && (
         <Box marginLeft={3}>
-          <Text dimColor>
-            {outputLines > 0
-              ? `${outputLines} line${outputLines === 1 ? "" : "s"}`
-              : "done"}
-            {" "}(ctrl+o to expand)
-          </Text>
+          {["Read", "Write", "Edit", "NotebookEdit"].includes(block.toolName) ? (
+            <Text dimColor>
+              {outputLines > 0 ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "done"}
+              {" "}(ctrl+o to expand)
+            </Text>
+          ) : (
+            <Text dimColor>
+              {outputText.trim().split("\n").slice(0, 4).join("\n")}
+              {outputLines > 4 ? `\n  ... (+${outputLines - 4} lines, ctrl+o to expand)` : ""}
+            </Text>
+          )}
         </Box>
       )}
     </Box>
