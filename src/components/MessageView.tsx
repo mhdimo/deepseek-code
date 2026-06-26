@@ -34,7 +34,7 @@ export default function MessageView({ message, selectedToolCallId, isTranscriptM
         flexDirection="column"
         marginTop={1}
         backgroundColor={theme.userMessageBg}
-        paddingRight={1}
+        paddingX={1}
       >
         <Text wrap="wrap">{message.content}</Text>
       </Box>

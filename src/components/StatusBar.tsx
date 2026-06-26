@@ -84,60 +84,55 @@ export default function StatusBar({
   const totalForCost = inputTokens + outputTokens > 0 ? inputTokens + outputTokens : tokenCount;
   const calculatedCost = cost ?? estimateCost(model, totalForCost);
 
-  // Right-side indicators
-  const parts: string[] = [];
-
-  // Agent badge
-  parts.push("");
-  parts.push(agentName);
-
-  if (displayFile) parts.push(`${displayFile}`);
-
-  if (thinkingMode === "whale") {
-    parts.push("WHALE");
-  }
-  if (mcpEnabledCount > 0) parts.push(`MCP ${mcpEnabledCount}`);
-  if (inspectMode) parts.push("INSPECT");
-  if (awaitingPermission) parts.push("permission");
-  if (queueCount === 1 && queuePreview) {
-    const preview = queuePreview.length > 30 ? queuePreview.slice(0, 29) + "…" : queuePreview;
-    parts.push(`queue: "${preview}"`);
-  } else if (queueCount > 1) {
-    parts.push(`queue ${queueCount}`);
-  }
-  if (inputTokens > 0 || outputTokens > 0) {
-    // ↓ in / ↑ out — input (prompt/context) and output (completion) tokens
-    parts.push(`↓ ${formatTokens(inputTokens)} ↑ ${formatTokens(outputTokens)}`);
-    const remainingPercent = Math.max(0, 100 - Math.round((inputTokens / 1_000_000) * 100));
-    parts.push(`ctx ${remainingPercent}%`);
-    parts.push(`~${formatCost(calculatedCost)}`);
-  } else if (tokenCount > 0) {
-    parts.push(`${formatTokens(tokenCount)} tok`);
-    const remainingPercent = Math.max(0, 100 - Math.round((tokenCount / 1_000_000) * 100));
-    parts.push(`ctx ${remainingPercent}%`);
-    parts.push(`~${formatCost(calculatedCost)}`);
-  }
+  // Context-window usage (DeepSeek v4 = 1M). Colored bar, green→yellow→red.
+  const usedPct = Math.min(100, Math.round((totalForCost / 1_000_000) * 100));
+  const barLen = 10;
+  const filled = Math.round((usedPct / 100) * barLen);
+  const ctxBar = "█".repeat(filled) + "░".repeat(barLen - filled);
+  const ctxColor = usedPct > 80 ? "red" : usedPct > 50 ? "yellow" : "green";
+  const hasTokens = inputTokens + outputTokens > 0 || tokenCount > 0;
 
   return (
-    <Box paddingX={2} marginTop={0}>
-      {/* Left: model name */}
+    <Box paddingX={2}>
+      {/* Left: model + mode badges */}
       <Box>
-        <Text dimColor>{model} </Text>
+        <Text>{model}</Text>
+        {agentName !== "code" && (
+          <Text dimColor>
+            {" · "}
+            <Text color={agentColor} bold>
+              {agentName}
+            </Text>
+          </Text>
+        )}
+        {displayFile && <Text dimColor> · {displayFile}</Text>}
+        {thinkingMode === "whale" && <Text color="magenta" bold> · WHALE</Text>}
+        {mcpEnabledCount > 0 && <Text dimColor> · MCP {mcpEnabledCount}</Text>}
       </Box>
 
-      {/* Right: indicators */}
+      {/* Right: context usage bar + tokens + cost */}
       <Box flexGrow={1} justifyContent="flex-end">
-        <Text dimColor>
-          {parts.map((p, i) => (
-            <React.Fragment key={i}>
-              {i === 0 ? (
-                <Text color={agentColor}>⧉</Text>
-              ) : (
-                ` · ${p}`
-              )}
-            </React.Fragment>
-          ))}
-        </Text>
+        {hasTokens ? (
+          <Text>
+            <Text color={ctxColor}>{ctxBar}</Text>
+            <Text dimColor> {100 - usedPct}%</Text>
+            <Text dimColor>
+              {" · ↓"}
+              {formatTokens(inputTokens)}
+              {" ↑"}
+              {formatTokens(outputTokens)}
+            </Text>
+            <Text dimColor> · ~{formatCost(calculatedCost)}</Text>
+            {inspectMode && <Text color="cyan" bold> · INSPECT</Text>}
+            {awaitingPermission && <Text color="yellow"> · permission</Text>}
+            {queueCount > 0 && <Text dimColor> · queue {queueCount}</Text>}
+          </Text>
+        ) : (
+          <Text dimColor>
+            {inspectMode ? "INSPECT" : ""}
+            {awaitingPermission ? "permission" : ""}
+          </Text>
+        )}
       </Box>
     </Box>
   );
