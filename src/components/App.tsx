@@ -2787,14 +2787,6 @@ Based on the above changes:
             <QueuePreview queueItems={queuedSubmissions} />
           )}
 
-          {/* Command picker — visible while user types "/" */}
-          {showCommandPicker && (
-            <CommandPicker
-              commands={filteredCommands}
-              selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
-            />
-          )}
-
           {/* Live todo list (driven by the TodoWrite tool) */}
           <TodoList todos={todos} />
 
@@ -2818,6 +2810,14 @@ Based on the above changes:
             queueCount={queuedSubmissions.length}
             isPickerActive={showCommandPicker}
           />
+
+          {/* Command picker — shown below the prompt (Claude-style) */}
+          {showCommandPicker && (
+            <CommandPicker
+              commands={filteredCommands}
+              selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+            />
+          )}
 
           {/* Status bar */}
           <StatusBar

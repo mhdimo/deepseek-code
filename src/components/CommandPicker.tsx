@@ -5,7 +5,6 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { theme } from "../utils/theme.js";
 
 // ─── Command registry ────────────────────────────────────────────────────────
 
@@ -90,16 +89,6 @@ export function filterCommands(query: string, customCommands: CommandDef[] = [])
     .slice(0, 10);
 }
 
-// ─── Category styling ────────────────────────────────────────────────────────
-
-const CATEGORY_STYLES: Record<string, { label: string; color: string }> = {
-  general: { label: "general", color: "gray" },
-  session: { label: "session", color: "green" },
-  model:   { label: "model",   color: "blue" },
-  agent:   { label: "agent",   color: "magenta" },
-  mcp:     { label: "mcp",     color: "yellow" },
-};
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 interface CommandPickerProps {
@@ -110,27 +99,23 @@ interface CommandPickerProps {
 export default function CommandPicker({ commands, selectedIndex }: CommandPickerProps) {
   if (commands.length === 0) return null;
 
+  // Flat list (no border), matching the reference TUI's slash menu:
+  //   /name padded to a fixed column, description beside it, selected row highlighted.
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.assistant} paddingX={1} marginX={0}>
+    <Box flexDirection="column" paddingX={2}>
       {commands.map((cmd, i) => {
         const active = i === selectedIndex;
-        const category = cmd.category || "general";
-        const style = CATEGORY_STYLES[category] || CATEGORY_STYLES.general!;
         return (
           <Box key={cmd.name}>
-            <Text color={theme.assistant}>{active ? "▸ " : "  "}</Text>
-            <Text color={active ? theme.assistant : "white"} bold={active}>
-              {cmd.name.padEnd(12)}
+            <Text color={active ? "white" : "gray"} bold={active}>
+              {cmd.name.padEnd(34)}
             </Text>
-            <Text color={style.color} dimColor={!active}>
+            <Text color={active ? "white" : undefined} dimColor={!active} wrap="wrap">
               {cmd.description}
             </Text>
           </Box>
         );
       })}
-      <Box paddingTop={0}>
-        <Text dimColor>↑↓ navigate · ↵ select · Esc dismiss · type / for commands</Text>
-      </Box>
     </Box>
   );
 }

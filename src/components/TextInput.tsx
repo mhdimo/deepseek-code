@@ -114,24 +114,21 @@ export default function Input({
     hints.push("Enter confirm", "Esc cancel");
   }
 
+  const cols = process.stdout.columns || 80;
+  const cwdBase = workingDirectory.split("/").filter(Boolean).pop() || "";
+  const left = cwdBase ? `── ${cwdBase} ` : "──";
+  const topDivider = left + "─".repeat(Math.max(0, cols - left.length));
+  const bottomDivider = "─".repeat(cols);
+
   return (
-    <Box flexDirection="column">
-      {/* Bordered input area matching Claude Code's full-width horizontal bar */}
-      <Box
-        flexDirection="row"
-        alignItems="flex-start"
-        justifyContent="flex-start"
-        borderColor={color}
-        borderStyle="round"
-        borderLeft={false}
-        borderRight={false}
-        borderBottom={true}
-        borderTop={true}
-        width="100%"
-        paddingX={1}
-      >
+    <Box flexDirection="column" width="100%">
+      {/* Titled separator above the prompt (shows the working directory) */}
+      <Text color="gray">{topDivider}</Text>
+
+      {/* Prompt row — bare, no border (Claude-style) */}
+      <Box flexDirection="row" paddingX={1}>
         <Text bold={!isLoading} dimColor={isLoading} color={color}>
-          {"❯ "}
+          {isLoading ? "⏳ " : "❯ "}
         </Text>
         <MultilineTextInput
           key={inputResetKey}
@@ -157,6 +154,9 @@ export default function Input({
           </Text>
         </Box>
       )}
+
+      {/* Separator below the prompt (command list renders under this) */}
+      <Text color="gray">{bottomDivider}</Text>
     </Box>
   );
 }
