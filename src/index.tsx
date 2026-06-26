@@ -11,6 +11,7 @@ import { render } from "ink";
 import App from "./components/App.js";
 import { loadConfig, printHelp } from "./utils/config.js";
 import { loadSettings as loadPersistedSettings } from "./state/storage.js";
+import { setThemeMode } from "./utils/theme.js";
 
 const VERSION = "0.1.0";
 
@@ -39,7 +40,6 @@ async function main() {
 
   // Initialize theme mode
   const themeMode = (config as any).themeMode || "dark";
-  const { setThemeMode } = require("./utils/theme.js");
   setThemeMode(themeMode);
 
   // Apply configured env vars to the process environment (inherited by BashTool).
