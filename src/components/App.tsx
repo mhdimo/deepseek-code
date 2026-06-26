@@ -7,7 +7,7 @@
 //   - Slash commands (/help, /agent, /clear, /model, /compact)
 //   - Token tracking
 
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import ChatPanel from "./ChatPanel.js";
 import CommandPicker, { filterCommands } from "./CommandPicker.js";
@@ -43,6 +43,8 @@ import type {
 import {
   saveSettings,
   loadSettings,
+  loadHistory,
+  appendHistory,
   saveSession,
   updateSession,
   loadSession,
@@ -55,6 +57,10 @@ import { recordSessionStats } from "../state/stats.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
 import TodoList from "./TodoList.js";
+import HistorySearch from "./HistorySearch.js";
+import FileMentions from "./FileMentions.js";
+import { buildFileIndex } from "../utils/fileIndex.js";
+import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
@@ -206,6 +212,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Live todo list (driven by the TodoWrite tool via onTodosChange) ────
   const [todos, setTodos] = useState<TodoItem[]>([]);
 
+  // ── Prompt history search (Ctrl+R) + @-file mentions ─────────────────
+  const [showHistorySearch, setShowHistorySearch] = useState(false);
+  const [historySnapshot, setHistorySnapshot] = useState<string[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionSuppressed, setMentionSuppressed] = useState(false);
+  const fileIndexRef = useRef<string[] | null>(null);
+
   const refreshPlugins = useCallback(() => {
     try {
       const plugins = loadInstalledPlugins();
@@ -275,6 +288,35 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const showCommandPicker = filteredCommands.length > 0 && !isExactCommandMatch && !input.includes("\n");
   // Keep ref in sync every render so handleSubmit can read it without stale closure
   pickerActiveRef.current = showCommandPicker;
+
+  // ── @-file mention detection (trailing @query at the cursor / end) ────
+  const mention = useMemo(
+    () => (isLoading || showCommandPicker ? null : detectTrailingMention(input)),
+    [input, isLoading, showCommandPicker],
+  );
+  const mentionMatches = useMemo(() => {
+    if (!mention || mentionSuppressed) return [];
+    const idx = fileIndexRef.current ?? [];
+    return fuzzyFilter(mention.query, idx, (s) => s, 8).map((r) => r.item);
+  }, [mention, mentionSuppressed]);
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mention?.query]);
+
+  // Load persisted prompt history + build the file index once on mount.
+  useEffect(() => {
+    try {
+      inputHistory.current = loadHistory();
+    } catch {
+      // best-effort
+    }
+    try {
+      fileIndexRef.current = buildFileIndex(workingDirectory);
+    } catch {
+      fileIndexRef.current = [];
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const mcpEntries = Object.entries(mcpServers);
   const mcpCount = mcpEntries.length;
@@ -468,6 +510,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
+    // Full-screen overlays manage their own input — defer all other keys to them.
+    if (showHistorySearch || showSettingsOverlay || showPluginOverlay) {
+      return;
+    }
+
     // Ctrl+A: toggle session picker
     if (key.ctrl && _input === "a") {
       if (showSessionPicker) {
@@ -584,6 +631,39 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return;
       }
       return; // Eat other key inputs while in inspect mode
+    }
+
+    // Ctrl+R: fuzzy-search persisted prompt history
+    if (key.ctrl && _input === "r" && !isLoading) {
+      setHistorySnapshot(inputHistory.current);
+      setShowHistorySearch(true);
+      return;
+    }
+
+    // @-file mention: navigate / accept / dismiss while the dropdown is open
+    if (mention && mentionMatches.length > 0) {
+      const pick = () =>
+        mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)] ?? mentionMatches[0]!;
+      if (key.tab) {
+        const value = input.slice(0, mention.atPos) + pick() + " ";
+        setInput(value);
+        setInputResetKey((p) => p + 1);
+        setMentionIndex(0);
+        setMentionSuppressed(false);
+        return;
+      }
+      if (key.upArrow) {
+        setMentionIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setMentionIndex((i) => Math.min(mentionMatches.length - 1, i + 1));
+        return;
+      }
+      if (key.escape) {
+        setMentionSuppressed(true);
+        return;
+      }
     }
 
     // Ctrl+Q: clear queued prompts
@@ -735,6 +815,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       setInput(value);
       if (showShortcuts && value.trim().length > 0) {
         setShowShortcuts(false);
+      }
+      // Re-enable mention suggestions once the @ token is closed (space) or removed.
+      if (!detectTrailingMention(value)) {
+        setMentionSuppressed(false);
       }
     },
     [showShortcuts],
@@ -2395,8 +2479,11 @@ Based on the above changes:
 
     // Push to input history (skip duplicates)
     if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== trimmedInput) {
-      inputHistory.current.push(trimmedInput);
-      if (inputHistory.current.length > 100) inputHistory.current.shift();
+      try {
+        inputHistory.current = appendHistory(trimmedInput);
+      } catch {
+        // best-effort persistence
+      }
     }
     historyIndex.current = -1;
 
@@ -2515,7 +2602,17 @@ Based on the above changes:
         />
       )}
 
-      {showSessionPicker ? (
+      {showHistorySearch ? (
+        <HistorySearch
+          entries={historySnapshot}
+          onPick={(entry) => {
+            setInput(entry);
+            setInputResetKey((p) => p + 1);
+            setShowHistorySearch(false);
+          }}
+          onClose={() => setShowHistorySearch(false)}
+        />
+      ) : showSessionPicker ? (
         <SessionPicker
           sessions={sessionsList}
           selectedIndex={sessionPickerIndex}
@@ -2597,6 +2694,11 @@ Based on the above changes:
 
           {/* Live todo list (driven by the TodoWrite tool) */}
           <TodoList todos={todos} />
+
+          {/* @-file mention dropdown */}
+          {mention && !mentionSuppressed && mentionMatches.length > 0 && (
+            <FileMentions matches={mentionMatches} selectedIndex={mentionIndex} query={mention.query} />
+          )}
 
           {/* Input prompt */}
           <TextInput

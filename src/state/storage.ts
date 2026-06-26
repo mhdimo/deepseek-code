@@ -15,6 +15,8 @@ import { homedir } from "os";
 const DATA_DIR = join(homedir(), ".deepseek-code");
 const SETTINGS_FILE = join(DATA_DIR, "settings.json");
 const SESSIONS_DIR = join(DATA_DIR, "sessions");
+const HISTORY_FILE = join(DATA_DIR, "history.json");
+const MAX_HISTORY = 500;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,38 @@ export function saveSettings(settings: PersistedSettings): void {
   const existing = loadSettings();
   const merged = { ...existing, ...settings };
   writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+}
+
+// ─── Prompt history ─────────────────────────────────────────────────────────
+
+export function loadHistory(): string[] {
+  try {
+    if (!existsSync(HISTORY_FILE)) return [];
+    const parsed = JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
+    return Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveHistory(entries: string[]): void {
+  ensureDataDir();
+  try {
+    writeFileSync(HISTORY_FILE, JSON.stringify(entries.slice(-MAX_HISTORY), null, 2), "utf-8");
+  } catch {
+    // best-effort
+  }
+}
+
+/** Append an entry (dedup vs the last), persist, and return the resulting list. */
+export function appendHistory(entry: string): string[] {
+  const trimmed = entry.trim();
+  if (!trimmed) return loadHistory();
+  const list = loadHistory();
+  if (list[list.length - 1] !== trimmed) list.push(trimmed);
+  const capped = list.slice(-MAX_HISTORY);
+  saveHistory(capped);
+  return capped;
 }
 
 // ─── Sessions ───────────────────────────────────────────────────────────────
