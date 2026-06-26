@@ -212,14 +212,12 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
 
   return (
     <Box flexDirection="column" marginY={0}>
-      {/* Header: status + tool label badge + args + duration */}
+      {/* Header: [icon] ToolName (arg) (duration) — compact, Claude-style */}
       <Box>
         {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
         <StatusIcon status={isRunning ? "running" : isDone ? "done" : "error"} color={statusColor} />
-        <Text backgroundColor={labelColor} color={theme.inverseText} bold>
-          {" "}{label}{" "}
-        </Text>
-        <Text dimColor>{argPreview}</Text>
+        <Text bold>{label}</Text>
+        <Text dimColor>{argPreviewRaw ? ` (${argPreviewRaw})` : ""}</Text>
         {block.duration !== undefined && block.duration > 0 && (
           <Text dimColor> ({formatDuration(block.duration)})</Text>
         )}
