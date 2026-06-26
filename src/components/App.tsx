@@ -153,6 +153,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
   }, [messages, inspectIndex, getFlatToolBlocks]);
 
+  // Cleanup throttle timer on unmount
+  useEffect(() => {
+    return () => {
+      if (outputThrottleTimerRef.current) {
+        clearTimeout(outputThrottleTimerRef.current);
+      }
+    };
+  }, []);
+
   // MCP runtime state (loaded from config)
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>(
     config.mcpServers || {},
@@ -173,6 +182,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const streamingThinkingRef = useRef("");
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
   const streamingBlocksRef = useRef<MessageBlock[]>([]);
+  const pendingOutputsRef = useRef<Record<string, string>>({});
+  const outputThrottleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
@@ -994,32 +1005,48 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const handleToolOutput = useCallback((toolName: string, text: string) => {
     if (toolName !== "Bash") return; // Only bash streams live output
-    setStreamingToolUse((prev) => {
-      const runningIdx = prev.findIndex((b) => b.toolName === "Bash" && b.status === "running");
-      if (runningIdx === -1) return prev;
 
-      const next = [...prev];
-      const block = next[runningIdx]!;
-      next[runningIdx] = {
-        ...block,
-        output: (block.output || "") + text,
-      };
-      streamingToolUseRef.current = next;
+    // Append output text to the throttle buffer
+    pendingOutputsRef.current[toolName] = (pendingOutputsRef.current[toolName] || "") + text;
 
-      // Update chronological blocks ref & state
-      const blockInListIdx = streamingBlocksRef.current.findIndex(
-        (b) => b.type === "tool" && b.block?.toolName === "Bash" && b.block?.status === "running"
-      );
-      if (blockInListIdx !== -1) {
-        streamingBlocksRef.current[blockInListIdx] = {
-          type: "tool",
-          block: next[runningIdx]!,
-        };
-        setStreamingBlocks([...streamingBlocksRef.current]);
-      }
+    // Schedule state update if not already scheduled
+    if (!outputThrottleTimerRef.current) {
+      outputThrottleTimerRef.current = setTimeout(() => {
+        outputThrottleTimerRef.current = null;
 
-      return next;
-    });
+        // Flush buffer to state
+        const flushed = pendingOutputsRef.current;
+        pendingOutputsRef.current = {};
+
+        setStreamingToolUse((prev) => {
+          const runningIdx = prev.findIndex((b) => b.toolName === "Bash" && b.status === "running");
+          if (runningIdx === -1) return prev;
+
+          const next = [...prev];
+          const block = next[runningIdx]!;
+          const textToAppend = flushed["Bash"] || "";
+          next[runningIdx] = {
+            ...block,
+            output: (block.output || "") + textToAppend,
+          };
+          streamingToolUseRef.current = next;
+
+          // Update chronological blocks ref & state
+          const blockInListIdx = streamingBlocksRef.current.findIndex(
+            (b) => b.type === "tool" && b.block?.toolName === "Bash" && b.block?.status === "running"
+          );
+          if (blockInListIdx !== -1) {
+            streamingBlocksRef.current[blockInListIdx] = {
+              type: "tool",
+              block: next[runningIdx]!,
+            };
+            setStreamingBlocks([...streamingBlocksRef.current]);
+          }
+
+          return next;
+        });
+      }, 100); // Throttle to at most 10 updates per second
+    }
   }, []);
 
   // Live todo list — driven by the TodoWrite tool via onTodosChange.
