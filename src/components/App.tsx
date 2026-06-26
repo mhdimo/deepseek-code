@@ -55,6 +55,12 @@ import SettingsPanel from "./SettingsPanel.js";
 import type { TabType } from "./SettingsPanel.js";
 import { recordSessionStats } from "../state/stats.js";
 import { loadHooks, runHooksFireAndForget } from "../services/hooks.js";
+import {
+  loadCustomCommands,
+  renderCommand,
+  toCommandDefs,
+  type CustomCommand,
+} from "../services/customCommands.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
 import TodoList from "./TodoList.js";
@@ -210,6 +216,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [showPluginOverlay, setShowPluginOverlay] = useState(false);
   const [pluginCommands, setPluginCommands] = useState<CommandDef[]>([]);
 
+  // ── Custom slash commands (markdown files) ────────────────────────────
+  const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
+
   // ── Live todo list (driven by the TodoWrite tool via onTodosChange) ────
   const [todos, setTodos] = useState<TodoItem[]>([]);
 
@@ -282,7 +291,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const yieldToRenderer = () => new Promise<void>((r) => setTimeout(r, 0));
 
   // ── Command picker (derived) ──────────────────────────────────────────
-  const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, pluginCommands) : [];
+  const extraCommands = useMemo(
+    () => [...pluginCommands, ...toCommandDefs(customCommands)],
+    [pluginCommands, customCommands],
+  );
+  const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, extraCommands) : [];
   // Hide picker once the user has typed an exact command name (ready to press Enter)
   const isExactCommandMatch =
     filteredCommands.length === 1 && filteredCommands[0]?.name === input.toLowerCase();
@@ -315,6 +328,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       fileIndexRef.current = buildFileIndex(workingDirectory);
     } catch {
       fileIndexRef.current = [];
+    }
+    try {
+      setCustomCommands(loadCustomCommands(workingDirectory));
+    } catch {
+      // best-effort
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1335,6 +1353,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 "  /rewind              Truncate conversation back to a message number",
                 "  /tools               List available tools",
                 "  /hooks               List configured lifecycle hooks (PreToolUse, etc.)",
+                "  Custom commands      .md files in .deepseek-code/commands/ → /<name> [args]",
                 "  /exit                Exit DeepSeek Code",
                 "",
                 "━━━ Agents ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -2470,6 +2489,12 @@ Based on the above changes:
           return true;
 
         default: {
+          // Custom slash commands (markdown files under .deepseek-code/commands/).
+          const custom = customCommands.find((c) => c.name === command.slice(1).toLowerCase());
+          if (custom) {
+            void submitUserPrompt(cmd, renderCommand(custom, restArgs));
+            return true;
+          }
           const skillName = command.slice(1).trim().toLowerCase(); // strip leading "/"
           try {
             const plugins = loadInstalledPlugins();
@@ -2508,6 +2533,7 @@ Based on the above changes:
       mcpServers,
       workingDirectory,
       submitUserPrompt,
+      customCommands,
     ],
   );
 
