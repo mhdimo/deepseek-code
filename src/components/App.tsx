@@ -613,9 +613,44 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return; // Eat other key inputs while in session picker mode
     }
 
-    // Ctrl+O: toggle transcript mode (Claude Code style)
+    // Ctrl+O: expand/collapse the most recent tool result.
     if (key.ctrl && _input === "o") {
-      setIsTranscriptMode((prev) => !prev);
+      setMessages((prev) => {
+        for (let mi = prev.length - 1; mi >= 0; mi--) {
+          const msg = prev[mi]!;
+          const blocks = msg.blocks ?? [];
+          for (let bi = blocks.length - 1; bi >= 0; bi--) {
+            const b = blocks[bi]!;
+            if (b.type === "tool" && b.block) {
+              const nextExpanded = !b.block.isExpanded;
+              const nblocks = blocks.slice();
+              nblocks[bi] = { type: "tool", block: { ...b.block, isExpanded: nextExpanded } };
+              const nm = { ...msg, blocks: nblocks };
+              if (nm.toolUse && b.block.toolCallId) {
+                nm.toolUse = nm.toolUse.map((t) =>
+                  t.toolCallId === b.block!.toolCallId ? { ...t, isExpanded: nextExpanded } : t,
+                );
+              }
+              const next = prev.slice();
+              next[mi] = nm;
+              return next;
+            }
+          }
+          if (msg.toolUse && msg.toolUse.length > 0) {
+            const lastIdx = msg.toolUse.length - 1;
+            const nm = {
+              ...msg,
+              toolUse: msg.toolUse.map((t, i) =>
+                i === lastIdx ? { ...t, isExpanded: !t.isExpanded } : t,
+              ),
+            };
+            const next = prev.slice();
+            next[mi] = nm;
+            return next;
+          }
+        }
+        return prev;
+      });
       return;
     }
 

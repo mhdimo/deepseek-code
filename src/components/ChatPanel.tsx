@@ -1,7 +1,7 @@
 // Chat panel — renders welcome screen + scrolling messages + streaming state
 
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
 import { basename } from "node:path";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import MessageView from "./MessageView.js";
@@ -30,8 +30,10 @@ interface ChatPanelProps {
   isTranscriptMode?: boolean;
 }
 
-type StaticItem =
-  | { type: "message"; key: string; message: Message };
+// Cap on how many recent messages we render in the live tree. Older messages
+// scroll into the terminal scrollback as frozen snapshots; bounding this keeps
+// re-renders cheap during streaming.
+const MAX_RENDERED = 150;
 
 export default function ChatPanel({
   messages,
@@ -50,15 +52,6 @@ export default function ChatPanel({
   streamingBlocks = [],
   isTranscriptMode = false,
 }: ChatPanelProps) {
-  // Build static items: welcome screen + finalized messages
-  const items: StaticItem[] = [
-    ...messages.map((m, i) => ({
-      type: "message" as const,
-      key: `msg-${m.timestamp}-${i}`,
-      message: m,
-    })),
-  ];
-
   // Sentiment detection based on last user message
   const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
   const hasBadWord = lastUserMessage
@@ -83,35 +76,22 @@ export default function ChatPanel({
         </Box>
       )}
 
-      {/* If transcript mode is active, render everything in a normal Box to force complete re-rendering and expansion to stdout. Otherwise, use Static to preserve terminal scrollback. */}
-      {isTranscriptMode ? (
-        <Box flexDirection="column">
-          {messages.map((m, i) => (
-            <Box key={`transcript-msg-${m.timestamp}-${i}`}>
-              <MessageView
-                message={m}
-                selectedToolCallId={selectedToolCallId}
-                isTranscriptMode={isTranscriptMode}
-              />
-            </Box>
-          ))}
-        </Box>
-      ) : (
-        /* Static items */
-        <Static items={items}>
-          {(item) => {
-            return (
-              <Box key={item.key}>
-                <MessageView
-                  message={item.message}
-                  selectedToolCallId={selectedToolCallId}
-                  isTranscriptMode={isTranscriptMode}
-                />
-              </Box>
-            );
-          }}
-        </Static>
-      )}
+      {/* Committed messages — a re-rendering Box (not <Static>) so tool blocks
+          can expand/collapse live. MessageView/ToolBlock are memoized, so only
+          changed blocks re-render. Older messages scroll into terminal scrollback. */}
+      <Box flexDirection="column">
+        {messages.map((m, i) => {
+          if (i < messages.length - MAX_RENDERED) return null;
+          return (
+            <MessageView
+              key={`msg-${m.timestamp}-${i}`}
+              message={m}
+              selectedToolCallId={selectedToolCallId}
+              isTranscriptMode={isTranscriptMode}
+            />
+          );
+        })}
+      </Box>
 
       {/* Live streaming output (not yet finalized) */}
       {isLoading && (

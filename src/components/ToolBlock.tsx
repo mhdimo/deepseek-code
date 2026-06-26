@@ -30,6 +30,24 @@ export function useBlink() {
   return useSyncExternalStore(blinkStore.subscribe, blinkStore.getSnapshot);
 }
 
+// Blinking dot — only mounted for RUNNING tools. Done/error blocks render a
+// static glyph instead, so committed tool blocks never subscribe to the blink
+// ticker and don't re-render every 400ms (a major flicker source).
+function BlinkingDot({ color }: { color: string }): React.ReactElement {
+  const show = useBlink();
+  return <Text color={color}>{show ? "⏺ " : "  "}</Text>;
+}
+
+function StatusIcon({ status, color }: { status: "running" | "done" | "error"; color: string }): React.ReactElement {
+  if (status === "running") return <BlinkingDot color={color} />;
+  return (
+    <Text color={color}>
+      {status === "done" ? "✓" : "✗"}
+      {" "}
+    </Text>
+  );
+}
+
 // Tool label display names
 const TOOL_LABELS: Record<string, string> = {
   Read: "Read",
@@ -71,8 +89,7 @@ interface ToolBlockProps {
   isTranscriptMode?: boolean;
 }
 
-export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
-  const show = useBlink();
+function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const label = TOOL_LABELS[block.toolName] || block.toolName;
   const argPreview = block.input ? ` ${truncateArg(block.input)}` : "";
 
@@ -93,8 +110,6 @@ export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: To
   const isError = block.status === "error";
   const isDone = block.status === "done";
 
-  // Status icon — ⏺ for running matching Claude Code, ✓/✗ for done/error
-  const statusIcon = isRunning ? (show ? BLACK_CIRCLE : " ") : isDone ? "✓" : "✗";
   const statusColor = isRunning ? theme.assistant : isDone ? theme.success : theme.error;
 
   // Output lines
@@ -146,7 +161,7 @@ export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: To
       {/* Header: status + tool label badge + args + duration */}
       <Box>
         {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
-        <Text color={statusColor}>{statusIcon} </Text>
+        <StatusIcon status={isRunning ? "running" : isDone ? "done" : "error"} color={statusColor} />
         <Text backgroundColor={labelColor} color={theme.inverseText} bold>
           {" "}{label}{" "}
         </Text>
@@ -227,3 +242,5 @@ export default function ToolBlock({ block, isHighlighted, isTranscriptMode }: To
     </Box>
   );
 }
+
+export default React.memo(ToolBlock);
