@@ -74,6 +74,12 @@ import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
 
 export default function App({ config, workingDirectory, resumeSessionHash: cliResumeHash }: { config: DeepSeekCodeConfig; workingDirectory: string; resumeSessionHash?: string }) {
   const { exit } = useApp();
+  const handleExit = useCallback(() => {
+    exit();
+    setTimeout(() => {
+      process.exit(0);
+    }, 50);
+  }, [exit]);
 
   // ── State ─────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([]);
@@ -185,6 +191,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const pendingOutputsRef = useRef<Record<string, string>>({});
   const outputThrottleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Batch streaming text/thinking/blocks state updates into a ~40ms flush so
+  // fast token streams don't re-render (and flicker) on every token.
+  const streamingFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scheduleStreamingFlush = useCallback(() => {
+    if (streamingFlushTimerRef.current) return;
+    streamingFlushTimerRef.current = setTimeout(() => {
+      streamingFlushTimerRef.current = null;
+      setStreamingText(streamingTextRef.current);
+      setStreamingThinking(streamingThinkingRef.current);
+      setStreamingBlocks([...streamingBlocksRef.current]);
+    }, 40);
+  }, []);
+
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
 
@@ -199,6 +218,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   });
 
   const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
+
+  // Permission modes (cycled with Shift+Tab, like the reference TUI).
+  const [permissionMode, setPermissionMode] = useState<"default" | "acceptEdits" | "plan" | "bypassPermissions">(
+    config.dangerouslySkipPermissions ? "bypassPermissions" : "default",
+  );
+  const permissionModeRef = useRef(permissionMode);
+  permissionModeRef.current = permissionMode;
 
   // Snapshot of all persisted settings (drives the Settings editor + behavior flags).
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, unknown>>(() => {
@@ -549,7 +575,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         ]);
       } else if (now - lastCtrlCTimeRef.current < 1500) {
         // Exit on second Ctrl+C within 1.5s
-        exit();
+        handleExit();
       } else {
         lastCtrlCTimeRef.current = now;
         setMessages((prev) => [
@@ -880,9 +906,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
     }
 
-    // Shift+Tab: toggle whalethink mode
-    if (key.shift && key.tab && !isLoading) {
-      setThinkingMode((prev) => prev === "off" ? "whale" : "off");
+    // Shift+Tab: cycle permission mode (default → acceptEdits → plan → bypass)
+    if (key.shift && key.tab) {
+      setPermissionMode((prev) => {
+        const order: ("default" | "acceptEdits" | "plan" | "bypassPermissions")[] = [
+          "default", "acceptEdits", "plan", "bypassPermissions",
+        ];
+        const idx = order.indexOf(prev);
+        return order[(idx + 1) % order.length]!;
+      });
       return;
     }
   });
@@ -890,19 +922,29 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // ── Permission callback ───────────────────────────────────────────────
   const requestPermission = useCallback(
     (toolName: string, description: string): Promise<{ approved: boolean; feedback?: string }> => {
-      if (config.dangerouslySkipPermissions || sessionAllowAll) {
+      const mode = permissionModeRef.current;
+      if (mode === "bypassPermissions" || sessionAllowAll) {
+        return Promise.resolve({ approved: true });
+      }
+      if (mode === "plan") {
+        return Promise.resolve({
+          approved: false,
+          feedback: "Plan mode is read-only. Press Shift+Tab to switch to a write-enabled mode.",
+        });
+      }
+      if (mode === "acceptEdits" && ["Write", "Edit", "NotebookEdit"].includes(toolName)) {
         return Promise.resolve({ approved: true });
       }
       return new Promise((resolve) => {
         runHooksFireAndForget("Notification", {
-        notification: `Permission required: ${toolName}`,
-        tool: toolName,
-        cwd: workingDirectory,
-      });
-      setPendingPermission({ toolName, description, resolve });
+          notification: `Permission required: ${toolName}`,
+          tool: toolName,
+          cwd: workingDirectory,
+        });
+        setPendingPermission({ toolName, description, resolve });
       });
     },
-    [config.dangerouslySkipPermissions, sessionAllowAll],
+    [sessionAllowAll],
   );
 
   const handleInputChange = useCallback(
@@ -1069,15 +1111,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         switch (event.type) {
           case "thinking-delta":
             streamingThinkingRef.current += event.text;
-            setStreamingThinking(streamingThinkingRef.current);
-            await yieldToRenderer();
+            scheduleStreamingFlush();
             break;
 
           case "text-delta":
             streamingTextRef.current += event.text;
-            setStreamingText(streamingTextRef.current);
-
-            // Update chronological blocks
+            // Update chronological blocks (ref is source of truth; flush syncs state)
             {
               const lastBlock = streamingBlocksRef.current[streamingBlocksRef.current.length - 1];
               if (lastBlock && lastBlock.type === "text") {
@@ -1085,10 +1124,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               } else {
                 streamingBlocksRef.current.push({ type: "text", content: event.text });
               }
-              setStreamingBlocks([...streamingBlocksRef.current]);
             }
-
-            await yieldToRenderer();
+            scheduleStreamingFlush();
             break;
 
           case "tool-call-start": {
@@ -2056,7 +2093,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             // Show resume hint before exiting — printed to stdout after Ink unmounts
             process.stderr.write(`\n  Session saved: ${activeSessionHash}\n  Resume with: deepseek-code --resume ${activeSessionHash}\n\n`);
           }
-          exit();
+          handleExit();
           return true;
 
         // ── /sessions ───────────────────────────────────────────────────
@@ -2903,6 +2940,7 @@ Based on the above changes:
             awaitingPermission={!!pendingPermission}
             cost={cost}
             inspectMode={inspectMode}
+            permissionMode={permissionMode}
           />
         </>
       )}

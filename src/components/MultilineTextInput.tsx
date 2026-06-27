@@ -180,8 +180,8 @@ export default function MultilineTextInput({
         return;
       }
 
-      // -- Printable character or paste: insert at cursor
-      if (input && !key.ctrl && !key.meta) {
+      // -- Printable character or paste: insert at cursor (ignore control characters)
+      if (input && !key.ctrl && !key.meta && input.charCodeAt(0) >= 32) {
         const newValue =
           value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
         internalChange.current = true;

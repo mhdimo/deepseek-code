@@ -25,6 +25,7 @@ interface StatusBarProps {
   awaitingPermission?: boolean;
   cost?: number;
   inspectMode?: boolean;
+  permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -70,6 +71,7 @@ export default function StatusBar({
   awaitingPermission = false,
   cost,
   inspectMode = false,
+  permissionMode = "default",
 }: StatusBarProps) {
   const cols = process.stdout.columns || 80;
   const separator = "─".repeat(cols);
@@ -97,6 +99,18 @@ export default function StatusBar({
       {/* Left: model + mode badges */}
       <Box>
         <Text>{model}</Text>
+        {permissionMode !== "default" && (
+          <Text
+            color={permissionMode === "plan" ? "yellow" : permissionMode === "bypassPermissions" ? "red" : "green"}
+            bold
+          >
+            {permissionMode === "acceptEdits"
+              ? " · accept edits"
+              : permissionMode === "plan"
+                ? " · plan mode"
+                : " · bypass perms"}
+          </Text>
+        )}
         {agentName !== "code" && (
           <Text dimColor>
             {" · "}
