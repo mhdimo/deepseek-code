@@ -624,8 +624,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return; // Eat other key inputs while in session picker mode
     }
 
-    // Ctrl+O: expand/collapse the most recent tool result.
-    if (key.ctrl && _input === "o") {
+    // Ctrl+O: expand/collapse the most recent tool result. Some terminals send
+    // Ctrl+O as the raw SI control char (\x0f) without setting key.ctrl — accept both.
+    if ((key.ctrl && _input === "o") || _input === "\x0f") {
       setMessages((prev) => {
         for (let mi = prev.length - 1; mi >= 0; mi--) {
           const msg = prev[mi]!;

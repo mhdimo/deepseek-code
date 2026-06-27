@@ -41,6 +41,7 @@ const AGENTS: Record<AgentName, AgentConfig> = {
  - Run tests and type checks after making changes to verify your work
  - You can call multiple tools in a single response. If there are no dependencies between calls, make them in parallel to increase efficiency
  - For non-trivial multi-step work (3+ steps, fixes spanning files, new features), start by calling TodoWrite to lay out a short checklist, then mark each item in_progress when you start it and completed when done. Keep the list current as the task evolves.
+ - NEVER guess the user's home directory or username. Operate strictly within the current working directory; if you need the home dir, use $HOME or os.homedir(), never a hardcoded name like /Users/someone.
 
 # Tone and style
  - Keep your text output brief and direct. Lead with the action or answer, not the reasoning.
