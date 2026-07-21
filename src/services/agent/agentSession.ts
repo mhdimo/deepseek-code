@@ -13,6 +13,10 @@ import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { ToolUseContext, PermissionCallback } from "../../Tool.js";
 import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem, Message } from "../../types/index.js";
 import { readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { assembleSystemPromptSync } from "../../constants/prompts.js";
+import { composeWithSystemPrompt } from "../../services/outputStyles.js";
+import { loadSettings } from "../../state/storage.js";
 
 export interface MemorySession {
   agent: Agent;
@@ -110,8 +114,40 @@ export function getOrCreateMemorySession(opts: {
     }
   }
 
+  // Build a dynamic system prompt: agent identity + detected environment
+  // (cwd, git branch, OS, shell, model, date) + active tool list + path
+  // anti-hallucination rules. Replaces the old static buildSystemInstructions().
+  let gitBranch: string | null = null;
+  try {
+    const gr = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: workingDir,
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    if (gr.status === 0) {
+      const b = (gr.stdout || "").trim();
+      gitBranch = b && b !== "HEAD" ? b : null;
+    }
+  } catch {
+    // not a git repo / git missing — leave gitBranch null
+  }
+
+  let instructions = assembleSystemPromptSync({
+    identity: agentConfig.systemPrompt || "",
+    cwd: workingDir,
+    model: providerConfig.model,
+    tools: getTools(agentConfig.permissions),
+    gitBranch: gitBranch ?? undefined,
+  });
+
+  // Apply the active output style (settings.outputStyle) on top of the base prompt.
+  try {
+    instructions = composeWithSystemPrompt(instructions, loadSettings().outputStyle);
+  } catch {
+    // best-effort — never block session creation on style composition
+  }
+
   // Auto-inject project context (CLAUDE.md / DEEP.md / AGENTS.md) into the prompt.
-  let instructions = agentConfig.systemPrompt;
   for (const doc of ["CLAUDE.md", "DEEP.md", "AGENTS.md"]) {
     const docPath = `${workingDir}/${doc}`;
     if (existsSync(docPath)) {
@@ -131,7 +167,7 @@ export function getOrCreateMemorySession(opts: {
     maxSteps: agentConfig.maxSteps || 25,
     extraToolSets: extraToolSets.length > 0 ? extraToolSets : undefined,
   });
-  const session = new Session(agent, { memoryDir, maxContextTokens });
+  const session = new Session(agent, { memoryDir, maxContextTokens, enableCheckpoint: false });
 
   if (opts.history && opts.history.length > 0) {
     for (const msg of opts.history) {
