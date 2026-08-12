@@ -32,7 +32,7 @@ export interface ToolUseBlock {
 }
 
 export interface MessageBlock {
-  type: "text" | "tool";
+  type: "text" | "tool" | "thinking";
   content?: string;
   block?: ToolUseBlock;
 }
@@ -85,7 +85,9 @@ export interface TokenBudget {
 
 export type QueryEvent =
   | { type: "text-delta"; text: string }
+  | { type: "thinking-start" }
   | { type: "thinking-delta"; text: string }
+  | { type: "thinking-end" }
   | { type: "tool-call-start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
   | { type: "tool-call-delta"; toolCallId: string; toolName: string; text: string }
   | { type: "tool-call-end"; toolCallId: string; toolName: string }

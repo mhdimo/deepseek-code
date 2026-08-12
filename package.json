@@ -8,7 +8,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "bun run src/index.tsx",
-    "build": "bun build src/index.tsx --outdir ./dist --target bun --external react-devtools-core && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js",
+    "build": "bun build src/index.tsx --outdir ./dist --target bun --external react-devtools-core && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js && rm -rf ./dist/bundled && cp -R ./src/skills/bundled ./dist/bundled",
     "typecheck": "tsc --noEmit"
   },
   "bin": {

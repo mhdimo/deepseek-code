@@ -1,24 +1,29 @@
-// Message display — matches Claude Code's exact layout
+// Message display — ported from Claude Code's message rendering chain
+// (Message.tsx → AssistantTextMessage / AssistantToolUseMessage /
+// AssistantThinkingMessage / UserPromptMessage).
 //
 // Layout:
-// User message text on dark grey background (userMessageBackground)
+//   ⏺ user message on dark grey background (userMessageBackground)
 //
-//   ⎿ Assistant response with **markdown**.            ← rendered markdown
+//   ⏺ Assistant response with **markdown**.            ← ⏺ dot + rendered markdown
 //
-//   ⎿ Read(file_path: "src/App.tsx")                ← tool block inline
-//     ✓ 42 lines (1.2s)
+//   ⏺ Read(file_path: "src/App.tsx")                   ← tool block inline
+//     42 lines (ctrl+o to expand)
 //
-//   ⎿ More assistant text...
+//   ⏺ More assistant text...
 //
-//   ⎿ ∴ Thinking                                 ← dim italic thinking
+//   ∴ Thought (ctrl+o to expand)                       ← dim italic thinking
 
 import React from "react";
 import { Box, Text } from "ink";
-import type { Message } from "../types/index.js";
+import type { Message, MessageBlock } from "../types/index.js";
+import { theme, resolveColor } from "../utils/theme.js";
 import Markdown from "./Markdown.js";
 import ToolBlock from "./ToolBlock.js";
 import MessageResponse from "./MessageResponse.js";
-import { theme } from "../utils/theme.js";
+import ThinkingBlock from "./ThinkingBlock.js";
+import { BLACK_CIRCLE } from "./ToolBlock.js";
+
 
 interface MessageViewProps {
   message: Message;
@@ -26,16 +31,36 @@ interface MessageViewProps {
   isTranscriptMode?: boolean;
 }
 
+/** Claude Code's assistant text block: ⏺ dot + markdown, dot in 'text' color. */
+function TextBlock({ content, isError, dim }: { content: string; isError?: boolean; dim?: boolean }): React.ReactElement {
+  if (isError) {
+    // API-style error messages keep the ⎿ MessageResponse chrome
+    return (
+      <MessageResponse>
+        <Text color={resolveColor(theme.error)} wrap="wrap">
+          {content}
+        </Text>
+      </MessageResponse>
+    );
+  }
+  return (
+    <Box alignItems="flex-start" flexDirection="row">
+      <Box minWidth={2} flexShrink={0}>
+        <Text color={resolveColor(theme.text)}>{BLACK_CIRCLE}</Text>
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        <Markdown dim={dim}>{content}</Markdown>
+      </Box>
+    </Box>
+  );
+}
+
 function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageViewProps) {
-  // ── User messages — dark grey background matching Claude Code ────────
+  // ── User messages — plain text (no background block; the full-width
+  //     tint read as a "white bar" on light terminals) ────────────────────
   if (message.role === "user") {
     return (
-      <Box
-        flexDirection="column"
-        marginTop={1}
-        backgroundColor={theme.userMessageBg}
-        paddingX={1}
-      >
+      <Box flexDirection="column" marginTop={1}>
         <Text wrap="wrap">{message.content}</Text>
       </Box>
     );
@@ -52,83 +77,75 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
     );
   }
 
-  // ── Assistant messages — wrapped in MessageResponse (⎿ border) ──────
+  // ── Assistant messages — block stream with ⏺ per block ────────────────
   if (message.role === "assistant") {
+    const renderBlock = (block: MessageBlock, idx: number, first: boolean): React.ReactNode => {
+      const marginTop = first ? 1 : 0;
+      if (block.type === "text" && block.content) {
+        return (
+          <Box key={`msg-block-${idx}`} marginTop={marginTop}>
+            <TextBlock content={block.content} isError={message.isError} />
+          </Box>
+        );
+      }
+      if (block.type === "tool" && block.block) {
+        return (
+          <Box key={`msg-block-${idx}`} marginTop={marginTop}>
+            <ToolBlock
+              block={block.block}
+              isTranscriptMode={isTranscriptMode}
+              isHighlighted={
+                block.block.toolCallId
+                  ? block.block.toolCallId === selectedToolCallId
+                  : false
+              }
+            />
+          </Box>
+        );
+      }
+      if (block.type === "thinking") {
+        return (
+          <Box key={`msg-block-${idx}`} marginTop={marginTop}>
+            <ThinkingBlock
+              content={block.content || ""}
+              isTranscriptMode={isTranscriptMode}
+            />
+          </Box>
+        );
+      }
+      return null;
+    };
+
     return (
       <Box flexDirection="column">
-        {/* Thinking indicator — therefore sign matching Claude Code */}
+        {/* Legacy thinking (pre-blocks transcripts) — collapsed, like Claude Code */}
         {message.thinking && (
-          <MessageResponse>
-            <Box flexDirection="column">
-              {isTranscriptMode ? (
-                <>
-                  <Text dimColor italic>∴ Thought</Text>
-                  <Text dimColor italic wrap="wrap">{message.thinking}</Text>
-                </>
-              ) : (
-                <Text dimColor italic>∴ Thought (ctrl+o to expand)</Text>
-              )}
-            </Box>
-          </MessageResponse>
+          <Box marginTop={1}>
+            <ThinkingBlock content={message.thinking} isTranscriptMode={isTranscriptMode} />
+          </Box>
         )}
 
-        {/* Chronological message blocks */}
+        {/* Chronological message blocks — thinking blocks render in place */}
         {message.blocks && message.blocks.length > 0 ? (
-          message.blocks.map((block, idx) => {
-            if (block.type === "text" && block.content) {
-              return (
-                <MessageResponse key={`msg-block-${idx}`}>
-                  {message.isError ? (
-                    <Text color={theme.error} wrap="wrap">
-                      {block.content}
-                    </Text>
-                  ) : (
-                    <Markdown>{block.content}</Markdown>
-                  )}
-                </MessageResponse>
-              );
-            }
-            if (block.type === "tool" && block.block) {
-              return (
-                <MessageResponse key={`msg-block-${idx}`}>
-                  <ToolBlock
-                    block={block.block}
-                    isTranscriptMode={isTranscriptMode}
-                    isHighlighted={
-                      block.block.toolCallId
-                        ? block.block.toolCallId === selectedToolCallId
-                        : false
-                    }
-                  />
-                </MessageResponse>
-              );
-            }
-            return null;
-          })
+          message.blocks.map((block, idx) => renderBlock(block, idx, idx === 0 && !message.thinking))
         ) : (
           <>
-            {/* Text content — rendered as Markdown inside MessageResponse */}
+            {/* Text content — ⏺ dot + Markdown */}
             {message.content && (
-              <MessageResponse>
-                {message.isError ? (
-                  <Text color={theme.error} wrap="wrap">
-                    {message.content}
-                  </Text>
-                ) : (
-                  <Markdown>{message.content}</Markdown>
-                )}
-              </MessageResponse>
+              <Box marginTop={1}>
+                <TextBlock content={message.content} isError={message.isError} />
+              </Box>
             )}
 
             {/* Tool blocks inline */}
             {message.toolUse?.map((tool, i) => (
-              <MessageResponse key={tool.toolCallId || i}>
+              <Box key={tool.toolCallId || i} marginTop={i === 0 ? 1 : 0}>
                 <ToolBlock
                   block={tool}
                   isTranscriptMode={isTranscriptMode}
                   isHighlighted={tool.toolCallId ? tool.toolCallId === selectedToolCallId : false}
                 />
-              </MessageResponse>
+              </Box>
             ))}
           </>
         )}

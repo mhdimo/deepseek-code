@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { theme } from "../utils/theme.js";
+import { getTheme } from "../utils/theme.js";
+import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
 
 interface PermissionPromptProps {
@@ -10,13 +11,24 @@ interface PermissionPromptProps {
   filePath?: string;
   onApprove: (feedback?: string) => void;
   onDeny: (feedback?: string) => void;
+  /** When true, skip preview truncation so the full diff is visible. */
+  isTranscriptMode?: boolean;
 }
 
 interface DiffLineProps {
   line: string;
 }
 
+// Claude Code's amend-mode placeholders (permissions/PermissionPrompt.tsx):
+// shown dimmed ("the dim feedback line") until the user types feedback.
+const DEFAULT_PLACEHOLDERS = {
+  accept: "tell Claude what to do next",
+  reject: "tell Claude what to do differently",
+} as const;
+
 function DiffLine({ line }: DiffLineProps) {
+  const [themeName] = useTheme();
+  const theme = getTheme(themeName);
   const trimmed = line.trimStart();
   if (trimmed.startsWith("+")) {
     return (
@@ -45,7 +57,10 @@ export default function PermissionPrompt({
   filePath,
   onApprove,
   onDeny,
+  isTranscriptMode = false,
 }: PermissionPromptProps) {
+  const [themeName] = useTheme();
+  const theme = getTheme(themeName);
   const isFileEdit = toolName === "Write" || toolName === "Edit";
   const isBash = toolName === "Bash";
 
@@ -146,7 +161,7 @@ export default function PermissionPrompt({
     return t.startsWith("+") || t.startsWith("-");
   });
   const hasDiff = diffOnly.length > 0;
-  const maxPreviewLines = 10;
+  const maxPreviewLines = isTranscriptMode ? 10000 : 10;
   const previewLines = isFileEdit
     ? diffOnly.slice(0, maxPreviewLines)
     : isBash
@@ -161,10 +176,17 @@ export default function PermissionPrompt({
     ? filePath.split("/").pop() || filePath
     : null;
 
-  // Structured Diff support
+  // Structured Diff support. Account for the box chrome: round border (2 cols)
+  // + paddingX={1} (2 cols) = 4 cols, so the diff fills the inner width and its
+  // background reaches the border with no gap.
   const cols = process.stdout.columns || 80;
   const diffWidth = Math.max(20, cols - 6);
   const hunk = isFileEdit ? parseDiffTextToHunk(description) : null;
+
+  // Header: bold tool name + dim arguments, Claude Code style ("Bash(cat foo)").
+  const firstDescLine = description.split("\n")[0]?.trim() ?? "";
+  const rawArgs = isFileEdit ? shortFile ?? "file" : firstDescLine;
+  const args = rawArgs.length > 60 ? rawArgs.slice(0, 60).trimEnd() + "…" : rawArgs;
 
   let headerText = "";
   let displayHunk = hunk;
@@ -179,7 +201,7 @@ export default function PermissionPrompt({
         headerText = description.split("\n")[0] || "";
       }
     }
-    
+
     if (hunk.lines.length > maxPreviewLines) {
       displayHunk = {
         ...hunk,
@@ -196,18 +218,15 @@ export default function PermissionPrompt({
       paddingX={1}
       marginY={0}
     >
-      {/* Header */}
-      <Box flexDirection="column">
-        <Text bold color={theme.permission}>
-          Allow {toolName}?
-        </Text>
-
-        {isFileEdit && shortFile && (
+      {/* Header — tool name + arguments, permission colored (Claude Code style) */}
+      <Text bold color={theme.permission}>
+        {toolName}
+        {args ? (
           <Text dimColor>
-            {shortFile}
+            ({args})
           </Text>
-        )}
-      </Box>
+        ) : null}
+      </Text>
 
       {/* Diff/content preview */}
       {previewLines.length > 0 && (
@@ -235,44 +254,55 @@ export default function PermissionPrompt({
         </Box>
       )}
 
-      {/* Options picker */}
+      {/* Question + options picker */}
       <Box flexDirection="column" marginTop={1}>
-        {options.map((opt, i) => {
-          const isActive = i === selectedIdx;
+        <Text dimColor>Do you want to proceed?</Text>
+        <Box flexDirection="column">
+          {options.map((opt, i) => {
+            const isActive = i === selectedIdx;
 
-          // Inline feedback mode
-          if (isActive && feedbackMode) {
+            // Inline feedback mode — placeholder renders dimmed until the user
+            // types ("the dim feedback line", ported from Claude Code's select
+            // input option: color inactive while empty, bold once typed).
+            if (isActive && feedbackMode) {
+              const placeholder =
+                opt.value === "no"
+                  ? DEFAULT_PLACEHOLDERS.reject
+                  : DEFAULT_PLACEHOLDERS.accept;
+              return (
+                <Box key={i}>
+                  <Text color={theme.claude} bold>
+                    {" ❯ "}
+                  </Text>
+                  <Text bold color={theme.claude}>
+                    {opt.label}:{" "}
+                  </Text>
+                  <Text color={feedbackText ? undefined : theme.inactive} bold={!!feedbackText}>
+                    {feedbackText || placeholder}
+                  </Text>
+                  <Text backgroundColor={theme.claude}>{" "}</Text>
+                </Box>
+              );
+            }
+
             return (
               <Box key={i}>
-                <Text color={theme.assistant} bold>
-                  {" ❯ "}
+                <Text color={isActive ? theme.claude : undefined} bold={isActive}>
+                  {isActive ? " ❯ " : "   "}
+                  {opt.label}
                 </Text>
-                <Text bold color={theme.assistant}>
-                  {opt.label}:{" "}
-                </Text>
-                <Text bold>{feedbackText}</Text>
-                <Text backgroundColor={theme.assistant}>{" "}</Text>
+                {isActive && opt.hasFeedback && !feedbackMode && (
+                  <Text dimColor> (tab for feedback)</Text>
+                )}
               </Box>
             );
-          }
-
-          return (
-            <Box key={i}>
-              <Text color={isActive ? theme.assistant : undefined} bold={isActive}>
-                {isActive ? " ❯ " : "   "}
-                {opt.label}
-              </Text>
-              {isActive && opt.hasFeedback && !feedbackMode && (
-                <Text dimColor> (tab for feedback)</Text>
-              )}
-            </Box>
-          );
-        })}
+          })}
+        </Box>
       </Box>
 
       {/* Footer hints */}
       <Box marginTop={1}>
-        <Text dimColor>
+        <Text color={theme.inactive}>
           Esc to cancel
           {options[selectedIdx]?.hasFeedback && " · Tab to amend"}
         </Text>

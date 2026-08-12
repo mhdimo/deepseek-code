@@ -1,18 +1,19 @@
-// Input component — bordered input matching Claude Code's prompt area
+// Input component — boxed prompt area: a divider line above the prompt
+// (titled with the working directory), the ❯ input row, and a divider line
+// below. The footer row with status info + hints renders under it (StatusBar).
 //
 // Layout:
-// ╭──────────────────────────────────────────────────────╮
-// │ ❯ Type a message... (tab)                           │
-// ╰──────────────────────────────────────────────────────╯
-// Enter submit · Esc interrupt · ↑ history · Tab suggest
+// ── deepseek-code ──────────────────────────────────────
+// ❯ what does project do?
+// ───────────────────────────────────────────────────────
 
-import React, { useMemo } from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useMemo, useRef, useCallback } from "react";
+import { Box, Text } from "ink";
 import MultilineTextInput from "./MultilineTextInput.js";
-import { theme } from "../utils/theme.js";
+import { theme, resolveColor } from "../utils/theme.js";
+
 
 interface InputProps {
-  inputResetKey?: number;
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -27,22 +28,22 @@ interface InputProps {
 }
 
 const AGENT_COLORS: Record<string, string> = {
-  code: theme.assistant,
+  code: theme.claude,
   plan: theme.warning,
   review: "magenta",
 };
 
-/** Context-aware placeholder suggestions */
+/** Context-aware placeholder suggestions — Claude Code style ("Try '…'"). */
 function getSuggestion(
   agentName: string,
   cwd: string,
   recentFiles: string[],
 ): string {
   if (agentName === "plan") {
-    return "analyze the architecture and suggest improvements";
+    return "Try 'analyze the architecture and suggest improvements'";
   }
   if (agentName === "review") {
-    return "review the recent changes for bugs and style issues";
+    return "Try 'review the recent changes for bugs and style issues'";
   }
 
   const dir = cwd.split("/").filter(Boolean).pop() || "project";
@@ -50,16 +51,16 @@ function getSuggestion(
   if (recentFiles.length > 0) {
     const file = recentFiles[0]!;
     const base = file.split("/").filter(Boolean).pop() || file;
-    return `explain ${base}`;
+    return `Try 'explain ${base}'`;
   }
 
   const suggestions = [
-    `what does ${dir} do?`,
-    "find all TODO/FIXME comments",
-    "show me the project structure",
-    "what are the main dependencies?",
-    "what could be improved here?",
-    "add error handling to the entry point",
+    `Try 'what does ${dir} do?'`,
+    "Try 'find all TODO/FIXME comments'",
+    "Try 'show me the project structure'",
+    "Try 'what are the main dependencies?'",
+    "Try 'what could be improved here?'",
+    "Try 'add error handling to the entry point'",
   ];
 
   const idx = cwd.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % suggestions.length;
@@ -67,7 +68,6 @@ function getSuggestion(
 }
 
 export default function Input({
-  inputResetKey,
   value,
   onChange,
   onSubmit,
@@ -80,40 +80,28 @@ export default function Input({
   queueCount = 0,
   isPickerActive = false,
 }: InputProps) {
-  const color = AGENT_COLORS[agentName] || theme.assistant;
+  const color = AGENT_COLORS[agentName] || theme.claude;
+
+  // Stabilize the onSubmit wrapper so it doesn't create a new function reference
+  // on every render. A changing onSubmit bypasses React.memo on MultilineTextInput
+  // and causes Ink's useInput to deregister/re-register the input handler on every
+  // keystroke (use-input.js line 121: effect dep on inputHandler).
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+  const stableOnSubmit = useCallback(() => onSubmitRef.current(), []);
 
   const suggestion = useMemo(
     () => getSuggestion(agentName, workingDirectory, recentFiles),
     [agentName, workingDirectory, recentFiles],
   );
 
-  // Tab to autocomplete the suggestion when input is empty
-  useInput((_input, key) => {
-    if (key.tab && value === "" && !isLoading) {
-      onChange(suggestion);
-    }
-  }, { isActive: !isBlocked });
-
   const placeholder = isLoading
     ? queueCount > 0
       ? `Type and press Enter to queue… (${queueCount} queued)`
       : "Type and press Enter to queue next message..."
-    : `${suggestion} (tab)`;
+    : suggestion;
 
   const hasNewlines = value.includes("\n");
-
-  // Build footer hints
-  const hints: string[] = [];
-  if (hasNewlines) hints.push("Enter submit");
-  if (hasNewlines) hints.push("Alt+Enter newline");
-  if (isLoading) hints.push("Esc interrupt");
-  if (!isLoading && !hasNewlines) hints.push("Enter submit");
-  if (!isLoading) hints.push("↑↓ history");
-  if (waitingPermission) {
-    hints.length = 0;
-    hints.push("Enter confirm", "Esc cancel");
-  }
-
   const cols = process.stdout.columns || 80;
   const cwdBase = workingDirectory.split("/").filter(Boolean).pop() || "";
   const left = cwdBase ? `── ${cwdBase} ` : "──";
@@ -122,39 +110,31 @@ export default function Input({
 
   return (
     <Box flexDirection="column" width="100%">
-      {/* Titled separator above the prompt (shows the working directory) */}
+      {/* Divider above the prompt (titled with the working directory) */}
       <Text color="gray">{topDivider}</Text>
 
-      {/* Prompt row — bare, no border (Claude-style) */}
+      {/* Prompt row */}
       <Box flexDirection="row" paddingX={1}>
-        <Text bold={!isLoading} dimColor={isLoading} color={color}>
+        <Text bold={!isLoading} dimColor={isLoading} color={resolveColor(color)}>
           {isLoading ? "⏳ " : "❯ "}
         </Text>
         <MultilineTextInput
-          key={inputResetKey}
           value={value}
           onChange={onChange}
-          onSubmit={() => onSubmit()}
+          onSubmit={stableOnSubmit}
           focus={!isBlocked}
           placeholder={placeholder}
           isPickerActive={isPickerActive}
         />
       </Box>
 
-      {/* Separator below the prompt (hints / command list render under this) */}
+      {/* Divider below the prompt */}
       <Text color="gray">{bottomDivider}</Text>
 
-      {/* Footer hints */}
-      {hints.length > 0 && (
-        <Box paddingLeft={2}>
-          <Text dimColor>
-            {hints.map((h, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && " · "}
-                <Text bold>{h}</Text>
-              </React.Fragment>
-            ))}
-          </Text>
+      {/* Multiline submit hint (the footer StatusBar shows the rest) */}
+      {hasNewlines && (
+        <Box paddingX={2}>
+          <Text dimColor>enter to submit · alt+enter for newline</Text>
         </Box>
       )}
     </Box>

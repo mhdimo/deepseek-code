@@ -10,6 +10,7 @@ import type { AgentConfig, AgentEvent, Message, ProviderConfig } from "../../typ
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { PermissionCallback, ToolUseContext } from "../../Tool.js";
+import { buildSystemInstructions } from "../../utils/toolUtils.js";
 
 // ─── Error categorization ──────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ export class Agent {
     try {
       for await (const ev of bindingStreamText({
         model: this.model,
-        system: this.config.systemPrompt,
+        system: buildSystemInstructions(this.config.systemPrompt, workingDir),
         messages: apiMessages,
         tools,
         maxSteps: this.config.maxSteps || 25,

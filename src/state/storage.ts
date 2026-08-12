@@ -20,6 +20,15 @@ const MAX_HISTORY = 500;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * User-facing reasoning-effort level, sent to OpenAI-compatible providers
+ * (e.g. DeepSeek) as `reasoning_effort` via providerOptions. "off"/unset means
+ * the provider default — behavior unchanged.
+ */
+export type EffortLevel = "off" | "low" | "medium" | "high" | "xhigh" | "max";
+
+import type { ThemeSetting } from "../utils/theme.js";
+
 export interface PersistedSettings {
   apiKey?: string;
   model?: string;
@@ -27,9 +36,16 @@ export interface PersistedSettings {
   provider?: string;
   defaultAgent?: string;
   thinkingMode?: string;
-  themeMode?: "dark" | "light";
+  /** Reasoning effort sent to OpenAI-compatible providers ("off"/unset = provider default). */
+  effort?: EffortLevel;
+  /** Theme preference — any ThemeSetting (auto/dark/light/daltonized/ANSI). */
+  themeMode?: ThemeSetting;
+  /** First-time setup (Onboarding) has been completed at least once. */
+  onboarded?: boolean;
   /** The hash of the last active session (for resume) */
   lastSessionHash?: string;
+  /** Settings schema version, managed by utils/migrations.ts runMigrations(). */
+  schemaVersion?: number;
   // ── Claude-style settings ──────────────────────────────────────────────
   /** Add a Co-Authored-By trailer to /commit messages (default false). */
   includeCoAuthoredBy?: boolean;
@@ -45,6 +61,48 @@ export interface PersistedSettings {
   env?: Record<string, string>;
   /** Tool permission rules: allow / deny / ask (Tool(spec:pattern) syntax). */
   permissions?: { allow?: string[]; deny?: string[]; ask?: string[] };
+  /**
+   * Custom status line (Claude Code parity): when set, the status bar runs
+   * `command` (trust-gated, 5s timeout) and renders its trimmed stdout
+   * right-aligned at the far edge. Managed via /statusline.
+   */
+  statusLine?: { type: "command"; command: string };
+  /** LSP (Language Server Protocol) integration — see LspSettings. */
+  lsp?: LspSettings;
+}
+
+/**
+ * One configured language server. Either a [command, args?] tuple (canonical
+ * short form) or an object form with extras (extensions, root, env, …).
+ */
+export type LspServerConfigEntry =
+  | [command: string, args?: string[]]
+  | {
+      command: string;
+      args?: string[];
+      /** File extensions this server handles (e.g. [".ts", ".tsx"]). Defaults to a built-in table keyed by language. */
+      extensions?: string[];
+      /** Workspace root for this server — a filesystem path or file:// URI. */
+      rootUri?: string;
+      /** Workspace root as a plain filesystem path. */
+      rootPath?: string;
+      /** Extra environment variables for the server process. */
+      env?: Record<string, string>;
+      /** Initialization options passed in the LSP initialize request. */
+      initializationOptions?: Record<string, unknown>;
+      /** Milliseconds to wait for the initialize request before failing (default: no timeout). */
+      startupTimeout?: number;
+    };
+
+/** The [lsp] settings section — configures LSP servers for the LSP tool. */
+export interface LspSettings {
+  /**
+   * Language servers keyed by language name, e.g.
+   * `{ servers: { typescript: ["typescript-language-server", ["--stdio"]] } }`.
+   */
+  servers?: Record<string, LspServerConfigEntry>;
+  /** Optional workspace root (filesystem path) per language. */
+  roots?: Record<string, string>;
 }
 
 export interface SessionData {
@@ -76,7 +134,22 @@ export function loadSettings(): PersistedSettings {
   try {
     if (!existsSync(SETTINGS_FILE)) return {};
     const raw = readFileSync(SETTINGS_FILE, "utf-8");
-    return JSON.parse(raw) as PersistedSettings;
+    const settings = JSON.parse(raw) as PersistedSettings;
+    // Migrate to the latest schema (idempotent, never throws). Persist the
+    // migrated shape directly (not via saveSettings, which would recurse).
+    try {
+      const { runMigrations } = require("../utils/migrations.js") as {
+        runMigrations: (s: PersistedSettings) => { applied: string[] };
+      };
+      const result = runMigrations(settings);
+      if (result.applied.length > 0) {
+        ensureDataDir();
+        writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+      }
+    } catch {
+      // best-effort — migrations never block settings load
+    }
+    return settings;
   } catch {
     return {};
   }

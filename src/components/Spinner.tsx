@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Box, Text } from "ink";
-import { theme } from "../utils/theme.js";
+import { theme, resolveColor } from "../utils/theme.js";
+import { useBlink, BLACK_CIRCLE } from "./ToolBlock.js";
 
-import { useBlink } from "./ToolBlock.js";
 
 // The spinner glyph — a black circle that pulses (blinks) while the model is
-// working, with a rotating verb beside it: "⏺ Pondering…".
-const GLYPH = "⏺";
+// working, with a rotating verb beside it: "⏺ Pondering…". Same glyph as the
+// tool-use loader (Claude Code's BLACK_CIRCLE).
 
 // Rotating "progress" verbs shown while the agent works. Cycled sequentially
 // (shuffled once per run) so the same verb never repeats back-to-back.
@@ -87,7 +87,7 @@ export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerP
 
   return (
     <Box minWidth={2}>
-      <Text color={theme.assistant}>{show ? GLYPH : " "}</Text>
+      <Text color={resolveColor(theme.claude)}>{show ? BLACK_CIRCLE : " "}</Text>
       {text && (
         <Text dimColor>
           {" "}

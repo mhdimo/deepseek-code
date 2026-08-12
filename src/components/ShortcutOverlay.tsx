@@ -38,7 +38,7 @@ export default function ShortcutOverlay({
       <Text dimColor> </Text>
 
       <Text color={theme.assistant}>Modes</Text>
-      <Text>  Shift+Tab         Cycle thinking mode</Text>
+      <Text>  Shift+Tab         Cycle permission mode</Text>
       <Text>  ?                 Toggle this shortcuts panel</Text>
       <Text dimColor> </Text>
 

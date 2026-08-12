@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import { assembleSystemPromptSync } from "../../constants/prompts.js";
 import { composeWithSystemPrompt } from "../../services/outputStyles.js";
 import { loadSettings } from "../../state/storage.js";
+import { getEffortLevel, effortToProviderOptions } from "../effort.js";
 
 export interface MemorySession {
   agent: Agent;
@@ -41,9 +42,16 @@ export function getOrCreateMemorySession(opts: {
   history?: Message[];
 }): MemorySession {
   const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
+
+  // Reasoning effort (off/unset → undefined → provider default, unchanged).
+  // Included in the cache key so a changed effort rebuilds the Agent.
+  const effort = getEffortLevel();
+  const providerOptions = effortToProviderOptions(effort);
+
   const key = [
     providerConfig.type, providerConfig.model || "", providerConfig.baseURL || "",
     workingDir, agentConfig.name, memoryDir,
+    effort || "off",
   ].join("|");
   if (cache && cache.key === key) {
     if (requestPermission) {
@@ -160,12 +168,15 @@ export function getOrCreateMemorySession(opts: {
     }
   }
 
+  // providerOptions is spread so this compiles against both the current binding
+  // types and the rebuild that adds `providerOptions?` to the Agent constructor.
   const agent = new Agent({
     model,
     tools,
     instructions,
     maxSteps: agentConfig.maxSteps || 25,
     extraToolSets: extraToolSets.length > 0 ? extraToolSets : undefined,
+    ...(providerOptions ? { providerOptions } : {}),
   });
   const session = new Session(agent, { memoryDir, maxContextTokens, enableCheckpoint: false });
 

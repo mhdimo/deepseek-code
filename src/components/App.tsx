@@ -8,9 +8,9 @@
 //   - Token tracking
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import ChatPanel from "./ChatPanel.js";
-import CommandPicker, { filterCommands } from "./CommandPicker.js";
+import CommandPicker, { filterCommands, ALL_COMMANDS } from "./CommandPicker.js";
 import type { CommandDef } from "./CommandPicker.js";
 import ShortcutOverlay from "./ShortcutOverlay.js";
 import SessionPicker from "./SessionPicker.js";
@@ -18,11 +18,27 @@ import StatusBar from "./StatusBar.js";
 import TextInput from "./TextInput.js";
 import PermissionPrompt from "./PermissionPrompt.js";
 import QueuePreview from "./QueuePreview.js";
+import HelpView from "./HelpView.js";
+import ExportView from "./ExportView.js";
+import type { ExportFormat } from "../utils/exportConversation.js";
+import SearchResultsView from "./SearchResultsView.js";
+import type { SearchMatch } from "../utils/transcriptSearch.js";
+import { ThemeProvider } from "../ui/design-system/ThemeProvider.js";
+import { resolveThemeSetting, type ThemeSetting } from "../utils/theme.js";
+import Onboarding, { type ThemeChoice } from "./Onboarding.js";
+import EffortCallout from "./EffortCallout.js";
+import ThemePicker from "./ThemePicker.js";
+import { isTrusted } from "../services/projectTrust.js";
 import { agentManager } from "../services/agent/index.js";
 import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
 import { getOrCreateMemorySession, resetMemorySession } from "../services/agent/agentSession.js";
 import os from "node:os";
+import { readdirSync, existsSync, writeFileSync } from "node:fs";
+import { listOutputStyles } from "../services/outputStyles.js";
+import { listTasks } from "../services/tasks/backgroundFramework.js";
+import { writeFile, mkdir, rm } from "node:fs/promises";
+import { resolve, relative, dirname } from "node:path";
 import { TokenTracker } from "../services/tokenTracker.js";
 import { ContextManager } from "../services/contextManager.js";
 import { getToolDescriptions } from "../tools.js";
@@ -54,6 +70,7 @@ import {
 } from "../state/storage.js";
 import SettingsPanel from "./SettingsPanel.js";
 import type { TabType } from "./SettingsPanel.js";
+import { Settings } from "./Settings/Settings.js";
 import { recordSessionStats } from "../state/stats.js";
 import { loadHooks, runHooksFireAndForget } from "../services/hooks.js";
 import {
@@ -64,17 +81,30 @@ import {
 } from "../services/customCommands.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
+import { shutdownLspServerManager } from "../services/lsp/manager.js";
 import TodoList from "./TodoList.js";
 import HistorySearch from "./HistorySearch.js";
 import FileMentions from "./FileMentions.js";
 import { buildFileIndex } from "../utils/fileIndex.js";
 import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
+import { getEffortLevel, isEffortLevel } from "../services/effort.js";
+import type { EffortLevel } from "../state/storage.js";
+import { listSkills, getSkill } from "../skills/skillService.js";
+import { writeToFile } from "../utils/exportConversation.js";
+import { searchMessages } from "../utils/transcriptSearch.js";
+import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../utils/fileHistory.js";
+import { notify, preventSleep, allowSleep } from "../utils/notify.js";
+import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
 
 // ── Thinking mode constants ───────────────────────────────────────────────
 
 export default function App({ config, workingDirectory, resumeSessionHash: cliResumeHash }: { config: DeepSeekCodeConfig; workingDirectory: string; resumeSessionHash?: string }) {
   const { exit } = useApp();
   const handleExit = useCallback(() => {
+    // Fire-and-forget LSP shutdown so configured language server processes
+    // aren't orphaned on exit. Never throws; the 50ms exit window may cut it
+    // short, in which case process exit reaps the children anyway.
+    void shutdownLspServerManager();
     exit();
     setTimeout(() => {
       process.exit(0);
@@ -109,10 +139,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   // ── Thinking / extended reasoning ─────────────────────────────────────
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("off");
-  const [streamingThinking, setStreamingThinking] = useState("");
+
+  // ── Reasoning effort (StatusBar chip + persisted setting) ─────────────
+  // Initialized from getEffortLevel() (CLI > persisted settings > unset);
+  // /effort <level> updates both the state (immediate chip refresh) and the
+  // persisted setting. NOTE: if a CLI --effort flag is active it wins over
+  // the persisted value in getEffortLevel() — the chip may then show the
+  // command-set value while the session uses the CLI value.
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | undefined>(() => {
+    try {
+      return getEffortLevel();
+    } catch {
+      return undefined;
+    }
+  });
+
   const [commandPickerIndex, setCommandPickerIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [inputResetKey, setInputResetKey] = useState(0);
   const [queuedSubmissions, setQueuedSubmissions] = useState<string[]>([]);
 
   // ── Tool Inspection Mode ──────────────────────────────────────────────
@@ -132,6 +175,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [sessionLinesRemoved, setSessionLinesRemoved] = useState(0);
   const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
   const [settingsOverlayTab, setSettingsOverlayTab] = useState<TabType>("usage");
+
+  // ── Tabbed Settings UI (/config · /status · /usage) ───────────────────
+  const [showSettingsUI, setShowSettingsUI] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"Status" | "Config" | "Usage">("Status");
 
   const getFlatToolBlocks = useCallback(() => {
     const flat: Array<{ messageIdx: number; toolIdx: number; block: ToolUseBlock }> = [];
@@ -168,6 +215,52 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     };
   }, []);
 
+  // Keep the committed message count in a ref so callbacks that are recreated
+  // rarely (processAgentStream, submitUserPrompt internals) can compute the
+  // current 1-based message index without stale closures.
+  useEffect(() => {
+    messagesLenRef.current = messages.length;
+  }, [messages.length]);
+
+  // Sleep prevention: hold a caffeinate assertion while a turn is running so
+  // long generations don't let the machine idle-sleep, release it when idle.
+  // Ref-counted + defensive — never throws, no-op off macOS.
+  useEffect(() => {
+    try {
+      if (isLoading) {
+        preventSleep();
+      } else {
+        allowSleep();
+      }
+    } catch {
+      // best-effort — sleep management must never break the chat loop
+    }
+  }, [isLoading]);
+
+  // ── Terminal resize handler ──────────────────────────────────────────
+  // Forces a React re-render on terminal resize so components reading
+  // process.stdout.columns get the updated value.
+  // Debounced: resize events fire rapidly during a drag; we batch them
+  // to a single render to avoid flickering from intermediate states.
+  const [resizeTick, setResizeTick] = useState(0);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        setResizeTick((t) => t + 1);
+      }, 50); // debounce 50ms — coalesces rapid resize events
+    };
+    process.stdout.on("resize", handler);
+    return () => {
+      process.stdout.off("resize", handler);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+  // Reference resizeTick to force re-render — value itself unused
+  void resizeTick;
+
   // MCP runtime state (loaded from config)
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>(
     config.mcpServers || {},
@@ -185,30 +278,52 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const handleSubmitRef = useRef<(overrideInput?: string) => void>(() => {});
 
   const streamingTextRef = useRef("");
-  const streamingThinkingRef = useRef("");
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
   const streamingBlocksRef = useRef<MessageBlock[]>([]);
+  /** The in-progress thinking block (between thinking-start and thinking-end). */
+  const thinkingOpenRef = useRef<MessageBlock | null>(null);
   const pendingOutputsRef = useRef<Record<string, string>>({});
   const outputThrottleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Batch streaming text/thinking/blocks state updates into a ~40ms flush so
+  /** Current committed message count (effect-synced — avoids stale closures). */
+  const messagesLenRef = useRef(0);
+  /** Absolute paths touched by file-mutating tools (Write/Edit/NotebookEdit),
+   *  cumulative across turns — feeds /rewind file snapshots. */
+  const touchedFilesRef = useRef<Set<string>>(new Set());
+  /** Epoch ms when the current user turn started — drives the finish notify rule. */
+  const turnStartRef = useRef(0);
+  /** One-shot overload-recovery guard: never retry more than once per turn. */
+  const recoveryAttemptedRef = useRef(false);
+  /** Set by processAgentStream's error case when a fallback retry is armed. */
+  const retryFallbackRef = useRef<ProviderConfig | null>(null);
+
+  // Dirty flags — track which refs actually changed since the last flush so
+  // we don't setState with fresh (but identical) array references every tick.
+  // Without this, the flush creates new [...array] references every 80ms even
+  // when only text changed, forcing a full React reconcile + Ink diff for
+  // arrays that are logically identical — a major CPU drain during streaming.
+  const flushDirtyRef = useRef({ text: false, blocks: false, toolUse: false });
+
+  // Batch streaming text/thinking/blocks state updates into an ~80ms flush so
   // fast token streams don't re-render (and flicker) on every token.
   const streamingFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scheduleStreamingFlush = useCallback(() => {
     if (streamingFlushTimerRef.current) return;
     streamingFlushTimerRef.current = setTimeout(() => {
       streamingFlushTimerRef.current = null;
-      setStreamingText(streamingTextRef.current);
-      setStreamingThinking(streamingThinkingRef.current);
-      setStreamingBlocks([...streamingBlocksRef.current]);
-    }, 40);
+      const dirty = flushDirtyRef.current;
+      if (dirty.text) setStreamingText(streamingTextRef.current);
+      if (dirty.blocks) setStreamingBlocks([...streamingBlocksRef.current]);
+      if (dirty.toolUse) setStreamingToolUse([...streamingToolUseRef.current]);
+      flushDirtyRef.current = { text: false, blocks: false, toolUse: false };
+    }, 80);
   }, []);
 
   // ── Session state ────────────────────────────────────────────────────
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
 
   // ── Theme / Settings states ──────────────────────────────────────────
-  const [themeMode, setThemeModeState] = useState<"dark" | "light">(() => {
+  const [themeMode, setThemeModeState] = useState<ThemeSetting>(() => {
     try {
       const settings = loadSettings();
       return settings.themeMode || "dark";
@@ -216,6 +331,82 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return "dark";
     }
   });
+
+  // ── Pinned bottom bar (Claude Code REPL parity) ──────────────────────
+  // The reference REPL wraps everything in an <AlternateScreen>'s
+  // <Box height={rows}> so its ScrollBox flexGrow has a ceiling and the
+  // bottom slot (input + status line, flexShrink={0}) never moves. Stock
+  // ink gets the same with a terminal-height root box: messages flexGrow
+  // in the middle, the input/status bar pins to the last rows.
+  const { stdout } = useStdout();
+  const [termRows, setTermRows] = useState<number>(() => stdout?.rows ?? process.stdout.rows ?? 40);
+  useEffect(() => {
+    if (!stdout || typeof stdout.on !== "function") return;
+    const onResize = () => setTermRows(stdout.rows ?? termRows);
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout, termRows]);
+
+  // ── Theme picker overlay (Claude Code parity: /theme opens the same
+  // interactive ThemePicker as the first-time setup) ────────────────────
+  const [showThemePicker, setShowThemePicker] = useState(false);
+
+  // ── Effort selector callout (Claude Code parity: /effort with no args
+  // opens the interactive EffortCallout dialog) ─────────────────────────
+  const [showEffortCallout, setShowEffortCallout] = useState(false);
+  const handleEffortCalloutDone = useCallback((selection: EffortLevel | "dismiss") => {
+    setShowEffortCallout(false);
+    if (selection === "dismiss") return;
+    const EFFORT_DESCRIPTIONS: Record<string, string> = {
+      low: "Quick, straightforward implementation",
+      medium: "Balanced approach with standard testing",
+      high: "Comprehensive implementation with extensive testing",
+      max: "Maximum capability with deepest reasoning",
+    };
+    try {
+      saveSettings({ effort: selection });
+    } catch {}
+    setEffortLevel(selection);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "system",
+        content: `Set effort level to ${selection}: ${EFFORT_DESCRIPTIONS[selection]}`,
+        timestamp: Date.now(),
+      },
+    ]);
+  }, []);
+
+  // ── First-time setup (Claude Code parity: Onboarding) ────────────────
+  // Shown on the very first run when no API key is configured. /setup and
+  // /apikey remain available afterwards; finishing (or skipping) the flow
+  // persists `onboarded` so it never reappears.
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    try {
+      return !config.apiKey && !loadSettings().onboarded;
+    } catch {
+      return !config.apiKey;
+    }
+  });
+  const handleOnboardingDone = useCallback(
+    (result: { theme: ThemeChoice; apiKey?: string }) => {
+      const { syncLiveTheme } = require("../utils/theme.js");
+      syncLiveTheme(resolveThemeSetting(result.theme));
+      setThemeModeState(result.theme);
+      if (result.apiKey) {
+        setActiveApiKey(result.apiKey);
+      }
+      try {
+        saveSettings({ onboarded: true, themeMode: result.theme, apiKey: result.apiKey });
+      } catch {
+        // best-effort
+      }
+      setShowOnboarding(false);
+    },
+    [],
+  );
 
   const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
 
@@ -243,9 +434,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
   }, []);
 
-  const handleThemeModeChange = useCallback((mode: "dark" | "light") => {
-    const { setThemeMode } = require("../utils/theme.js");
-    setThemeMode(mode);
+  const handleThemeModeChange = useCallback((mode: ThemeSetting) => {
+    const { syncLiveTheme } = require("../utils/theme.js");
+    syncLiveTheme(resolveThemeSetting(mode));
     setThemeModeState(mode);
     try {
       saveSettings({ themeMode: mode });
@@ -276,6 +467,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   // ── Live todo list (driven by the TodoWrite tool via onTodosChange) ────
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  // Tasks footer (Claude Code parity): the pill lives in the status footer;
+  // ↓ expands the navigable list, Esc/Enter collapses it.
+  const [tasksExpanded, setTasksExpanded] = useState(false);
+  const [tasksSelectedIndex, setTasksSelectedIndex] = useState(0);
 
   // ── Prompt history search (Ctrl+R) + @-file mentions ─────────────────
   const [showHistorySearch, setShowHistorySearch] = useState(false);
@@ -284,19 +479,150 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [mentionSuppressed, setMentionSuppressed] = useState(false);
   const fileIndexRef = useRef<string[] | null>(null);
 
+  // ── Ported Claude Code command surfaces ──────────────────────────────
+  // /help → HelpView pane; /export → ExportView dialog; /search →
+  // SearchResultsView overlay. Each owns its own keyboard handling while
+  // open; App's useInput defers to them (see the overlay gate below).
+  const [showHelp, setShowHelp] = useState(false);
+  const [exportDialog, setExportDialog] = useState<{ defaultFormat: ExportFormat } | null>(null);
+  const [searchResults, setSearchResults] = useState<{
+    query: string;
+    matches: SearchMatch[];
+    total: number;
+  } | null>(null);
+
+  // ── Custom status line (Claude Code parity, /statusline) ─────────────
+  // When settings.statusLine is set, run its command (trust-gated, 5s
+  // timeout) and render the trimmed stdout right-aligned on the status bar.
+  const [statusLineText, setStatusLineText] = useState<string | null>(null);
+  const statusLineTextRef = useRef<string | null>(null);
+  const statusLineAbortRef = useRef<AbortController | null>(null);
+  const statusLineTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  /** Current statusLine setting (re-read from the settings snapshot). */
+  const statusLineSetting = (settingsSnapshot as { statusLine?: { type: "command"; command: string } })
+    .statusLine;
+
+  // Run the configured status-line command once, storing trimmed stdout.
+  // SECURITY: like claude-code hooks, only executes in a trusted workspace
+  // (isTrusted) — untrusted workspaces skip execution entirely.
+  const runStatusLineCommand = useCallback(() => {
+    if (statusLineTimerRef.current) {
+      clearTimeout(statusLineTimerRef.current);
+      statusLineTimerRef.current = null;
+    }
+    let setting: { type: string; command?: string } | undefined;
+    try {
+      setting = loadSettings().statusLine;
+    } catch {
+      setting = undefined;
+    }
+    if (!setting || setting.type !== "command" || !setting.command) {
+      if (statusLineTextRef.current !== null) {
+        statusLineTextRef.current = null;
+        setStatusLineText(null);
+      }
+      return;
+    }
+    const command = setting.command;
+    if (!isTrusted(workingDirectory)) return; // trust gate — never run untrusted
+    statusLineAbortRef.current?.abort(); // cancel any in-flight run
+    const controller = new AbortController();
+    statusLineAbortRef.current = controller;
+    const killTimer = setTimeout(() => controller.abort(), 5000);
+    void (async () => {
+      try {
+        const proc = Bun.spawn(["sh", "-c", command], {
+          stdout: "pipe",
+          stderr: "ignore",
+          stdin: "ignore",
+          signal: controller.signal,
+          cwd: workingDirectory,
+        });
+        const stdout = await new Response(proc.stdout).text();
+        clearTimeout(killTimer);
+        if (controller.signal.aborted) return;
+        const trimmed = stdout.trim();
+        if (trimmed !== statusLineTextRef.current) {
+          statusLineTextRef.current = trimmed;
+          setStatusLineText(trimmed);
+        }
+      } catch {
+        // A slow/failing status-line command must never crash the UI —
+        // keep the previous output (or nothing), stay dim.
+      }
+    })();
+  }, [workingDirectory]);
+
+  // Debounced scheduling (300ms, like the reference) — coalesces rapid
+  // triggers (turn finish + interval can land together).
+  const scheduleStatusLineRun = useCallback(() => {
+    if (statusLineTimerRef.current) clearTimeout(statusLineTimerRef.current);
+    statusLineTimerRef.current = setTimeout(() => {
+      statusLineTimerRef.current = null;
+      runStatusLineCommand();
+    }, 300);
+  }, [runStatusLineCommand]);
+
+  // Run once on mount, and whenever the configured command changes.
+  useEffect(() => {
+    runStatusLineCommand();
+    return () => {
+      statusLineAbortRef.current?.abort();
+      if (statusLineTimerRef.current) clearTimeout(statusLineTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runStatusLineCommand, statusLineSetting]);
+
+  // Refresh on a modest interval while configured (20s — cheap, keeps the
+  // output fresh without hammering the command).
+  useEffect(() => {
+    if (!statusLineSetting) return;
+    const id = setInterval(() => runStatusLineCommand(), 20_000);
+    return () => clearInterval(id);
+  }, [statusLineSetting, runStatusLineCommand]);
+
+  // Refresh after each finished turn (isLoading edge true → false).
+  const prevLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading) scheduleStatusLineRun();
+    prevLoadingRef.current = isLoading;
+  }, [isLoading, scheduleStatusLineRun]);
+
   const refreshPlugins = useCallback(() => {
     try {
       const plugins = loadInstalledPlugins();
       const enabled = plugins.filter((p) => p.enabled);
 
+      // Keep the picker clean (Claude Code's slash menu): one-line
+      // descriptions, no duplicates across plugins, and built-in commands
+      // win over plugin skills with the same name.
+      const seen = new Set(ALL_COMMANDS.map((c) => c.name));
+      const truncate = (s: string, max = 70) => (s.length > max ? s.slice(0, max - 1) + "…" : s);
       const cmds: CommandDef[] = [];
       for (const p of enabled) {
+        if (p.manifest.commands) {
+          for (const pcmd of p.manifest.commands) {
+            const name = pcmd.name.startsWith("/") ? pcmd.name : `/${pcmd.name}`;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            cmds.push({
+              name,
+              description: truncate(pcmd.description ?? `Plugin command from ${p.name}`),
+              usage: `${name} `,
+              category: "session",
+            });
+          }
+        }
         if (p.manifest.skills) {
           for (const skill of p.manifest.skills) {
+            const name = skill.name.startsWith("/") ? skill.name : `/${skill.name}`;
+            if (seen.has(name)) continue;
+            seen.add(name);
             cmds.push({
-              name: `/${skill.name}`,
-              description: skill.description,
-              usage: `/${skill.name} `,
+              name,
+              description: truncate(skill.description),
+              usage: `${name} `,
               category: "session",
             });
           }
@@ -353,8 +679,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, extraCommands) : [];
   // Hide picker once the user has typed an exact command name (ready to press Enter)
   const isExactCommandMatch =
-    filteredCommands.length === 1 && filteredCommands[0]?.name === input.toLowerCase();
-  const showCommandPicker = filteredCommands.length > 0 && !isExactCommandMatch && !input.includes("\n");
+    filteredCommands.length === 1 && filteredCommands[0]?.name === input.trimEnd().toLowerCase();
+  // Also hide once the first word is a complete command — the user has typed
+  // "/effort " and is now typing the argument (Claude Code behavior: the
+  // picker completes on space and gets out of the way).
+  const firstWord = input.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  const hasExactCommandPrefix =
+    firstWord.length > 0 && filteredCommands.some((c) => c.name === firstWord);
+  const showCommandPicker =
+    filteredCommands.length > 0 && !isExactCommandMatch && !hasExactCommandPrefix && !input.includes("\n");
   // Keep ref in sync every render so handleSubmit can read it without stale closure
   pickerActiveRef.current = showCommandPicker;
 
@@ -365,9 +698,44 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
   const mentionMatches = useMemo(() => {
     if (!mention || mentionSuppressed) return [];
+
+    // Support dynamic file/folder autocompletion for relative/absolute paths
+    // (e.g. starting with . or .. or containing /)
+    if (mention.query.includes("/") || mention.query.startsWith("..") || mention.query.startsWith(".")) {
+      const lastSlashIdx = mention.query.lastIndexOf("/");
+      let dirPath = "";
+      let filePrefix = "";
+      if (lastSlashIdx >= 0) {
+        dirPath = mention.query.slice(0, lastSlashIdx + 1);
+        filePrefix = mention.query.slice(lastSlashIdx + 1);
+      } else {
+        dirPath = mention.query;
+        filePrefix = "";
+      }
+
+      const targetDir = resolve(workingDirectory, dirPath);
+      try {
+        const entries = readdirSync(targetDir, { withFileTypes: true });
+        const matches = entries
+          .filter((e) => {
+            if (e.name.startsWith(".") && !filePrefix.startsWith(".")) return false;
+            if (e.name === "node_modules") return false;
+            return e.name.toLowerCase().startsWith(filePrefix.toLowerCase());
+          })
+          .map((e) => {
+            const rel = dirPath ? `${dirPath}${e.name}` : e.name;
+            return e.isDirectory() ? `${rel}/` : rel;
+          })
+          .slice(0, 8);
+        return matches;
+      } catch {
+        return [];
+      }
+    }
+
     const idx = fileIndexRef.current ?? [];
     return fuzzyFilter(mention.query, idx, (s) => s, 8).map((r) => r.item);
-  }, [mention, mentionSuppressed]);
+  }, [mention, mentionSuppressed, workingDirectory]);
   useEffect(() => {
     setMentionIndex(0);
   }, [mention?.query]);
@@ -559,6 +927,22 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         setShowSettingsOverlay(false);
         return;
       }
+      if (showSettingsUI) {
+        setShowSettingsUI(false);
+        return;
+      }
+      if (showHelp) {
+        setShowHelp(false);
+        return;
+      }
+      if (exportDialog) {
+        setExportDialog(null);
+        return;
+      }
+      if (searchResults) {
+        setSearchResults(null);
+        return;
+      }
 
       const now = Date.now();
       if (isLoading) {
@@ -590,9 +974,36 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // Full-screen overlays manage their own input — defer all other keys to them.
-    if (showHistorySearch || showSettingsOverlay || showPluginOverlay) {
+    // Onboarding owns the keyboard while it's showing (it has its own
+    // useInput handlers; ctrl+c above still quits).
+    if (showOnboarding) {
       return;
+    }
+
+    // Full-screen overlays manage their own input — defer all other keys to them.
+    if (showHistorySearch || showSettingsOverlay || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker) {
+      return;
+    }
+
+    // The tabbed Settings UI owns its keyboard input, including Esc: the
+    // Settings shell's handler calls onClose (Esc dismisses unless the Config
+    // tab's search/edit submenu is open, where Config layers Esc itself —
+    // clear query → exit search → close). Ink dispatches every key to all
+    // handlers, so closing here too would fire on the same Esc and break that
+    // layering (e.g. the first Esc in Config search would close the pane
+    // instead of clearing the query). This mirrors the reference, where the
+    // Settings pane binds confirm:no (Esc) itself.
+    if (showSettingsUI) {
+      return; // defer all other keys to the Settings UI
+    }
+
+    // Esc closes the /help pane (HelpView has no input handler of its own).
+    if (showHelp) {
+      if (key.escape) {
+        setShowHelp(false);
+        return;
+      }
+      return; // eat other keys while /help is open
     }
 
     // Ctrl+A: toggle session picker
@@ -650,45 +1061,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return; // Eat other key inputs while in session picker mode
     }
 
-    // Ctrl+O: expand/collapse the most recent tool result. Some terminals send
-    // Ctrl+O as the raw SI control char (\x0f) without setting key.ctrl — accept both.
+    // Ctrl+O: toggle transcript mode (expands thinking/reasoning + all tool
+    // blocks). Some terminals send Ctrl+O as the raw SI control char (\x0f)
+    // without setting key.ctrl — accept both.
     if ((key.ctrl && _input === "o") || _input === "\x0f") {
-      setMessages((prev) => {
-        for (let mi = prev.length - 1; mi >= 0; mi--) {
-          const msg = prev[mi]!;
-          const blocks = msg.blocks ?? [];
-          for (let bi = blocks.length - 1; bi >= 0; bi--) {
-            const b = blocks[bi]!;
-            if (b.type === "tool" && b.block) {
-              const nextExpanded = !b.block.isExpanded;
-              const nblocks = blocks.slice();
-              nblocks[bi] = { type: "tool", block: { ...b.block, isExpanded: nextExpanded } };
-              const nm = { ...msg, blocks: nblocks };
-              if (nm.toolUse && b.block.toolCallId) {
-                nm.toolUse = nm.toolUse.map((t) =>
-                  t.toolCallId === b.block!.toolCallId ? { ...t, isExpanded: nextExpanded } : t,
-                );
-              }
-              const next = prev.slice();
-              next[mi] = nm;
-              return next;
-            }
-          }
-          if (msg.toolUse && msg.toolUse.length > 0) {
-            const lastIdx = msg.toolUse.length - 1;
-            const nm = {
-              ...msg,
-              toolUse: msg.toolUse.map((t, i) =>
-                i === lastIdx ? { ...t, isExpanded: !t.isExpanded } : t,
-              ),
-            };
-            const next = prev.slice();
-            next[mi] = nm;
-            return next;
-          }
-        }
-        return prev;
-      });
+      setIsTranscriptMode((prev) => !prev);
       return;
     }
 
@@ -763,7 +1140,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       if (key.tab) {
         const value = input.slice(0, mention.atPos) + pick() + " ";
         setInput(value);
-        setInputResetKey((p) => p + 1);
         setMentionIndex(0);
         setMentionSuppressed(false);
         return;
@@ -808,10 +1184,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         abortRef.current?.abort();
         setIsLoading(false);
         streamingTextRef.current = "";
-        streamingThinkingRef.current = "";
         streamingToolUseRef.current = [];
+        thinkingOpenRef.current = null;
         setStreamingText("");
-        setStreamingThinking("");
         setStreamingToolUse([]);
         setMessages((prev) => [
           ...prev,
@@ -853,11 +1228,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           if (key.return && !cmd.usage) {
             // Enter on no-arg command → execute immediately
             handleSubmitRef.current(cmd.name);
-            setInputResetKey((prev) => prev + 1);
           } else {
             // Tab, or Enter on command with args → autocomplete (fill usage template)
             setInput(cmd.usage ?? cmd.name);
-            setInputResetKey((prev) => prev + 1);
           }
           setCommandPickerIndex(0);
         }
@@ -868,6 +1241,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     // Reset picker selection index on any non-navigation keypress
     if (!key.upArrow && !key.downArrow && !key.tab && !key.return) {
       setCommandPickerIndex(0);
+    }
+
+    // Tasks panel (Claude Code footer parity): ↓ on an empty prompt expands
+    // the task list; ↑/↓ navigates inside it; Esc/Enter collapses it back
+    // into the footer pill.
+    if (todos.length > 0 && !showCommandPicker && !isLoading) {
+      if (tasksExpanded) {
+        if (key.upArrow) {
+          setTasksSelectedIndex((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setTasksSelectedIndex((i) => Math.min(todos.length - 1, i + 1));
+          return;
+        }
+        if (key.escape || key.return) {
+          setTasksExpanded(false);
+          return;
+        }
+      } else if (key.downArrow && input.trim().length === 0) {
+        const activeIdx = todos.findIndex((t) => t.status === "in_progress");
+        setTasksSelectedIndex(activeIdx >= 0 ? activeIdx : 0);
+        setTasksExpanded(true);
+        return;
+      }
     }
 
     // Input history navigation (when picker is not active)
@@ -883,7 +1281,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const historical = inputHistory.current[historyIndex.current];
         if (historical !== undefined) {
           setInput(historical);
-          setInputResetKey((prev) => prev + 1);
         }
         return;
       }
@@ -894,13 +1291,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           const historical = inputHistory.current[historyIndex.current];
           if (historical !== undefined) {
             setInput(historical);
-            setInputResetKey((prev) => prev + 1);
           }
         } else {
           // Bottom of history — clear input
           historyIndex.current = -1;
           setInput("");
-          setInputResetKey((prev) => prev + 1);
         }
         return;
       }
@@ -963,6 +1358,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const handleToolResult = useCallback((toolName: string, input: any, output: string, isError: boolean) => {
     if (!isError && input && typeof input === "object") {
+      // Track file-mutating tool targets — the cumulative set feeds /rewind
+      // file snapshots (snapshotFiles at the next turn start). Bash is
+      // deliberately excluded: it can touch arbitrary paths.
+      if (toolName === "Write" || toolName === "Edit" || toolName === "NotebookEdit") {
+        const fp = (input as { file_path?: unknown }).file_path;
+        if (typeof fp === "string" && fp.length > 0) {
+          try {
+            touchedFilesRef.current.add(resolve(workingDirectory, fp));
+          } catch {
+            // best-effort — a bad path must never break the chat loop
+          }
+        }
+      }
       if (toolName === "Edit") {
         const added = (input.new_string || "").split("\n").length;
         const removed = (input.old_string || "").split("\n").length;
@@ -1044,7 +1452,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     // Accumulate everything in the streaming area; commit once at finish.
     // This eliminates the flicker from tool blocks jumping between the live
     // area and <Static> scrollback on every tool completion.
-  }, []);
+  }, [workingDirectory]);
 
   const handleToolOutput = useCallback((toolName: string, text: string) => {
     if (toolName !== "Bash") return; // Only bash streams live output
@@ -1102,20 +1510,49 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     async (events: AsyncGenerator<AgentEvent | QueryEvent>) => {
       // Reset refs before starting
       streamingTextRef.current = "";
-      streamingThinkingRef.current = "";
       streamingToolUseRef.current = [];
       streamingBlocksRef.current = [];
+      thinkingOpenRef.current = null;
       setStreamingBlocks([]);
 
       for await (const event of events) {
         switch (event.type) {
-          case "thinking-delta":
-            streamingThinkingRef.current += event.text;
+          case "thinking-start":
+            // Open a chronological thinking block (rendered collapsed, like
+            // Claude Code) — no longer hoisted above the whole turn.
+            {
+              const block: MessageBlock = { type: "thinking", content: "" };
+              streamingBlocksRef.current.push(block);
+              thinkingOpenRef.current = block;
+              flushDirtyRef.current.blocks = true;
+              scheduleStreamingFlush();
+            }
+            break;
+
+          case "thinking-delta": {
+            // Defensive: lazily open the block if a delta arrives without a
+            // preceding start (older bindings / provider quirks).
+            if (!thinkingOpenRef.current) {
+              const block: MessageBlock = { type: "thinking", content: "" };
+              streamingBlocksRef.current.push(block);
+              thinkingOpenRef.current = block;
+              flushDirtyRef.current.blocks = true;
+            }
+            thinkingOpenRef.current.content += event.text;
+            flushDirtyRef.current.blocks = true;
+            scheduleStreamingFlush();
+            break;
+          }
+
+          case "thinking-end":
+            thinkingOpenRef.current = null;
+            flushDirtyRef.current.blocks = true;
             scheduleStreamingFlush();
             break;
 
           case "text-delta":
             streamingTextRef.current += event.text;
+            flushDirtyRef.current.text = true;
             // Update chronological blocks (ref is source of truth; flush syncs state)
             {
               const lastBlock = streamingBlocksRef.current[streamingBlocksRef.current.length - 1];
@@ -1124,6 +1561,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               } else {
                 streamingBlocksRef.current.push({ type: "text", content: event.text });
               }
+              flushDirtyRef.current.blocks = true;
             }
             scheduleStreamingFlush();
             break;
@@ -1137,11 +1575,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               status: "running",
             };
             streamingToolUseRef.current = [...streamingToolUseRef.current, block];
-            setStreamingToolUse(streamingToolUseRef.current);
-
-            // Update chronological blocks
             streamingBlocksRef.current.push({ type: "tool", block });
-            setStreamingBlocks([...streamingBlocksRef.current]);
+            flushDirtyRef.current.toolUse = true;
+            flushDirtyRef.current.blocks = true;
+            scheduleStreamingFlush();
 
             const filePath = event.args?.file_path as string | undefined;
             if (filePath) {
@@ -1185,8 +1622,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                   setCurrentFile(parsedInput);
                 }
               }
-              
-              setStreamingToolUse([...streamingToolUseRef.current]);
 
               // Update in chronological blocks
               const blockInList = streamingBlocksRef.current.find(
@@ -1196,9 +1631,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 blockInList.block.input = block.input;
                 blockInList.block.argsJson = block.argsJson;
               }
-              setStreamingBlocks([...streamingBlocksRef.current]);
-
-              await yieldToRenderer();
+              flushDirtyRef.current.toolUse = true;
+              flushDirtyRef.current.blocks = true;
+              scheduleStreamingFlush();
             }
             break;
           }
@@ -1215,7 +1650,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               } catch {
                 // Keep the last input we set
               }
-              setStreamingToolUse([...streamingToolUseRef.current]);
 
               // Update in chronological blocks
               const blockInList = streamingBlocksRef.current.find(
@@ -1224,9 +1658,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               if (blockInList && blockInList.block) {
                 blockInList.block.input = block.input;
               }
-              setStreamingBlocks([...streamingBlocksRef.current]);
-
-              await yieldToRenderer();
+              flushDirtyRef.current.toolUse = true;
+              flushDirtyRef.current.blocks = true;
+              scheduleStreamingFlush();
             }
             break;
           }
@@ -1259,30 +1693,115 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             setTokenCount(event.usage.totalTokens); // Set (not add) — finish carries cumulative
             setInputTokens(event.usage.promptTokens);
             setOutputTokens(event.usage.completionTokens);
+            // Feed the C++ reported usage into the context manager for tracking
+            contextManagerRef.current.trackUsage(event.usage);
+            // Warn user if approaching context limit
+            if (contextManagerRef.current.shouldWarn()) {
+              const pct = contextManagerRef.current.getUsagePercent();
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: `⚠ Context at ${pct}% — approaching limit. Use /compact to free space or /clear to start fresh.`,
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
             if (event.cost) {
               const totalCost = event.cost.totalCost;
               setCost((prev) => prev + totalCost);
+            }
+            // Finish notification rule (documented): the TUI has no
+            // document-visibility API (Claude Code relies on document.hidden
+            // in the webview), so we use the closest TUI analogue — notify on
+            // finish ONLY when the turn took longer than 20s, i.e. the user
+            // likely looked away. Short turns never notify (user is watching
+            // the stream). Deliberately simple: no keybind, no state.
+            if (turnStartRef.current > 0 && Date.now() - turnStartRef.current > 20_000) {
+              void notify({ body: `Response ready (${activeModel})`, bell: true }).catch(() => {});
             }
             runHooksFireAndForget("Stop", { cwd: workingDirectory });
             break;
 
           case "error": {
+            const errorText = event.error;
+            const cls = classifyError(errorText);
+
+            // ── Prompt too long (413 / "prompt is too long" / "maximum
+            //    context length"): the C++ session owns compaction, so never
+            //    attempt it TS-side. Surface the recovery commands instead.
+            if (cls === "prompt-too-long") {
+              setMessages((prev) => [
+                ...prev,
+                { role: "system", content: promptTooLongMessage(), timestamp: Date.now() },
+              ]);
+              streamingTextRef.current = "";
+              streamingToolUseRef.current = [];
+              streamingBlocksRef.current = [];
+              thinkingOpenRef.current = null;
+              setStreamingText("");
+              setStreamingToolUse([]);
+              setStreamingBlocks([]);
+              setIsLoading(false);
+              return;
+            }
+
+            // ── Overload (429): one-shot retry against a fallback provider.
+            if (cls === "overload") {
+              if (!recoveryAttemptedRef.current) {
+                const fallback = resolveFallbackProvider(config, providerConfig);
+                if (fallback) {
+                  // Arm the retry; submitUserPrompt re-issues the same prompt
+                  // after this stream returns. Keep isLoading=true so the
+                  // retry renders as one continuous turn.
+                  recoveryAttemptedRef.current = true;
+                  retryFallbackRef.current = fallback;
+                  streamingTextRef.current = "";
+                  streamingToolUseRef.current = [];
+                  streamingBlocksRef.current = [];
+                  thinkingOpenRef.current = null;
+                  setStreamingText("");
+                  setStreamingToolUse([]);
+                  setStreamingBlocks([]);
+                  return;
+                }
+              }
+              // No fallback configured, or already retried once → surface a
+              // clear overload message with a retry hint.
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "assistant",
+                  content: overloadMessage(activeModel),
+                  timestamp: Date.now(),
+                  isError: true,
+                },
+              ]);
+              streamingTextRef.current = "";
+              streamingToolUseRef.current = [];
+              streamingBlocksRef.current = [];
+              thinkingOpenRef.current = null;
+              setStreamingText("");
+              setStreamingToolUse([]);
+              setStreamingBlocks([]);
+              setIsLoading(false);
+              return;
+            }
+
             const errorMsg: Message = {
               role: "assistant",
-              content: event.error,
+              content: errorText,
               timestamp: Date.now(),
               toolUse: streamingToolUseRef.current.length > 0 ? [...streamingToolUseRef.current] : undefined,
-              thinking: streamingThinkingRef.current || undefined,
               blocks: streamingBlocksRef.current.length > 0 ? [...streamingBlocksRef.current] : undefined,
               isError: true,
             };
             setMessages((prev) => [...prev, errorMsg]);
             streamingTextRef.current = "";
-            streamingThinkingRef.current = "";
             streamingToolUseRef.current = [];
             streamingBlocksRef.current = [];
+            thinkingOpenRef.current = null;
             setStreamingText("");
-            setStreamingThinking("");
             setStreamingToolUse([]);
             setStreamingBlocks([]);
             setIsLoading(false);
@@ -1295,7 +1814,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       // (starts whose results never matched — e.g. concurrent same-tool calls)
       // so they don't leave empty ⏺ entries in the committed transcript.
       const remainingText = streamingTextRef.current;
-      const remainingThinking = streamingThinkingRef.current;
       const remainingToolUse = streamingToolUseRef.current.filter(
         (b) => b.status !== "running",
       );
@@ -1303,34 +1821,54 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         (b) => !(b.type === "tool" && b.block?.status === "running"),
       );
 
-      if (remainingText || remainingToolUse.length > 0 || remainingThinking) {
+      if (remainingText || remainingToolUse.length > 0 || remainingBlocks.length > 0) {
         const finalMessage: Message = {
           role: "assistant",
           content: remainingText,
           timestamp: Date.now(),
           toolUse: remainingToolUse.length > 0 ? [...remainingToolUse] : undefined,
-          thinking: remainingThinking || undefined,
           blocks: remainingBlocks.length > 0 ? [...remainingBlocks] : undefined,
         };
         setMessages((prev) => [...prev, finalMessage]);
       }
       streamingTextRef.current = "";
-      streamingThinkingRef.current = "";
       streamingToolUseRef.current = [];
       streamingBlocksRef.current = [];
+      thinkingOpenRef.current = null;
       setStreamingText("");
-      setStreamingThinking("");
       setStreamingToolUse([]);
       setStreamingBlocks([]);
       setIsLoading(false);
     },
-    [activeModel],
+    [activeModel, config, providerConfig],
   );
 
   const submitUserPrompt = useCallback(
     async (trimmedInput: string, promptOverride?: string) => {
       // UserPromptSubmit hooks (non-blocking).
       runHooksFireAndForget("UserPromptSubmit", { prompt: trimmedInput, cwd: workingDirectory });
+
+      // fileHistory: snapshot the CURRENT on-disk state of every file touched
+      // by earlier turns, keyed by the 1-based index of the user message about
+      // to be appended. /rewind <N> restores snapshot N, so rewinding to this
+      // user message reverts files to their pre-turn state. (Files touched by
+      // the very first turn have no snapshot — the pre-session state is
+      // outside the fileHistory store's model; see utils/fileHistory.ts.)
+      try {
+        const files = [...touchedFilesRef.current];
+        if (files.length > 0) {
+          void snapshotFiles(messagesLenRef.current + 1, files, workingDirectory).catch(() => {});
+        }
+      } catch {
+        // best-effort — snapshots must never block the chat loop
+      }
+
+      // Turn bookkeeping for the finish-notify rule + overload recovery guard.
+      // retryFallbackRef is cleared here too so a leftover armed retry from a
+      // turn that died mid-stream can never fire on a later turn.
+      turnStartRef.current = Date.now();
+      recoveryAttemptedRef.current = false;
+      retryFallbackRef.current = null;
 
       // Add user message
       const userMessage: Message = {
@@ -1389,29 +1927,108 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         });
 
         const startTime = Date.now();
+        const activePrompt = promptOverride !== undefined ? promptOverride : trimmedInput;
         const events = query({
           session,
           config: agentConfig,
-          userMessage: promptOverride !== undefined ? promptOverride : trimmedInput,
+          userMessage: activePrompt,
           workingDir: workingDirectory,
           abortController,
         });
 
         await processAgentStream(events);
+
+        // One-shot overload recovery: if the stream ended with an overload
+        // error AND a fallback was armed (error case in processAgentStream),
+        // recreate the memory session with the fallback provider config and
+        // re-issue the same prompt once. Guarded by recoveryAttemptedRef so
+        // this can never loop. (Cast defeats TS flow-narrowing, which sees the
+        // null reset above and would otherwise type the read as null.)
+        const fallback = retryFallbackRef.current as ProviderConfig | null;
+        if (fallback && !abortController.signal.aborted) {
+          retryFallbackRef.current = null;
+          try {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `⚠ Provider overloaded — retrying once with fallback: ${fallback.type}/${fallback.model}`,
+                timestamp: Date.now(),
+              },
+            ]);
+            resetMemorySession();
+            const { session: fallbackSession } = getOrCreateMemorySession({
+              providerConfig: fallback,
+              agentConfig,
+              workingDir: workingDirectory,
+              memoryDir: `${os.homedir()}/.deepseek-code/memory`,
+              maxContextTokens: 1_000_000,
+              requestPermission,
+              mcpServers,
+              abortController,
+              onToolResult: handleToolResult,
+              onToolOutput: handleToolOutput,
+              onTodosChange: handleTodosChange,
+              history: messages,
+            });
+            const retryEvents = query({
+              session: fallbackSession,
+              config: agentConfig,
+              userMessage: activePrompt,
+              workingDir: workingDirectory,
+              abortController,
+            });
+            await processAgentStream(retryEvents);
+          } catch (retryError) {
+            // If the fallback attempt itself throws, surface the ORIGINAL
+            // overload condition via the overload hint.
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: overloadMessage(fallback.model ?? activeModel),
+                timestamp: Date.now(),
+              },
+            ]);
+            setIsLoading(false);
+            const retryRaw = (retryError as Error).message || String(retryError);
+            if (retryRaw) {
+              process.stderr.write(`[overload-fallback] ${retryRaw}\n`);
+            }
+          }
+        }
+
         const duration = Date.now() - startTime;
         setApiDurationMs((prev) => prev + duration);
       } catch (error) {
         const raw = (error as Error).message || String(error);
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Error: ${raw}`,
-            timestamp: Date.now(),
-            isError: true,
-          },
-        ]);
+        // Route thrown errors through the same classification as stream
+        // errors (session/model creation failures). No fallback retry here —
+        // if session creation itself failed, re-creating it is unlikely to
+        // succeed; surface the actionable hint instead.
+        const cls = classifyError(raw);
+        if (cls === "prompt-too-long") {
+          setMessages((prev) => [
+            ...prev,
+            { role: "system", content: promptTooLongMessage(), timestamp: Date.now() },
+          ]);
+        } else if (cls === "overload") {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: overloadMessage(activeModel), timestamp: Date.now(), isError: true },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: `Error: ${raw}`,
+              timestamp: Date.now(),
+              isError: true,
+            },
+          ]);
+        }
         setIsLoading(false);
       } finally {
         abortRef.current = null;
@@ -1442,88 +2059,69 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       switch (command) {
         case "/help": {
-          const tools = getToolDescriptions();
-          const agents = agentManager.listAgents();
-          const profileNames = Object.keys(config.profiles || {});
+          // Rendered by the ported HelpView pane (catalog in
+          // src/constants/help.ts); Esc closes it.
+          setShowHelp(true);
+          return true;
+        }
+
+        // ── /statusline (custom status line, Claude Code parity) ────────
+        case "/statusline": {
+          const current = (() => {
+            try {
+              return loadSettings().statusLine;
+            } catch {
+              return undefined;
+            }
+          })();
+
+          const usage = [
+            "Usage:",
+            "  /statusline <command>   Set the status-line command — its trimmed stdout",
+            "                          renders right-aligned on the status bar",
+            "  /statusline off         Clear the custom status line",
+            "",
+            "The command runs after each finished turn and every ~20s (5s timeout,",
+            "trust-gated like hooks — untrusted workspaces skip it).",
+          ];
+
+          if (!arg) {
+            const content = current
+              ? ["Custom status line is configured:", `  ${current.command}`, "", ...usage].join("\n")
+              : ["Custom status line is not configured.", "", ...usage].join("\n");
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content, timestamp: Date.now() },
+            ]);
+            return true;
+          }
+
+          if (arg === "off") {
+            handleUpdateSetting("statusLine", undefined);
+            statusLineTextRef.current = null;
+            setStatusLineText(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: "✓ Custom status line cleared.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const command = restArgs.join(" ");
+          handleUpdateSetting("statusLine", { type: "command", command });
+          statusLineTextRef.current = null;
+          setStatusLineText(null);
           setMessages((prev) => [
             ...prev,
             {
               role: "system",
-              content: [
-                "━━━ Commands ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                "  /help                Show this help",
-                "  /setup               Guided one-command model/api setup",
-                "  /setup <preset> <key> [model]",
-                "                       Quick setup using a built-in preset",
-                "  /setup custom <provider> <model> <key> [baseurl]",
-                "                       Set provider/model/key in one command",
-                "  /model               Show current model info",
-                "  /model <name>        Switch to a profile, or set model id directly",
-                "  /model set <provider> <model> [baseurl]",
-                "                       Set a custom OpenAI-compatible model",
-                "  /baseurl <url>       Set custom endpoint URL",
-                "  /baseurl clear       Clear custom endpoint URL",
-                "  /models              List configured profiles",
-                "  /apikey <key>        Set the API key for current provider",
-                "  /agent <name>        Switch agent (code, plan, review)",
-                "  /mcp                 Show MCP servers and status",
-                "  /mcp enable <name>   Enable an MCP server",
-                "  /mcp disable <name>  Disable an MCP server",
-                "  /queue               Show queued prompts",
-                "  /queue clear         Clear all queued prompts",
-                "  /shortcuts           Toggle shortcuts panel",
-                "  /clear               Clear conversation history",
-                "  /compact             Summarize conversation to save context",
-                "  /doctor              Run diagnostics on git, network, and bindings",
-                "  /commit              Create a git commit from changes",
-                "  /pr                  Commit, push, and create a GitHub pull request",
-                "  /copy                Copy last assistant response to clipboard",
-                "  /diff                Show git diff of working directory changes",
-                "  /history             Show message history numbers for rewinding",
-                "  /rewind              Truncate conversation back to a message number",
-                "  /tools               List available tools",
-                "  /hooks               List configured lifecycle hooks (PreToolUse, etc.)",
-                "  Custom commands      .md files in .deepseek-code/commands/ → /<name> [args]",
-                "  /exit                Exit DeepSeek Code",
-                "",
-                "━━━ Agents ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                ...agents.map((a) =>
-                  `  ${a.name === currentAgent ? "▸" : " "} ${a.name.padEnd(8)} ${a.description}`,
-                ),
-                "",
-                "━━━ Tools (" + currentAgent + " agent) ━━━━━━━━━━━━━━━━━━",
-                ...tools.map((t: {name: string; description: string}) => `  ${t.name.padEnd(8)} ${t.description}`),
-                ...(profileNames.length > 0
-                  ? [
-                      "",
-                      "━━━ Your Profiles ━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                      ...profileNames.map((n) => {
-                        const p = config.profiles![n]!;
-                        return `  ${n.padEnd(16)} ${p.provider}/${p.model}`;
-                      }),
-                    ]
-                  : []),
-                "",
-                "━━━ Keyboard ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                "  Shift+Tab          Cycle thinking mode",
-                "  Ctrl+Q             Clear queued prompts",
-                "  ↑↓ arrows          Navigate command picker (type / first)",
-                "  ?                  Toggle shortcuts panel",
-                "  Ctrl+C             Exit",
-                "  Esc                Interrupt generation / dismiss picker",
-                "",
-                "━━━ Thinking ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                `  Active mode: ${thinkingMode === "off" ? "off (disabled)" : "🐋 whalethink"}`,
-                "  Shift+Tab        Toggle whalethink on/off",
-                "  /think           Same via command",
-                "  /think off       Disable extended thinking",
-                "  /think whale     Enable whalethink (deep reasoning)",
-                "",
-                "━━━ MCP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                `  Servers configured: ${mcpCount}`,
-                `  Servers enabled:    ${mcpEnabledCount}`,
-                "  /mcp              List all MCP servers",
-              ].join("\n"),
+              content:
+                `✓ Status line set to: ${command}\n` +
+                "(Runs after each turn and every ~20s — output shows right-aligned on the status bar.)",
               timestamp: Date.now(),
             },
           ]);
@@ -1807,20 +2405,49 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           setInputTokens(0);
           setOutputTokens(0);
           setTodos([]);
+          contextManagerRef.current.reset();
           return true;
 
         case "/compact": {
-          const summary =
-            messages.length > 0
-              ? `[Conversation compacted: ${messages.length} messages → summary]\n` +
-                `Topics discussed: ${messages
-                  .filter((m) => m.role === "user")
-                  .slice(-5)
-                  .map((m) => m.content.slice(0, 50))
-                  .join(", ")}`
-              : "No messages to compact.";
+          if (messages.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "No messages to compact.", timestamp: Date.now() },
+            ]);
+            return true;
+          }
+
+          // Build a summary from the conversation for the agent's context
+          const userMessages = messages
+            .filter((m) => m.role === "user")
+            .slice(-8)
+            .map((m) => m.content.slice(0, 200))
+            .filter(Boolean);
+
+          const toolCount = messages
+            .filter((m) => m.toolUse?.length)
+            .reduce((sum, m) => sum + (m.toolUse?.length ?? 0), 0);
+
+          const summaryParts: string[] = [
+            `[Context compacted: ${messages.length} messages summarized]`,
+          ];
+          if (userMessages.length > 0) {
+            summaryParts.push(`Topics discussed: ${userMessages.join("; ")}`);
+          }
+          if (toolCount > 0) {
+            summaryParts.push(`Tool calls made: ${toolCount}`);
+          }
+
+          // Reset the C++ session so the next query starts fresh
+          resetMemorySession();
+          // Reset TypeScript-side context tracking so the bar reflects freed space
+          contextManagerRef.current.reset();
+          setTokenCount(0);
+          setInputTokens(0);
+          setOutputTokens(0);
+
           setMessages([
-            { role: "system", content: summary, timestamp: Date.now() },
+            { role: "system", content: summaryParts.join("\n"), timestamp: Date.now() },
           ]);
           return true;
         }
@@ -2011,13 +2638,116 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 role: "system",
                 content:
                   "Usage: /think [off|whale]\n" +
-                  "Shift+Tab also toggles whalethink.\n\n" +
+                  "Shift+Tab cycles permission mode.\n\n" +
                   "  off    disabled\n" +
                   "  whale  deep reasoning with extended thinking",
                 timestamp: Date.now(),
               },
             ]);
           }
+          return true;
+        }
+
+        // ── /effort ────────────────────────────────────────────────────
+        case "/effort": {
+          // Ported from claude-code-main/src/commands/effort/effort.tsx —
+          // same args (low|medium|high|max|auto|current|status|help), same
+          // messages and level descriptions.
+          const EFFORT_DESCRIPTIONS: Record<string, string> = {
+            low: "Quick, straightforward implementation",
+            medium: "Balanced approach with standard testing",
+            high: "Comprehensive implementation with extensive testing",
+            xhigh: "Extra thorough implementation (maps to high)",
+            max: "Maximum capability with deepest reasoning",
+          };
+
+          if (arg !== undefined && ["help", "-h", "--help"].includes(arg)) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content:
+                  "Usage: /effort [low|medium|high|xhigh|max|auto]\n\n" +
+                  "Effort levels:\n" +
+                  "- low: Quick, straightforward implementation\n" +
+                  "- medium: Balanced approach with standard testing\n" +
+                  "- high: Comprehensive implementation with extensive testing\n" +
+                  "- xhigh: Extra thorough implementation\n" +
+                  "- max: Maximum capability with deepest reasoning\n" +
+                  "- auto: Use the default effort level for your model",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          if (!arg) {
+            // The reference prints the current level; ours additionally opens
+            // the interactive EffortCallout selector (the dialog with the
+            // ◯ low · ◐ medium · ● high legend). Esc/30s dismisses.
+            setShowEffortCallout(true);
+            return true;
+          }
+
+          if (arg === "current" || arg === "status") {
+            const current = effortLevel === "off" || effortLevel === undefined ? "auto" : effortLevel;
+            const description =
+              current === "auto"
+                ? "Use the default effort level for your model"
+                : EFFORT_DESCRIPTIONS[current] ?? "";
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content:
+                  current === "auto"
+                    ? `Effort level: auto`
+                    : `Current effort level: ${current} (${description})`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const level = arg.toLowerCase();
+          if (level === "auto" || level === "unset") {
+            try {
+              saveSettings({ effort: "off" });
+            } catch {}
+            setEffortLevel("off");
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "Effort level set to auto", timestamp: Date.now() },
+            ]);
+            return true;
+          }
+
+          if (!isEffortLevel(level)) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `Invalid argument: ${arg}. Valid options are: low, medium, high, xhigh, max, auto`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          try {
+            saveSettings({ effort: level });
+          } catch {
+            // best-effort — settings persistence must not block the command
+          }
+          setEffortLevel(level);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `Set effort level to ${level}: ${EFFORT_DESCRIPTIONS[level]}`,
+              timestamp: Date.now(),
+            },
+          ]);
           return true;
         }
 
@@ -2063,24 +2793,30 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         case "/cost":
-        case "/usage":
+          // Legacy cost readout — stays on the old SettingsPanel overlay.
           setSettingsOverlayTab("usage");
           setShowSettingsOverlay(true);
           return true;
 
+        case "/usage":
+          setSettingsTab("Usage");
+          setShowSettingsUI(true);
+          return true;
+
         case "/settings":
+          // Legacy settings overlay — unchanged.
           setSettingsOverlayTab("settings");
           setShowSettingsOverlay(true);
           return true;
 
         case "/status":
-          setSettingsOverlayTab("status");
-          setShowSettingsOverlay(true);
+          setSettingsTab("Status");
+          setShowSettingsUI(true);
           return true;
 
         case "/config":
-          setSettingsOverlayTab("config");
-          setShowSettingsOverlay(true);
+          setSettingsTab("Config");
+          setShowSettingsUI(true);
           return true;
 
         case "/stats":
@@ -2405,6 +3141,160 @@ Based on the above changes:
           return true;
         }
 
+        // ── /export ─────────────────────────────────────────────────────
+        case "/export": {
+          const formatArg = (parts[1] || "markdown").toLowerCase();
+          if (formatArg !== "markdown" && formatArg !== "md" && formatArg !== "json") {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content:
+                  "Usage: /export [markdown|json]\n\n" +
+                  "Exports the conversation to a file in the current directory\n" +
+                  "including thinking/reasoning text.",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const format = formatArg === "json" ? "json" : "markdown";
+          if (messages.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "No messages to export.", timestamp: Date.now() },
+            ]);
+            return true;
+          }
+
+          // Interactive export dialog (ported ExportView): format choice +
+          // include-thinking toggle; the write happens on Enter. The dialog
+          // performs the write itself via onExport and shows the result.
+          setExportDialog({ defaultFormat: format });
+          return true;
+        }
+
+        // ── /search ─────────────────────────────────────────────────────
+        case "/search": {
+          const queryStr = restArgs.join(" ");
+          if (!queryStr) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content:
+                  "Usage: /search <query>\n\n" +
+                  "Case-insensitive substring search over the conversation\n" +
+                  "(pass a regex pattern for /search ^foo$ style matching).",
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const result = searchMessages(messages, queryStr, { limit: 30 });
+          if (!result.valid) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `Invalid search pattern: ${queryStr} (regex failed to compile).`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          if (result.matches.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: `No matches for "${queryStr}".`, timestamp: Date.now() },
+            ]);
+            return true;
+          }
+
+          // Interactive results overlay (ported SearchResultsView): ↑↓
+          // navigate, n/N next match, Enter jumps to the message, Esc closes.
+          setSearchResults({
+            query: queryStr,
+            matches: result.matches.slice(0, 20),
+            total: result.matches.length,
+          });
+          return true;
+        }
+
+        // ── /skills ─────────────────────────────────────────────────────
+        case "/skills": {
+          const skills = listSkills();
+
+          if (!arg) {
+            if (skills.length === 0) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content:
+                    "No skills available.\n\n" +
+                    "Add SKILL.md files to .claude/skills/<name>/ in this project\n" +
+                    "or ~/.claude/skills/<name>/ for user-wide skills.",
+                  timestamp: Date.now(),
+                },
+              ]);
+              return true;
+            }
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: [
+                  `━━━ Skills (${skills.length}) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+                  ...skills.map(
+                    (s) => `  ${s.name.padEnd(20)} ${s.description}  (${s.source})`,
+                  ),
+                  "",
+                  "Usage: /skills <name> to view a skill's full instructions.",
+                ].join("\n"),
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          const skill = getSkill(arg);
+          if (!skill) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content:
+                  `Skill not found: ${arg}\n\n` +
+                  `Available: ${skills.length > 0 ? skills.map((s) => s.name).join(", ") : "(none)"}`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
+          }
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: [
+                `━━━ Skill: ${skill.name} (${skill.source}) ━━━━━━━━━━━━━━━━━━━━`,
+                `Path: ${skill.path}`,
+                skill.description ? `Description: ${skill.description}` : "",
+                "",
+                "```",
+                skill.content,
+                "```",
+              ].filter(Boolean).join("\n"),
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
         // ── /diff ───────────────────────────────────────────────────────
         case "/diff": {
           const { execSync } = require("child_process");
@@ -2515,16 +3405,74 @@ Based on the above changes:
             ]);
             return true;
           }
-          const truncated = messages.slice(0, idx + 1);
+          const targetDepth = idx + 1;
+          const oldDepth = messages.length;
+          const truncated = messages.slice(0, targetDepth);
           setMessages(truncated);
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "system",
-              content: `✓ Rewound conversation back to message #${idx + 1}.`,
-              timestamp: Date.now(),
-            },
-          ]);
+
+          // Restore on-disk file snapshots captured at this transcript depth.
+          // snapshotFiles runs at each user-turn start keyed by the 1-based
+          // message index, so snapshot N holds the file state right before
+          // message N was appended. Rewinding to message N therefore reverts
+          // files to the state the transcript implies. Messages with no
+          // snapshot (assistant replies, the very first message) leave files
+          // untouched — hasSnapshot guards that.
+          void (async () => {
+            const restored: string[] = [];
+            if (hasSnapshot(targetDepth)) {
+              try {
+                const entries = await restoreSnapshot(targetDepth, workingDirectory);
+                for (const entry of entries) {
+                  try {
+                    if (entry.content === null) {
+                      await rm(entry.path, { force: true }); // deletion marker
+                    } else {
+                      await mkdir(dirname(entry.path), { recursive: true });
+                      await writeFile(entry.path, entry.content, "utf-8");
+                    }
+                    restored.push(entry.path);
+                  } catch {
+                    // per-file best-effort — a bad file must not abort the rewind
+                  }
+                }
+              } catch {
+                // snapshot unreadable — rewind proceeds without file restore
+              }
+            }
+
+            // Drop snapshots deeper than the new depth (they describe a
+            // transcript that no longer exists) so a later /rewind cannot
+            // restore stale file state. Also GCs orphaned blobs.
+            for (let k = targetDepth + 1; k <= oldDepth; k++) {
+              try {
+                await dropSnapshot(k);
+              } catch {
+                // best-effort
+              }
+            }
+
+            const suffix =
+              restored.length > 0
+                ? `\n✓ Restored ${restored.length} file${restored.length === 1 ? "" : "s"}:\n` +
+                  restored
+                    .map((p) => {
+                      try {
+                        return `    ${relative(workingDirectory, p)}`;
+                      } catch {
+                        return `    ${p}`;
+                      }
+                    })
+                    .join("\n")
+                : "";
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `✓ Rewound conversation back to message #${targetDepth}.${suffix}`,
+                timestamp: Date.now(),
+              },
+            ]);
+          })();
           return true;
         }
 
@@ -2622,6 +3570,209 @@ Based on the above changes:
           setShowPluginOverlay(true);
           return true;
 
+        // ── Claude Code command parity additions ────────────────────────
+        case "/init": {
+          const file = resolve(workingDirectory, "CLAUDE.md");
+          if (existsSync(file)) {
+            setMessages((prev) => [...prev, { role: "system", content: `CLAUDE.md already exists at ${file}`, timestamp: Date.now() }]);
+          } else {
+            const template = [
+              "# CLAUDE.md",
+              "",
+              "This file provides guidance to DeepSeek Code when working with code in this repository.",
+              "",
+              "## Project overview",
+              "",
+              "<!-- Describe what this project does -->",
+              "",
+              "## Build and test commands",
+              "",
+              "<!-- e.g.: bun run build / bun test -->",
+              "",
+              "## Code style",
+              "",
+              "<!-- Conventions the agent should follow -->",
+            ].join("\n");
+            writeFileSync(file, template + "\n");
+            setMessages((prev) => [...prev, { role: "system", content: `✓ Created ${file} — it's loaded into context for future sessions.`, timestamp: Date.now() }]);
+          }
+          return true;
+        }
+
+        case "/memory": {
+          const file = resolve(workingDirectory, "CLAUDE.md");
+          if (!existsSync(file)) {
+            writeFileSync(file, "# CLAUDE.md\n\n<!-- Add project guidance here — it is loaded into context automatically. -->\n");
+          }
+          setMessages((prev) => [...prev, {
+            role: "system",
+            content: `CLAUDE.md memory file: ${file}\nEdit it in your editor — its contents are loaded into context for future sessions.`,
+            timestamp: Date.now(),
+          }]);
+          return true;
+        }
+
+        case "/permissions": {
+          const rules = (() => { try { return loadSettings().permissions; } catch { return undefined; } })();
+          const lines = ["Permission rules (settings.permissions):", ""];
+          if (!rules || ((rules.allow?.length ?? 0) === 0 && (rules.deny?.length ?? 0) === 0 && (rules.ask?.length ?? 0) === 0)) {
+            lines.push("  (none configured — tools prompt interactively)");
+          } else {
+            for (const r of rules.allow ?? []) lines.push(`  allow  ${r}`);
+            for (const r of rules.deny ?? []) lines.push(`  deny   ${r}`);
+            for (const r of rules.ask ?? []) lines.push(`  ask    ${r}`);
+          }
+          lines.push(
+            "",
+            "Syntax: Tool(spec:pattern), e.g.",
+            '  "allow": ["Read(**)", "Edit(src/**)"]',
+            '  "deny": ["Bash(rm -rf *)"]',
+            "",
+            "Configure via /settings → permissions.",
+          );
+          setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+          return true;
+        }
+
+        case "/theme": {
+          if (!arg) {
+            // Interactive ThemePicker (reference parity — /theme opens it).
+            setShowThemePicker(true);
+            return true;
+          }
+          handleThemeModeChange(arg as ThemeSetting);
+          setMessages((prev) => [...prev, { role: "system", content: `Theme set to ${arg}`, timestamp: Date.now() }]);
+          return true;
+        }
+
+        case "/output-style": {
+          const styles = listOutputStyles();
+          if (!arg) {
+            const current = (() => { try { return loadSettings().outputStyle; } catch { return undefined; } })();
+            const lines = [`Current output style: ${current ?? "default"}`, "", "Available:"];
+            for (const s of styles) lines.push(`  ${s.name === (current ?? "default") ? "▸" : " "} ${s.name.padEnd(20)} ${s.description}`);
+            lines.push("", "Usage: /output-style <name>  |  /output-style default  |  /output-style explain <name>");
+            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+            return true;
+          }
+          if (arg === "default") {
+            handleUpdateSetting("outputStyle", undefined);
+            setMessages((prev) => [...prev, { role: "system", content: "Output style reset to default", timestamp: Date.now() }]);
+            return true;
+          }
+          if (arg === "explain" && parts[2]) {
+            const style = styles.find((s) => s.name === parts[2]);
+            if (style) {
+              setMessages((prev) => [...prev, { role: "system", content: `${style.name}: ${style.description}`, timestamp: Date.now() }]);
+              return true;
+            }
+          }
+          const style = styles.find((s) => s.name === arg);
+          if (!style) {
+            setMessages((prev) => [...prev, { role: "system", content: `Unknown output style: ${arg}. Run /output-style to list them.`, timestamp: Date.now() }]);
+            return true;
+          }
+          handleUpdateSetting("outputStyle", style.name);
+          setMessages((prev) => [...prev, { role: "system", content: `✓ Output style set to ${style.name}`, timestamp: Date.now() }]);
+          return true;
+        }
+
+        case "/review":
+        case "/security-review": {
+          const security = command === "/security-review";
+          const prompt = security
+            ? "Perform a security review of the uncommitted changes in this repository: look for injection vulnerabilities, unsafe input handling, secrets, path traversal, and unsafe shell usage. Report findings by severity."
+            : "Review the uncommitted changes in this repository for bugs, correctness issues, and code quality problems. Report findings with file paths and line numbers.";
+          setCurrentAgent("review");
+          void submitUserPrompt(prompt, prompt);
+          return true;
+        }
+
+        case "/todos": {
+          const items = todos;
+          if (items.length === 0) {
+            setMessages((prev) => [...prev, { role: "system", content: "No todos — the TodoWrite tool adds items as the agent works.", timestamp: Date.now() }]);
+          } else {
+            const lines = ["Todos:"];
+            items.forEach((t, i) => {
+              lines.push(`  ${t.status === "completed" ? "✓" : t.status === "in_progress" ? "▸" : "○"} ${t.content}`);
+            });
+            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+          }
+          return true;
+        }
+
+        case "/context": {
+          const budget = contextManagerRef.current.getBudget();
+          const max = budget?.maxContextTokens ?? 1_000_000;
+          const used = inputTokens + outputTokens;
+          const pct = Math.min(100, Math.round((used / max) * 100));
+          setMessages((prev) => [...prev, {
+            role: "system",
+            content:
+              `Context window usage:\n` +
+              `  ${used.toLocaleString()} / ${max.toLocaleString()} tokens (${pct}%) — reserved ${(budget?.reservedForResponse ?? 4096).toLocaleString()} for response\n` +
+              `  Session messages: ${messages.length}\n` +
+              `  The native session compacts automatically near the limit; /compact forces a summary.`,
+            timestamp: Date.now(),
+          }]);
+          return true;
+        }
+
+        case "/env": {
+          const lines = ["Environment variables:", ""];
+          for (const v of ["DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "DEEPSEEK_FALLBACK_MODEL"]) {
+            const val = process.env[v];
+            lines.push(`  ${val ? "✓" : "✗"} ${v}${val && v === "DEEPSEEK_API_KEY" ? " (set, hidden)" : val ? ` = ${val}` : ""}`);
+          }
+          const custom = (() => { try { return Object.keys(loadSettings().env ?? {}); } catch { return []; } })();
+          if (custom.length > 0) lines.push("", `settings.env: ${custom.join(", ")}`);
+          setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+          return true;
+        }
+
+        case "/branch": {
+          try {
+            const proc = Bun.spawnSync(["git", "branch", "--show-current"], { cwd: workingDirectory });
+            const branch = proc.stdout?.toString().trim() || "(detached HEAD)";
+            setMessages((prev) => [...prev, { role: "system", content: `Current branch: ${branch}`, timestamp: Date.now() }]);
+          } catch {
+            setMessages((prev) => [...prev, { role: "system", content: "Not a git repository.", timestamp: Date.now() }]);
+          }
+          return true;
+        }
+
+        case "/bashes": {
+          const tasks = listTasks();
+          if (tasks.length === 0) {
+            setMessages((prev) => [...prev, { role: "system", content: "No background tasks running.", timestamp: Date.now() }]);
+          } else {
+            const lines = ["Background tasks:"];
+            for (const t of tasks) lines.push(`  #${t.id} ${t.status.padEnd(10)} ${t.command.slice(0, 60)}`);
+            lines.push("", "Read output with TaskOutput, kill with TaskStop.");
+            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+          }
+          return true;
+        }
+
+        case "/workspace": {
+          const trusted = isTrusted(workingDirectory);
+          setMessages((prev) => [...prev, {
+            role: "system",
+            content:
+              `Workspace: ${workingDirectory}\n` +
+              `Trust: ${trusted ? "trusted" : "untrusted (hooks and /statusline are disabled)"}`,
+            timestamp: Date.now(),
+          }]);
+          return true;
+        }
+
+        case "/plan": {
+          setCurrentAgent("plan");
+          setMessages((prev) => [...prev, { role: "system", content: "Switched to plan agent — read-only analysis mode. Shift+Tab cycles permission modes; /agent code returns to full access.", timestamp: Date.now() }]);
+          return true;
+        }
+
         default: {
           // Custom slash commands (markdown files under .deepseek-code/commands/).
           const custom = customCommands.find((c) => c.name === command.slice(1).toLowerCase());
@@ -2629,13 +3780,25 @@ Based on the above changes:
             void submitUserPrompt(cmd, renderCommand(custom, restArgs));
             return true;
           }
-          const skillName = command.slice(1).trim().toLowerCase(); // strip leading "/"
+          const pluginCommandName = command.slice(1).trim().toLowerCase(); // strip leading "/"
           try {
             const plugins = loadInstalledPlugins();
             const enabled = plugins.filter((p) => p.enabled);
             for (const p of enabled) {
+              // Claude Code plugin commands/ (marketplace retro-compat)
+              if (p.manifest.commands) {
+                const pcmd = p.manifest.commands.find(
+                  (c) => c.name.toLowerCase() === pluginCommandName,
+                );
+                if (pcmd) {
+                  const userArg = restArgs.join(" ");
+                  const fullPrompt = `${pcmd.prompt}\n\nUser request/argument: ${userArg || "(none)"}`;
+                  void submitUserPrompt(cmd, fullPrompt);
+                  return true;
+                }
+              }
               if (p.manifest.skills) {
-                const skill = p.manifest.skills.find((s) => s.name.toLowerCase() === skillName);
+                const skill = p.manifest.skills.find((s) => s.name.toLowerCase() === pluginCommandName);
                 if (skill) {
                   const userArg = restArgs.join(" ");
                   const fullPrompt = `${skill.prompt}\n\nUser request/argument: ${userArg || "(none)"}`;
@@ -2661,6 +3824,7 @@ Based on the above changes:
       tokenCount,
       exit,
       thinkingMode,
+      effortLevel,
       mcpEntries,
       mcpCount,
       mcpEnabledCount,
@@ -2767,15 +3931,35 @@ Based on the above changes:
   }, [isLoading, queuedSubmissions, submitUserPrompt]);
 
   // ── Render ────────────────────────────────────────────────────────────
+  // ThemeProvider mounts the ported design-system context (used by
+  // ExportView/SearchResultsView/PermissionPrompt) and keeps the legacy
+  // mutable `theme` module in sync with the persisted themeMode.
   return (
-    <Box flexDirection="column" height="100%">
+    <ThemeProvider
+      initialState={themeMode}
+      onThemeSave={(setting) => handleThemeModeChange(setting)}
+    >
+    {showOnboarding ? (
+      // First-time setup (Claude Code parity): full-screen step flow before
+      // the chat UI is usable.
+      <Onboarding
+        hasApiKey={!!activeApiKey}
+        initialTheme={themeMode}
+        version="0.1.0"
+        onDone={handleOnboardingDone}
+      />
+    ) : (
+    // Terminal-height ceiling (Claude Code: <AlternateScreen>'s
+    // <Box height={rows}>): chat flexGrows in the middle, the bottom slot
+    // (input + status) is flexShrink={0} so it stays pinned to the last
+    // rows no matter how many messages are on screen.
+    <Box flexDirection="column" height={termRows}>
       {/* Chat area */}
-      <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
         <ChatPanel
           messages={messages}
           isLoading={isLoading}
           streamingText={streamingText}
-          streamingThinking={streamingThinking}
           streamingToolUse={streamingToolUse}
           version="0.1.0"
           model={activeModel}
@@ -2795,6 +3979,7 @@ Based on the above changes:
         <PermissionPrompt
           toolName={pendingPermission.toolName}
           description={pendingPermission.description}
+          isTranscriptMode={isTranscriptMode}
           onApprove={(feedback) => {
             if (feedback === "__allow_all__") {
               setSessionAllowAll(true);
@@ -2809,12 +3994,63 @@ Based on the above changes:
         />
       )}
 
-      {showHistorySearch ? (
+      {/* Bottom slot — input + status bar + overlays. flexShrink={0} pins
+          it to the terminal's last rows (Claude Code: bottom slot outside
+          the ScrollBox never moves). */}
+      <Box flexShrink={0} flexDirection="column">
+      {showThemePicker ? (
+        <ThemePicker
+          helpText="Esc to cancel"
+          onThemeSelect={(setting) => {
+            setShowThemePicker(false);
+            handleThemeModeChange(setting);
+            setMessages((prev) => [...prev, { role: "system", content: `Theme set to ${setting}`, timestamp: Date.now() }]);
+          }}
+          onCancel={() => setShowThemePicker(false)}
+          initialTheme={themeMode}
+        />
+      ) : showEffortCallout ? (
+        <EffortCallout onDone={handleEffortCalloutDone} currentLevel={effortLevel} />
+      ) : showHelp ? (
+        <HelpView version="0.1.0" />
+      ) : exportDialog ? (
+        <ExportView
+          defaultFormat={exportDialog.defaultFormat}
+          onCancel={() => setExportDialog(null)}
+          onExport={(fmt, includeThinking) => {
+            const ext = fmt === "json" ? "json" : "md";
+            const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+            const filePath = resolve(workingDirectory, `deepseek-code-export-${ts}.${ext}`);
+            return writeToFile(messages, fmt, filePath, { includeThinking }).then(
+              (result) => ({
+                success: true,
+                message: `Exported ${messages.length} message${messages.length === 1 ? "" : "s"} to ${filePath} (${result.bytes} bytes, ${fmt})`,
+              }),
+            );
+          }}
+        />
+      ) : searchResults ? (
+        <SearchResultsView
+          query={searchResults.query}
+          matches={searchResults.matches}
+          totalMatches={searchResults.total}
+          onClose={() => setSearchResults(null)}
+          onJump={(messageIndex) => {
+            // Jump the transcript to the match's message: select its first
+            // tool block in Inspect Mode if it has one.
+            const blocks = getFlatToolBlocks();
+            const idx = blocks.findIndex((b) => b.messageIdx === messageIndex);
+            if (idx >= 0) {
+              setInspectMode(true);
+              setInspectIndex(idx);
+            }
+          }}
+        />
+      ) : showHistorySearch ? (
         <HistorySearch
           entries={historySnapshot}
           onPick={(entry) => {
             setInput(entry);
-            setInputResetKey((p) => p + 1);
             setShowHistorySearch(false);
           }}
           onClose={() => setShowHistorySearch(false)}
@@ -2825,6 +4061,8 @@ Based on the above changes:
           selectedIndex={sessionPickerIndex}
           currentDirectory={workingDirectory}
         />
+      ) : showSettingsUI ? (
+        <Settings defaultTab={settingsTab} onClose={() => setShowSettingsUI(false)} />
       ) : showSettingsOverlay ? (
         <SettingsPanel
           onClose={() => setShowSettingsOverlay(false)}
@@ -2843,8 +4081,8 @@ Based on the above changes:
           mcpCount={mcpEnabledCount}
           sessionId={activeSessionHash || "new-session"}
           initialTab={settingsOverlayTab}
-          themeMode={themeMode}
-          onChangeThemeMode={handleThemeModeChange}
+          themeMode={themeMode.startsWith("light") ? "light" : "dark"}
+          onChangeThemeMode={(mode) => handleThemeModeChange(mode)}
           thinkingMode={thinkingMode}
           onChangeThinkingMode={handleThinkingModeChange}
           dangerouslySkipPermissions={skipPermissions}
@@ -2894,7 +4132,7 @@ Based on the above changes:
           )}
 
           {/* Live todo list (driven by the TodoWrite tool) */}
-          <TodoList todos={todos} />
+          {tasksExpanded && <TodoList todos={todos} selectedIndex={tasksSelectedIndex} />}
 
           {/* @-file mention dropdown */}
           {mention && !mentionSuppressed && mentionMatches.length > 0 && (
@@ -2903,7 +4141,6 @@ Based on the above changes:
 
           {/* Input prompt */}
           <TextInput
-            inputResetKey={inputResetKey}
             value={input}
             onChange={handleInputChange}
             onSubmit={handleSubmit}
@@ -2925,14 +4162,16 @@ Based on the above changes:
             />
           )}
 
-          {/* Status bar */}
+          {/* Status bar (footer row — Claude Code PromptInputFooter parity) */}
           <StatusBar
             model={activeModel}
             agentName={currentAgent}
+            isLoading={isLoading}
             tokenCount={tokenCount}
             inputTokens={inputTokens}
             outputTokens={outputTokens}
             thinkingMode={thinkingMode}
+            effort={effortLevel}
             mcpEnabledCount={mcpEnabledCount}
             queueCount={queuedSubmissions.length}
             queuePreview={queuedSubmissions[0]}
@@ -2941,10 +4180,21 @@ Based on the above changes:
             cost={cost}
             inspectMode={inspectMode}
             permissionMode={permissionMode}
+            tokenBudget={contextManagerRef.current.getBudget()}
+            statusLineOutput={statusLineText}
+            tasks={{
+              done: todos.filter((t) => t.status === "completed").length,
+              total: todos.length,
+              inProgress: todos.filter((t) => t.status === "in_progress").length,
+              expanded: tasksExpanded,
+            }}
           />
         </>
       )}
+      </Box>
     </Box>
+    )}
+    </ThemeProvider>
   );
 }
 

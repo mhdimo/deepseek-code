@@ -8,6 +8,7 @@ import { resolve } from "path";
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { BASH_TOOL_NAME, DESCRIPTION } from "./prompt.js";
+import { registerTask } from "../../services/tasks/backgroundFramework.js";
 
 // ─── Input schema ────────────────────────────────────────────────────────────
 
@@ -17,6 +18,14 @@ const BashInputSchema = z.object({
   ),
   timeout: z.number().optional().describe(
     "Optional timeout in milliseconds (up to 600000ms / 10 minutes). Default is 120000ms (2 minutes).",
+  ),
+  run_in_background: z.boolean().optional().describe(
+    "Set to true to run the command in the background as a detached process. " +
+      "Use this only when you do not need the result immediately and are OK being notified " +
+      "later when the command completes. When true, the tool returns a background task id " +
+      "immediately instead of waiting for the command to finish; stdout/stderr are written to " +
+      "the returned output file path. Do not add a trailing '&' to the command when using this. " +
+      "Use TaskOutput to read the tail of the output and TaskStop to kill the task.",
   ),
 });
 
@@ -33,7 +42,7 @@ export const BashTool = buildTool({
   description: DESCRIPTION,
   inputSchema: BashInputSchema,
 
-  userFacingName: (_input) => "Bash",
+  userFacingName: (input) => input.run_in_background ? "Bash (background)" : "Bash",
 
   isEnabled: () => true,
   isReadOnly: () => false,
@@ -51,8 +60,34 @@ export const BashTool = buildTool({
 
   call: async (input, context) => {
     const { command } = input;
-    const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
     const cwd = resolve(context.workingDir);
+
+    // ── Background mode ────────────────────────────────────────────────────
+    // Spawn detached, redirect output to a file under
+    // ~/.deepseek-code/task-outputs/, register it, and return the task id
+    // immediately. Foreground behavior (below) is unchanged when this is
+    // false/absent.
+    if (input.run_in_background) {
+      try {
+        const task = registerTask(command, {
+          cwd,
+          env: { FORCE_COLOR: "0" },
+        });
+        return {
+          data:
+            `Background task started.\n` +
+            `task_id: ${task.id}\n` +
+            `pid: ${task.pid ?? "unknown"}\n` +
+            `output_file: ${task.outputPath}\n` +
+            `command: ${task.command}\n` +
+            `Use TaskOutput to read the latest output, and TaskStop to kill it.`,
+        };
+      } catch (error) {
+        return { data: `Error starting background task: ${(error as Error).message}` };
+      }
+    }
+
+    const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
 
     return new Promise<{ data: string }>((resolvePromise) => {
       const child = spawn("sh", ["-c", command], {

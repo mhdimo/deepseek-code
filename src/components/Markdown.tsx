@@ -1,11 +1,24 @@
 // Rich Markdown rendering for Ink terminal UI
-// Parses markdown via regex and renders with proper terminal formatting.
-// No external dependencies — only uses ink (Text, Box) + React.
+//
+// Ported from Claude Code's markdown rendering (utils/markdown.ts formatToken
+// + components/Markdown.tsx MarkdownBody), restyled onto our dependency-free
+// hand-rolled parser so stock Ink stays the only renderer:
+//   • inline code  → permission color            (Claude: color('permission'))
+//   • headings     → h1 bold+italic+underline, h2+ bold, blank line after
+//   • blockquote   → dim ▎ bar + italic text     (Claude: BLOCKQUOTE_BAR)
+//   • lists        → '-' bullets / 'N.' ordered, 2-space indent, letter/roman
+//                    numerals at depth 2/3       (Claude: getListNumber)
+//   • hr           → ---                         (Claude: plain '---')
+//   • code blocks  → syntax-highlighted lines, no language banner
+//   • links        → display text (Claude wraps in an OSC8 hyperlink; stock
+//                    Ink has no hyperlink escape, so the text renders plainly)
+//   • block stack  → gap={1} like Claude's MarkdownBody
 
 import React, { useMemo } from "react";
 import { Text, Box } from "ink";
-import { theme } from "../utils/theme.js";
+import { theme, resolveColor } from "../utils/theme.js";
 import { highlightLine } from "./codeHighlight.js";
+
 
 // ---------------------------------------------------------------------------
 // Token types — inline elements produced by the tokenizer
@@ -385,14 +398,17 @@ function renderTokens(
           </Text>
         );
       case "code-inline":
+        // Claude Code: inline code renders in the permission color
         return (
-          <Text key={key} color={theme.warning} dimColor wrap="wrap">
+          <Text key={key} color={resolveColor(theme.permission)} dimColor={dim} wrap="wrap">
             {tok.content}
           </Text>
         );
       case "link":
+        // Claude Code: link text renders plainly (OSC8 hyperlink on top);
+        // stock Ink has no hyperlink escape, so just the display text shows.
         return (
-          <Text key={key} color={theme.assistant} wrap="wrap">
+          <Text key={key} dimColor={dim} wrap="wrap">
             {tok.content}
           </Text>
         );
@@ -410,11 +426,14 @@ function renderTokens(
 // Block renderers — one function per block type
 // ---------------------------------------------------------------------------
 
-function renderHeading(block: Block, key: string): React.ReactNode {
+function renderHeading(block: Block, key: string, dim?: boolean): React.ReactNode {
+  const level = block.level ?? 1;
+  // Claude Code: h1 is bold+italic+underline; h2+ is bold. Headings keep a
+  // blank line after (h + 2 EOLs in the reference; gap={1} supplies the rest).
   return (
-    <Box key={key} flexDirection="column">
-      <Text bold wrap="wrap">
-        {renderTokens(block.tokens ?? [], key, false)}
+    <Box key={key} flexDirection="column" marginBottom={1}>
+      <Text bold={level >= 2} italic={level === 1} underline={level === 1} dimColor={dim} wrap="wrap">
+        {renderTokens(block.tokens ?? [], key, dim)}
       </Text>
     </Box>
   );
@@ -425,15 +444,10 @@ function renderCodeBlock(block: Block, key: string): React.ReactNode {
   const content = block.content ?? "";
   const lines = content.split("\n");
 
+  // Claude Code: code blocks render as syntax-highlighted lines only — no
+  // language banner. Unknown languages fall back to plain text.
   return (
     <Box key={key} flexDirection="column">
-      <Text dimColor>
-        {"── "}
-        <Text dimColor bold>
-          {lang || "code"}
-        </Text>
-        {" ──"}
-      </Text>
       {lines.map((line, i) => {
         const spans = highlightLine(line, lang);
         return (
@@ -448,40 +462,83 @@ function renderCodeBlock(block: Block, key: string): React.ReactNode {
           </Text>
         );
       })}
-      <Text dimColor>{"──"}</Text>
     </Box>
   );
 }
 
+/** Ordered-list numeral per nesting depth — Claude Code's getListNumber:
+ *  depth 0/1 → arabic, depth 2 → letters, depth 3 → lowercase roman. */
+function numberToLetter(n: number): string {
+  let result = "";
+  while (n > 0) {
+    n--;
+    result = String.fromCharCode(97 + (n % 26)) + result;
+    n = Math.floor(n / 26);
+  }
+  return result;
+}
+
+const ROMAN_VALUES: ReadonlyArray<[number, string]> = [
+  [1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"],
+  [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"],
+];
+
+function numberToRoman(n: number): string {
+  let result = "";
+  for (const [value, numeral] of ROMAN_VALUES) {
+    while (n >= value) {
+      result += numeral;
+      n -= value;
+    }
+  }
+  return result;
+}
+
+function getListNumber(listDepth: number, orderedListNumber: number): string {
+  switch (listDepth) {
+    case 2:
+      return numberToLetter(orderedListNumber);
+    case 3:
+      return numberToRoman(orderedListNumber);
+    default:
+      return orderedListNumber.toString();
+  }
+}
+
 function renderListItem(block: Block, key: string): React.ReactNode {
   const indent = block.indent ?? 0;
-  const bullet = block.ordered ? `${block.index ?? 1}.` : "\u2022";
+  // Claude Code: '-' bullet for every unordered level; ordered lists get a
+  // numeral per nesting depth; 2 spaces of indentation per level.
+  const bullet = block.ordered
+    ? `${getListNumber(indent, block.index ?? 1)}.`
+    : "-";
   const leftPad = indent * 2;
 
   return (
     <Box key={key} marginLeft={leftPad}>
-      <Text>
+      <Text wrap="wrap">
         {bullet} {renderTokens(block.tokens ?? [], key, false)}
       </Text>
     </Box>
   );
 }
 
-function renderBlockquote(block: Block, key: string): React.ReactNode {
+function renderBlockquote(block: Block, key: string, dim?: boolean): React.ReactNode {
+  // Claude Code: each line prefixed with a dim ▎ bar, text italic at normal
+  // brightness (chalk.dim is nearly invisible on dark themes).
   return (
     <Box key={key}>
-      <Text color={theme.subtle}>{"\u2502 "}</Text>
-      <Text wrap="wrap">{renderTokens(block.tokens ?? [], key, false)}</Text>
+      <Text dimColor>{"▎ "}</Text>
+      <Text italic dimColor={dim} wrap="wrap">
+        {renderTokens(block.tokens ?? [], key, dim)}
+      </Text>
     </Box>
   );
 }
 
 function renderHR(key: string): React.ReactNode {
-  return (
-    <Text key={key} dimColor>
-      {"\u2500".repeat(40)}
-    </Text>
-  );
+  // Claude Code renders an <hr> as plain '---'
+  return <Text key={key}>---</Text>;
 }
 
 function renderParagraph(
@@ -584,7 +641,7 @@ function renderTable(block: Block, key: string): React.ReactNode {
       <Text dimColor>{sep}</Text>
       {rows.map((row, ri) =>
         renderCells(row).map((l, li) => (
-          <Text key={`${key}-r${ri}-${li}`} wrap="truncate">
+          <Text key={`${key}-r${ri}-${li}`} wrap="wrap">
             {l}
           </Text>
         )),
@@ -605,19 +662,20 @@ export default function Markdown({
   // Memoize block parsing so we don't re-parse on every render
   const blocks = useMemo(() => parseBlocks(children), [children]);
 
+  // Claude Code's MarkdownBody stacks blocks with gap={1}
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={1}>
       {blocks.map((block, idx) => {
         const key = `b${idx}`;
         switch (block.type) {
           case "heading":
-            return renderHeading(block, key);
+            return renderHeading(block, key, dim);
           case "code-block":
             return renderCodeBlock(block, key);
           case "list-item":
             return renderListItem(block, key);
           case "blockquote":
-            return renderBlockquote(block, key);
+            return renderBlockquote(block, key, dim);
           case "hr":
             return renderHR(key);
           case "table":

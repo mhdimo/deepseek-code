@@ -25,8 +25,14 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
         case "text_delta":
           yield { type: "text-delta", text: ev.text || "" };
           break;
+        case "reasoning_start":
+          yield { type: "thinking-start" };
+          break;
         case "reasoning_delta":
           yield { type: "thinking-delta", text: ev.text || "" };
+          break;
+        case "reasoning_end":
+          yield { type: "thinking-end" };
           break;
         case "tool_call_start":
           yield {

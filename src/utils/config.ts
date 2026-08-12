@@ -15,6 +15,8 @@ import type {
   MCPServerConfig,
 } from "../types/index.js";
 import { loadSettings } from "../state/storage.js";
+import type { EffortLevel } from "../state/storage.js";
+import type { ThemeSetting } from "./theme.js";
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
@@ -112,9 +114,9 @@ function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
 
 // ─── CLI argument parsing ──────────────────────────────────────────────────
 
-function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string } {
+function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
   const args = process.argv.slice(2);
-  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string } = {};
+  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -122,7 +124,6 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
 
     switch (arg) {
       case "--provider":
-      case "-p":
         config.provider = next as ProviderType;
         i++;
         break;
@@ -150,6 +151,10 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
         config.defaultAgent = next as AgentName;
         i++;
         break;
+      case "--effort":
+        config.effort = next as EffortLevel;
+        i++;
+        break;
       case "--dangerously-skip-permissions":
         config.dangerouslySkipPermissions = true;
         break;
@@ -169,6 +174,38 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
         } else {
           (config as any).resumeSession = "latest";
         }
+        break;
+      // ── Headless / print mode (non-interactive, for scripting/CI) ──────────
+      case "--print":
+      case "-p": {
+        const np = args[i + 1];
+        if (np && !np.startsWith("-")) {
+          (config as any).print = np;
+          i++;
+        } else {
+          // No prompt arg → read it from stdin.
+          (config as any).print = "";
+        }
+        break;
+      }
+      case "--output-format":
+        (config as any).printOutputFormat = next === "json" ? "json" : "text";
+        i++;
+        break;
+      case "--max-turns":
+        (config as any).printMaxTurns = parseInt(next || "0", 10);
+        i++;
+        break;
+      case "--system-prompt-file":
+        (config as any).printSystemPromptFile = next;
+        i++;
+        break;
+      case "--verbose":
+      case "-V":
+        (config as any).printVerbose = true;
+        break;
+      case "--stream":
+        (config as any).printStreamText = true;
         break;
     }
   }
@@ -190,9 +227,16 @@ Options:
   -k, --api-key <key>           API key (or set DEEPSEEK_API_KEY)
   -u, --base-url <url>          Custom API base URL (default: https://api.deepseek.com/v1)
   -a, --agent <name>            Default agent: code, plan, review (default: code)
+      --effort <level>          Reasoning effort: off, low, medium, high, max (default: off)
   --max-steps <n>               Max tool-call steps per turn (default: 25)
   --dangerously-skip-permissions  Skip permission prompts for tools
   -r, --resume <hash>           Resume a saved session
+  -p, --print [prompt]          Non-interactive: run one prompt, print, exit (stdin if no arg)
+      --output-format <fmt>     --print output: text (default) or json
+      --max-turns <n>           Max tool-call turns for --print
+      --system-prompt-file <f>  Replace the system prompt with the file's contents
+      --stream                  Stream --print text deltas live to stdout
+      --verbose                 Stream tool progress to stderr in --print
   -h, --help                    Show this help
   -v, --version                 Show version
 
@@ -221,7 +265,7 @@ Examples:
 
 // ─── Main loader ───────────────────────────────────────────────────────────
 
-export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean; resumeSession?: string } {
+export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
   const fileConfig = loadConfigFile();
   const envConfig = loadEnvConfig();
   const persistedConfig = loadPersistedSettings();
@@ -246,13 +290,14 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
 }
 
 /** Load persisted settings from ~/.deepseek-code/settings.json */
-function loadPersistedSettings(): Partial<DeepSeekCodeConfig> & { themeMode?: "dark" | "light" } {
+function loadPersistedSettings(): Partial<DeepSeekCodeConfig> & { themeMode?: ThemeSetting; effort?: EffortLevel } {
   const settings = loadSettings();
-  const config: Partial<DeepSeekCodeConfig> & { themeMode?: "dark" | "light" } = {};
+  const config: Partial<DeepSeekCodeConfig> & { themeMode?: ThemeSetting; effort?: EffortLevel } = {};
   if (settings.apiKey) config.apiKey = settings.apiKey;
   if (settings.model) config.model = settings.model;
   if (settings.baseURL) config.baseURL = settings.baseURL;
   if (settings.defaultAgent) config.defaultAgent = settings.defaultAgent as AgentName;
   if (settings.themeMode) config.themeMode = settings.themeMode;
+  if (settings.effort) config.effort = settings.effort;
   return config;
 }

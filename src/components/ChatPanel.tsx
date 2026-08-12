@@ -1,22 +1,27 @@
-// Chat panel — renders welcome screen + scrolling messages + streaming state
+// Chat panel — renders welcome screen + scrolling messages + streaming state.
+//
+// Layout ported from Claude Code's Messages.tsx: assistant text streams under
+// a ⏺ dot, thinking blocks collapse to '∴ Thinking…', tool calls render with
+// their status dot; consecutive blocks stack without extra margins.
 
 import React from "react";
 import { Box, Static, Text } from "ink";
 import { basename } from "node:path";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
+import { theme, resolveColor } from "../utils/theme.js";
 import MessageView from "./MessageView.js";
 import ToolBlock from "./ToolBlock.js";
 import Markdown from "./Markdown.js";
 import Spinner from "./Spinner.js";
 import WelcomeScreen from "./WelcomeScreen.js";
-import MessageResponse from "./MessageResponse.js";
-import { theme } from "../utils/theme.js";
+import ThinkingBlock from "./ThinkingBlock.js";
+import { BLACK_CIRCLE } from "./ToolBlock.js";
+
 
 interface ChatPanelProps {
   messages: Message[];
   isLoading: boolean;
   streamingText: string;
-  streamingThinking: string;
   streamingToolUse: ToolUseBlock[];
   version: string;
   model: string;
@@ -36,11 +41,28 @@ interface ChatPanelProps {
 // and prevents Ink from choking when the transcript is taller than the terminal.
 const RECENT_RENDERED = 12;
 
-export default function ChatPanel({
+/** Live streaming text: ⏺ + markdown + teal cursor block (Claude Code's
+ *  streamingText layout with DeepSeek's ▊ typing cursor). */
+function StreamingText({ text }: { text: string }): React.ReactElement {
+  return (
+    <Box alignItems="flex-start" flexDirection="row" marginTop={1}>
+      <Box minWidth={2} flexShrink={0}>
+        <Text color={resolveColor(theme.text)}>{BLACK_CIRCLE}</Text>
+      </Box>
+      <Box flexDirection="column">
+        <Markdown>{text}</Markdown>
+        <Box>
+          <Text color={resolveColor(theme.claude)}>▊</Text>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+export default React.memo(function ChatPanel({
   messages,
   isLoading,
   streamingText,
-  streamingThinking,
   streamingToolUse,
   version,
   model,
@@ -114,46 +136,28 @@ export default function ChatPanel({
       {/* Live streaming output (not yet finalized) */}
       {isLoading && (
         <Box flexDirection="column">
-          {/* Streaming thinking (reasoning) — ∴ therefore sign matching Claude Code */}
-          {streamingThinking ? (
-            <MessageResponse>
-              <Box flexDirection="column">
-                <Text dimColor italic>
-                  ∴ Thinking
-                </Text>
-                <Box marginLeft={2}>
-                  <Text dimColor wrap="wrap">
-                    {streamingThinking.length > 200
-                      ? "…" + streamingThinking.slice(-200)
-                      : streamingThinking}
-                  </Text>
-                </Box>
-              </Box>
-            </MessageResponse>
-          ) : null}
-
           {streamingBlocks && streamingBlocks.length > 0 ? (
             streamingBlocks.map((block, idx) => {
               const isLast = idx === streamingBlocks.length - 1;
               if (block.type === "text" && block.content) {
-                return (
-                  <MessageResponse key={`stream-block-${idx}`}>
-                    <Box flexDirection="column">
-                      <Markdown>{block.content}</Markdown>
-                      {isLast && (
-                        <Box>
-                          <Text color={theme.assistant}>▊</Text>
-                        </Box>
-                      )}
-                    </Box>
-                  </MessageResponse>
-                );
+                return <StreamingText key={`stream-block-${idx}`} text={block.content} />;
               }
               if (block.type === "tool" && block.block) {
                 return (
-                  <MessageResponse key={`stream-block-${idx}`}>
+                  <Box key={`stream-block-${idx}`} marginTop={1}>
                     <ToolBlock block={block.block} isTranscriptMode={isTranscriptMode} />
-                  </MessageResponse>
+                  </Box>
+                );
+              }
+              if (block.type === "thinking") {
+                return (
+                  <Box key={`stream-block-${idx}`} marginTop={1}>
+                    <ThinkingBlock
+                      content={block.content || ""}
+                      isTranscriptMode={isTranscriptMode}
+                      isStreaming={isLast}
+                    />
+                  </Box>
                 );
               }
               return null;
@@ -162,26 +166,19 @@ export default function ChatPanel({
             <>
               {/* Streaming tool blocks */}
               {streamingToolUse.map((tool, i) => (
-                <MessageResponse key={tool.toolCallId || i}>
+                <Box key={tool.toolCallId || i} marginTop={1}>
                   <ToolBlock block={tool} isTranscriptMode={isTranscriptMode} />
-                </MessageResponse>
+                </Box>
               ))}
 
               {/* Streaming text */}
               {streamingText ? (
-                <MessageResponse>
-                  <Box flexDirection="column">
-                    <Markdown>{streamingText}</Markdown>
-                    <Box>
-                      <Text color={theme.assistant}>▊</Text>
-                    </Box>
-                  </Box>
-                </MessageResponse>
+                <StreamingText text={streamingText} />
               ) : (
                 !streamingToolUse.some((t) => t.status === "running") && (
-                  <MessageResponse>
+                  <Box marginTop={1}>
                     <Spinner noun={basename(workingDirectory)} sentiment={sentiment} />
-                  </MessageResponse>
+                  </Box>
                 )
               )}
             </>
@@ -190,4 +187,4 @@ export default function ChatPanel({
       )}
     </Box>
   );
-}
+});

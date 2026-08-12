@@ -1,12 +1,24 @@
-// Welcome screen with DeepSeek Code branding and command reference
+// Welcome screen with DeepSeek Code branding, quick-start hints, and feature
+// bullets.
+//
+// Ported from claude-code-main/src/components/Onboarding.tsx +
+// components/LogoV2/WelcomeV2.tsx: a framed pane with the logo/wordmark and
+// version on top, then the quick-start hints and feature bullets below. The
+// claude-code reference renders a fixed-width ASCII clawd banner; DeepSeek
+// Code keeps its original whale mascot (the little 3-line one with the
+// blink animation) and blue wordmark, and the content is adapted to this
+// app's real features (deepseek-chat/deepseek-reasoner, --print headless
+// mode, /effort levels, skills, tools).
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { basename } from "path";
-import { theme } from "../utils/theme.js";
+import { getTheme, getThemeMode, resolveColor, type Theme } from "../utils/theme.js";
 
-// DeepSeek-style animated mascot
-const MASCOT_FRAMES = [
+// DeepSeek-style animated whale mascot — the original little whale: a
+// round head with a blowhole, two eye dots that blink (▄ → ▀ → closed),
+// and a smooth curved body.
+export const MASCOT_FRAMES = [
   {
     top: "    ▄▄▄▄▄▄▄    ",
     mid: "  ▄▀░░░░░░░▀▄  ",
@@ -24,7 +36,6 @@ const MASCOT_FRAMES = [
   },
 ] as const;
 
-
 interface WelcomeScreenProps {
   version: string;
   model: string;
@@ -35,14 +46,36 @@ interface WelcomeScreenProps {
   hasApiKey?: boolean;
 }
 
+// Core tools shown in the feature bullets (subset of the real registry).
+const FEATURE_TOOLS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "Glob",
+  "Grep",
+  "LS",
+  "WebFetch",
+  "WebSearch",
+  "NotebookEdit",
+  "TodoWrite",
+  "Agent",
+];
+
+// Label column width for the feature bullets.
+const LABEL_WIDTH = 12;
+
 export default function WelcomeScreen({
   version,
   model,
   workingDirectory,
+  agentName,
+  providerType,
+  baseURL,
   hasApiKey = true,
 }: WelcomeScreenProps) {
+  // Blink animation on the whale's eyes, every 400ms (original behavior).
   const [frame, setFrame] = useState(0);
-
   useEffect(() => {
     const timer = setInterval(() => {
       setFrame((prev) => (prev + 1) % MASCOT_FRAMES.length);
@@ -51,6 +84,9 @@ export default function WelcomeScreen({
   }, []);
 
   const mascot = MASCOT_FRAMES[frame]!;
+  const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
+  const color = (token: keyof Theme): string => resolveColor(theme[token]);
+
   const cwdDisplay = useMemo(() => {
     if (!workingDirectory) return "~";
     const home = process.env.HOME;
@@ -63,51 +99,130 @@ export default function WelcomeScreen({
 
   return (
     <Box flexDirection="column" marginLeft={1} marginBottom={1}>
-      {/* Header */}
-      <Box>
-        <Box flexDirection="column">
-          <Text color={theme.assistant}>{mascot.top}</Text>
-          <Text color={theme.assistant}>{mascot.mid}</Text>
-          <Text color={theme.assistant}>{mascot.bot}</Text>
+      <Box borderStyle="round" borderColor={color("claude")} paddingX={1} paddingBottom={1} flexDirection="column">
+        {/* Header: mascot + wordmark + version (WelcomeV2 layout) */}
+        <Box>
+          <Box flexDirection="column">
+            <Text color={color("claude")}>{mascot.top}</Text>
+            <Text color={color("claude")}>{mascot.mid}</Text>
+            <Text color={color("claude")}>{mascot.bot}</Text>
+          </Box>
+          <Box flexDirection="column" marginLeft={2}>
+            <Text>
+              <Text color={color("claude")} bold>
+                DeepSeek
+              </Text>
+              <Text color={color("claudeShimmer")} bold>
+                {" "}Code
+              </Text>
+              <Text dimColor> v{version}</Text>
+            </Text>
+            <Text dimColor>
+              {model} · {cwdDisplay}
+            </Text>
+          </Box>
         </Box>
-        <Box flexDirection="column" marginLeft={2}>
-          <Text>
-            <Text color={theme.assistant} bold>DeepSeek</Text>
-            <Text color={theme.assistantDim} bold> Code</Text>
-            <Text dimColor> v{version}</Text>
+
+        {/* Status: API key warning or ready badge + agent/provider */}
+        <Box marginTop={1}>
+          {!hasApiKey ? (
+            <Box flexDirection="column">
+              <Box>
+                <Text backgroundColor={color("error")} color={color("inverseText")} bold>
+                  {" "}NO API KEY{" "}
+                </Text>
+                <Text> </Text>
+                <Text dimColor>Paste your key below or use /setup</Text>
+              </Box>
+              <Box marginLeft={1} marginTop={1}>
+                <Text dimColor>Get a key: </Text>
+                <Text color={color("claude")}>https://platform.deepseek.com/api_keys</Text>
+              </Box>
+            </Box>
+          ) : (
+            <Box>
+              <Text backgroundColor={color("success")} color={color("inverseText")} bold>
+                {" "}✓ READY{" "}
+              </Text>
+              <Text> </Text>
+              <Text dimColor>
+                agent: {agentName} · provider: {providerType}
+                {baseURL ? ` · base: ${baseURL}` : ""}
+              </Text>
+            </Box>
+          )}
+        </Box>
+
+        {/* Quick start */}
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color={color("claude")}>
+            Quick start
           </Text>
-          <Text dimColor>{model} · {cwdDisplay}</Text>
+          <Box marginLeft={2}>
+            <Text color={color("claude")} bold>
+              /{" ".padEnd(2)}
+            </Text>
+            <Text dimColor>Open the command picker</Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")} bold>
+              ?{" ".padEnd(3)}
+            </Text>
+            <Text dimColor>Show keyboard shortcuts</Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")} bold>
+              ↑↓{" ".padEnd(1)}
+            </Text>
+            <Text dimColor>Input history</Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")} bold>
+              -p{" ".padEnd(1)}
+            </Text>
+            <Text dimColor>
+              Headless mode: <Text color={color("claude")}>deepseek-code -p "fix the failing tests"</Text>
+            </Text>
+          </Box>
+        </Box>
+
+        {/* Features */}
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color={color("claude")}>
+            Features
+          </Text>
+          <Box marginLeft={2}>
+            <Text color={color("claude")}>{`Models`.padEnd(LABEL_WIDTH)}</Text>
+            <Text dimColor>deepseek-chat (default) · deepseek-reasoner</Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")}>{`Thinking`.padEnd(LABEL_WIDTH)}</Text>
+            <Text dimColor>
+              whalethink (<Text color={color("claude")}>/think</Text>) · <Text color={color("claude")}>/effort</Text> low|medium|high|xhigh|max
+            </Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")}>{`Skills`.padEnd(LABEL_WIDTH)}</Text>
+            <Text dimColor>
+              <Text color={color("claude")}>/skills</Text> — discover and run project skills
+            </Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text color={color("claude")}>{`Tools`.padEnd(LABEL_WIDTH)}</Text>
+            <Text dimColor>{FEATURE_TOOLS.join(" · ")}</Text>
+          </Box>
         </Box>
       </Box>
-
-      {/* API key warning or status */}
-      {!hasApiKey ? (
-        <Box marginTop={1} flexDirection="column">
-          <Box>
-            <Text backgroundColor={theme.error} color={theme.inverseText} bold> NO API KEY </Text>
-            <Text> </Text>
-            <Text dimColor>Paste your key below or use /setup</Text>
-          </Box>
-          <Box marginLeft={1} marginTop={1}>
-            <Text dimColor>Get a key: </Text>
-            <Text color={theme.assistant}>https://platform.deepseek.com/api_keys</Text>
-          </Box>
-        </Box>
-      ) : (
-        <Box marginTop={1}>
-          <Text backgroundColor={theme.success} color={theme.inverseText} bold> ✓ READY </Text>
-        </Box>
-      )}
 
       {/* Footer hint */}
       <Box>
         <Text dimColor>Type </Text>
-        <Text color={theme.assistant} bold>/</Text>
+        <Text color={color("claude")} bold>/</Text>
         <Text dimColor> to open command picker · </Text>
-        <Text color={theme.assistant} bold>?</Text>
+        <Text color={color("claude")} bold>?</Text>
         <Text dimColor> for shortcuts · </Text>
-        <Text color={theme.assistant} bold>↑↓</Text>
-        <Text dimColor> input history</Text>
+        <Text color={color("claude")} bold>/help</Text>
+        <Text dimColor> for the full command list</Text>
       </Box>
     </Box>
   );

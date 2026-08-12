@@ -7,6 +7,8 @@ import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
 import type { PermissionRuleset } from "./types/index.js";
 import { runPreToolUse, runHooksFireAndForget } from "./services/hooks.js";
+import { parsePermissionSettings, matchDecision } from "./services/permissions.js";
+import { loadSettings } from "./state/storage.js";
 
 // ─── Tool imports ─────────────────────────────────────────────────────────────
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.js";
@@ -28,10 +30,48 @@ import { AgentTool } from "./tools/AgentTool/AgentTool.js";
 import { AskUserQuestionTool } from "./tools/AskUserQuestionTool/AskUserQuestionTool.js";
 import { EnterPlanModeTool } from "./tools/EnterPlanModeTool/EnterPlanModeTool.js";
 import { ExitPlanModeTool } from "./tools/ExitPlanModeTool/ExitPlanModeTool.js";
+import { ConfigTool } from "./tools/ConfigTool/ConfigTool.js";
+import { SleepTool } from "./tools/SleepTool/SleepTool.js";
+import { ScheduleCronTool } from "./tools/ScheduleCronTool/ScheduleCronTool.js";
+import { EnterWorktreeTool } from "./tools/EnterWorktreeTool/EnterWorktreeTool.js";
+import { ExitWorktreeTool } from "./tools/ExitWorktreeTool/ExitWorktreeTool.js";
+import { PowerShellTool } from "./tools/PowerShellTool/PowerShellTool.js";
+import { BriefTool } from "./tools/BriefTool/BriefTool.js";
+import { REPLTool } from "./tools/REPLTool/REPLTool.js";
+import { ToolSearchTool } from "./tools/ToolSearchTool/ToolSearchTool.js";
+import { TaskOutputTool } from "./tools/TaskOutputTool/TaskOutputTool.js";
+import { TaskStopTool } from "./tools/TaskStopTool/TaskStopTool.js";
+import { SkillTool } from "./tools/SkillTool/SkillTool.js";
+import { buildLSPTool } from "./tools/LSPTool/LSPTool.js";
+import { initializeLspServerManager } from "./services/lsp/manager.js";
+
+// ─── LSP tool (non-blocking) ──────────────────────────────────────────────────
+//
+// The LSP tool is built once via its factory and registered with the rest of
+// the tools. Manager initialization is kicked off (idempotent; server
+// processes spawn lazily on first use) inside a try/catch so an unavailable
+// or misconfigured LSP never fails app startup — worst case the tool is
+// dropped from the registry and the rest of the app is unaffected.
+
+let lspTool: Tool | null = null;
+let lspToolResolved = false;
+
+function getLSPTool(): Tool | null {
+  if (lspToolResolved) return lspTool;
+  lspToolResolved = true;
+  try {
+    initializeLspServerManager();
+    lspTool = buildLSPTool();
+  } catch {
+    lspTool = null;
+  }
+  return lspTool;
+}
 
 // ─── All tools ────────────────────────────────────────────────────────────────
 
 export function getAllBaseTools(): Tools {
+  const lsp = getLSPTool();
   return [
     FileReadTool,
     FileWriteTool,
@@ -52,6 +92,19 @@ export function getAllBaseTools(): Tools {
     AskUserQuestionTool,
     EnterPlanModeTool,
     ExitPlanModeTool,
+    ConfigTool,
+    SleepTool,
+    ScheduleCronTool,
+    EnterWorktreeTool,
+    ExitWorktreeTool,
+    PowerShellTool,
+    BriefTool,
+    REPLTool,
+    ToolSearchTool,
+    TaskOutputTool,
+    TaskStopTool,
+    SkillTool,
+    ...(lsp ? [lsp] : []),
   ];
 }
 
@@ -102,14 +155,37 @@ export function toolsToBindingFormat(
         let resultString = "";
         let isError = false;
         try {
-          if (context.getPlanMode() && !tool.isReadOnly(input)) {
+          // Permission RULE engine (settings.permissions allow/deny/ask, in
+          // Tool(spec:pattern) syntax). Consulted first so a global rule can
+          // auto-allow or hard-deny without prompting. "ask"/no-match falls
+          // through to the per-tool checkPermissions below.
+          let ruleDenied = false;
+          let ruleAllowed = false;
+          try {
+            const perms = loadSettings().permissions;
+            if (perms && (perms.allow?.length || perms.deny?.length || perms.ask?.length)) {
+              const rules = parsePermissionSettings(perms);
+              const d = matchDecision(rules, tool.name, input, context.workingDir);
+              if (d.decision === "deny") ruleDenied = true;
+              else if (d.decision === "allow") ruleAllowed = true;
+            }
+          } catch {
+            // best-effort — fall back to per-tool checkPermissions
+          }
+
+          if (ruleDenied) {
+            resultString = `Permission denied by rule (see settings.json permissions.deny).`;
+            isError = true;
+          } else if (context.getPlanMode() && !tool.isReadOnly(input)) {
             resultString = `Permission denied: Tool ${tool.name} is a write/execute action, which is disabled in plan mode (read-only). Please write your plan or exit plan mode to modify files.`;
             isError = true;
           } else {
-            const decision: PermissionDecision = await Promise.race([
-              tool.checkPermissions(input as any, context),
-              abortPromise,
-            ]);
+            const decision: PermissionDecision = ruleAllowed
+              ? { approved: true }
+              : await Promise.race([
+                  tool.checkPermissions(input as any, context),
+                  abortPromise,
+                ]);
             if (!decision.approved) {
               resultString = decision.feedback
                 ? `Permission denied: ${decision.feedback}`
