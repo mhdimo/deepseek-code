@@ -1,6 +1,6 @@
-// TaskListTool — lists all tasks in the task store
-//
-// Read-only, concurrency-safe. Returns all tasks formatted as a summary table.
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";

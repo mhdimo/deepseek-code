@@ -1,7 +1,7 @@
-// FileWriteTool — create or overwrite files
-//
-// Creates parent directories automatically. Shows diff preview for existing
-// files when requesting permission.
+
+
+
+
 
 import { readFile, writeFile } from "fs/promises";
 import { z } from "zod";
@@ -16,7 +16,7 @@ import {
 } from "../../utils/toolUtils.js";
 import { FILE_WRITE_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const FileWriteInputSchema = z.object({
   file_path: z.string().describe(
@@ -27,7 +27,7 @@ const FileWriteInputSchema = z.object({
   ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const FileWriteTool = buildTool({
   name: FILE_WRITE_TOOL_NAME,
@@ -54,7 +54,7 @@ export const FileWriteTool = buildTool({
     const fullPath = resolvePath(context.workingDir, input.file_path);
     const relPath = relativePath(context.workingDir, fullPath);
 
-    // Check if file exists for diff preview
+    
     let previousContent = "";
     let exists = false;
     try {
@@ -82,7 +82,7 @@ export const FileWriteTool = buildTool({
     const fullPath = resolvePath(context.workingDir, file_path);
     const relPath = relativePath(context.workingDir, fullPath);
 
-    // Check if file exists for result diff
+    
     let previousContent = "";
     let exists = false;
     try {

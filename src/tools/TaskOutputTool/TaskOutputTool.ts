@@ -1,15 +1,15 @@
-// TaskOutputTool — read the tail of a background task's output log
-//
-// Companion to Bash(run_in_background: true). Looks up the task in the
-// background-framework registry and returns its status plus a bounded tail of
-// the captured stdout/stderr. Read-only and concurrency-safe.
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { TASK_OUTPUT_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 import { getTask, readOutputPath } from "../../services/tasks/backgroundFramework.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const DEFAULT_TAIL_BYTES = 50_000;
 
@@ -27,7 +27,7 @@ const TaskOutputInputSchema = z.object({
     ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const TaskOutputTool = buildTool({
   name: TASK_OUTPUT_TOOL_NAME,
@@ -42,7 +42,7 @@ export const TaskOutputTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  // Reading task output is harmless — no permission prompt.
+  
   checkPermissions: async () => ({ approved: true }),
 
   call: async (input) => {

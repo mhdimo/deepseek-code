@@ -1,23 +1,23 @@
-// Welcome screen with DeepSeek Code branding, quick-start hints, and feature
-// bullets.
-//
-// Ported from claude-code-main/src/components/Onboarding.tsx +
-// components/LogoV2/WelcomeV2.tsx: a framed pane with the logo/wordmark and
-// version on top, then the quick-start hints and feature bullets below. The
-// claude-code reference renders a fixed-width ASCII clawd banner; DeepSeek
-// Code keeps its original whale mascot (the little 3-line one with the
-// blink animation) and blue wordmark, and the content is adapted to this
-// app's real features (deepseek-chat/deepseek-reasoner, --print headless
-// mode, /effort levels, skills, tools).
+
+
+
+
+
+
+
+
+
+
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { basename } from "path";
 import { getTheme, getThemeMode, resolveColor, type Theme } from "../utils/theme.js";
 
-// DeepSeek-style animated whale mascot — the original little whale: a
-// round head with a blowhole, two eye dots that blink (▄ → ▀ → closed),
-// and a smooth curved body.
+
+
+
 export const MASCOT_FRAMES = [
   {
     top: "    ▄▄▄▄▄▄▄    ",
@@ -44,9 +44,11 @@ interface WelcomeScreenProps {
   providerType: string;
   baseURL?: string;
   hasApiKey?: boolean;
+  
+  frozen?: boolean;
 }
 
-// Core tools shown in the feature bullets (subset of the real registry).
+
 const FEATURE_TOOLS = [
   "Read",
   "Write",
@@ -62,7 +64,7 @@ const FEATURE_TOOLS = [
   "Agent",
 ];
 
-// Label column width for the feature bullets.
+
 const LABEL_WIDTH = 12;
 
 export default function WelcomeScreen({
@@ -73,17 +75,12 @@ export default function WelcomeScreen({
   providerType,
   baseURL,
   hasApiKey = true,
+  frozen = false,
 }: WelcomeScreenProps) {
-  // Blink animation on the whale's eyes, every 400ms (original behavior).
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((prev) => (prev + 1) % MASCOT_FRAMES.length);
-    }, 400);
-    return () => clearInterval(timer);
-  }, []);
-
-  const mascot = MASCOT_FRAMES[frame]!;
+  
+  
+  void frozen;
+  const mascot = MASCOT_FRAMES[0];
   const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
   const color = (token: keyof Theme): string => resolveColor(theme[token]);
 
@@ -100,7 +97,7 @@ export default function WelcomeScreen({
   return (
     <Box flexDirection="column" marginLeft={1} marginBottom={1}>
       <Box borderStyle="round" borderColor={color("claude")} paddingX={1} paddingBottom={1} flexDirection="column">
-        {/* Header: mascot + wordmark + version (WelcomeV2 layout) */}
+        {}
         <Box>
           <Box flexDirection="column">
             <Text color={color("claude")}>{mascot.top}</Text>
@@ -123,7 +120,7 @@ export default function WelcomeScreen({
           </Box>
         </Box>
 
-        {/* Status: API key warning or ready badge + agent/provider */}
+        {}
         <Box marginTop={1}>
           {!hasApiKey ? (
             <Box flexDirection="column">
@@ -153,7 +150,7 @@ export default function WelcomeScreen({
           )}
         </Box>
 
-        {/* Quick start */}
+        {}
         <Box marginTop={1} flexDirection="column">
           <Text bold color={color("claude")}>
             Quick start
@@ -186,7 +183,7 @@ export default function WelcomeScreen({
           </Box>
         </Box>
 
-        {/* Features */}
+        {}
         <Box marginTop={1} flexDirection="column">
           <Text bold color={color("claude")}>
             Features
@@ -214,7 +211,7 @@ export default function WelcomeScreen({
         </Box>
       </Box>
 
-      {/* Footer hint */}
+      {}
       <Box>
         <Text dimColor>Type </Text>
         <Text color={color("claude")} bold>/</Text>

@@ -1,9 +1,9 @@
-// ThemePicker — ported from claude-code-main/src/components/ThemePicker.tsx.
-//
-// Interactive theme selection: intro/title + help, a Select over all seven
-// theme options (arrows preview the theme live via setPreviewTheme, Enter
-// commits with savePreview, Esc cancels), and the demo diff in a dashed
-// border box. Used by the first-time onboarding AND the /theme command.
+
+
+
+
+
+
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -12,8 +12,7 @@ import { theme, resolveColor, type ThemeSetting } from "../utils/theme.js";
 import { usePreviewTheme } from "../ui/design-system/ThemeProvider.js";
 import { StructuredDiff } from "./StructuredDiff.js";
 
-/** Demo diff rendered below the options — verbatim from the reference
- *  ThemePicker, with DeepSeek wording. */
+
 const DEMO_PATCH: StructuredPatchHunk = {
   oldStart: 1,
   newStart: 1,
@@ -39,9 +38,9 @@ const THEME_OPTIONS = [
 
 export interface ThemePickerProps {
   onThemeSelect: (setting: ThemeSetting) => void;
-  /** Esc (reference: cancelPreview, then gracefulShutdown/skip). */
+  
   onCancel: () => void;
-  /** Onboarding shows "Let's get started."; /theme shows a bold "Theme". */
+  
   showIntroText?: boolean;
   helpText?: string;
   initialTheme?: ThemeSetting;
@@ -107,12 +106,12 @@ export default function ThemePicker({
 }: ThemePickerProps) {
   const { setPreviewTheme, savePreview, cancelPreview } = usePreviewTheme();
 
-  // Reference: Enter → savePreview() then onThemeSelect(setting).
+  
   const handleChange = (setting: string) => {
     savePreview();
     onThemeSelect(setting as ThemeSetting);
   };
-  // Reference: Esc → cancelPreview(), then cancel (skipExitHandling path).
+  
   const handleCancel = () => {
     cancelPreview();
     onCancel();
@@ -140,10 +139,7 @@ export default function ThemePicker({
         onPreview={(value) => setPreviewTheme(value as ThemeSetting)}
         defaultValue={initialTheme}
       />
-      {/* Dashed border box (the reference uses borderStyle="dashed"; stock
-          ink has no dashed style, so the ┄┄ lines are drawn manually). The
-          diff renders its own "N " gutter inside `width`, so give it 3 fewer
-          columns than the terminal to avoid overflowing the row. */}
+      {}
       <Box flexDirection="column">
         <Text color={resolveColor(theme.subtle)}>{"┄".repeat(diffWidth)}</Text>
         <StructuredDiff patch={DEMO_PATCH} dim={false} width={diffWidth} />

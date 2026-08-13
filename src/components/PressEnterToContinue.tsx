@@ -1,6 +1,6 @@
-// PressEnterToContinue — ported from
-// claude-code-main/src/components/PressEnterToContinue.tsx.
-// The dim "Press Enter to continue…" line shown under onboarding steps.
+
+
+
 
 import React from "react";
 import { Text } from "ink";

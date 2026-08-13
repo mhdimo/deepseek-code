@@ -1,11 +1,11 @@
-// Persistent, memory-enabled C++ session for deepseek-code.
-//
-// The C++ Session owns conversation history + context management:
-// MemoryContextStrategy auto-injects relevant persisted memory each turn, and
-// the inner SlidingWindowStrategy auto-compacts near maxContextTokens. The
-// session is created once per (provider, model, workingDir, agent, memoryDir)
-// and reused across turns so the C++ retains history + memory. Call
-// resetMemorySession() on /clear or provider switch.
+
+
+
+
+
+
+
+
 
 import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-sdk-cpp";
 import { createModel } from "../provider/registry.js";
@@ -43,8 +43,8 @@ export function getOrCreateMemorySession(opts: {
 }): MemorySession {
   const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
 
-  // Reasoning effort (off/unset → undefined → provider default, unchanged).
-  // Included in the cache key so a changed effort rebuilds the Agent.
+  
+  
   const effort = getEffortLevel();
   const providerOptions = effortToProviderOptions(effort);
 
@@ -74,8 +74,8 @@ export function getOrCreateMemorySession(opts: {
 
   const model = createModel(providerConfig);
 
-  // Per-session mutable state — persists across turns within this session
-  // (resets on /clear or provider switch when the session is recreated).
+  
+  
   let todos: TodoItem[] = [];
   let tasks: TaskItem[] = [];
   let planMode = false;
@@ -102,7 +102,7 @@ export function getOrCreateMemorySession(opts: {
   };
   const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
 
-  // Connect to configured MCP servers (best-effort; failures skip the server).
+  
   const extraToolSets: StandardToolSet[] = [];
   if (opts.mcpServers) {
     for (const [, srv] of Object.entries(opts.mcpServers)) {
@@ -118,13 +118,13 @@ export function getOrCreateMemorySession(opts: {
         });
         const ts = mcpToolsetFromServer(configJson);
         if (ts) extraToolSets.push(ts);
-      } catch { /* skip failed server */ }
+      } catch {  }
     }
   }
 
-  // Build a dynamic system prompt: agent identity + detected environment
-  // (cwd, git branch, OS, shell, model, date) + active tool list + path
-  // anti-hallucination rules. Replaces the old static buildSystemInstructions().
+  
+  
+  
   let gitBranch: string | null = null;
   try {
     const gr = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -137,7 +137,7 @@ export function getOrCreateMemorySession(opts: {
       gitBranch = b && b !== "HEAD" ? b : null;
     }
   } catch {
-    // not a git repo / git missing — leave gitBranch null
+    
   }
 
   let instructions = assembleSystemPromptSync({
@@ -148,14 +148,14 @@ export function getOrCreateMemorySession(opts: {
     gitBranch: gitBranch ?? undefined,
   });
 
-  // Apply the active output style (settings.outputStyle) on top of the base prompt.
+  
   try {
     instructions = composeWithSystemPrompt(instructions, loadSettings().outputStyle);
   } catch {
-    // best-effort — never block session creation on style composition
+    
   }
 
-  // Auto-inject project context (CLAUDE.md / DEEP.md / AGENTS.md) into the prompt.
+  
   for (const doc of ["CLAUDE.md", "DEEP.md", "AGENTS.md"]) {
     const docPath = `${workingDir}/${doc}`;
     if (existsSync(docPath)) {
@@ -164,12 +164,12 @@ export function getOrCreateMemorySession(opts: {
         if (content.trim()) {
           instructions += `\n\n--- ${doc} (project context) ---\n${content}`;
         }
-      } catch { /* read error — skip */ }
+      } catch {  }
     }
   }
 
-  // providerOptions is spread so this compiles against both the current binding
-  // types and the rebuild that adds `providerOptions?` to the Agent constructor.
+  
+  
   const agent = new Agent({
     model,
     tools,
@@ -195,7 +195,7 @@ export function getOrCreateMemorySession(opts: {
   return ms;
 }
 
-/** Drop the cached session (e.g. on /clear or provider/model switch). */
+
 export function resetMemorySession(): void {
   cache = null;
 }

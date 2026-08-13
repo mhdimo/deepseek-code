@@ -1,7 +1,7 @@
-// LSPTool prompt data — ported from Claude Code's src/tools/LSPTool/prompt.ts.
-//
-// Describes EXACTLY what LSPTool implements. Keep this honest: anything listed
-// here must have a code path in LSPTool.ts and its helpers.
+
+
+
+
 
 export const LSP_TOOL_NAME = "LSP";
 

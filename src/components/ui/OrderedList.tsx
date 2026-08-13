@@ -1,6 +1,6 @@
-// OrderedList — ported from claude-code-main/src/components/ui/OrderedList.tsx.
-// Numbers its OrderedListItem children ("1.", "2.", …), padding markers to a
-// shared width, and passes each marker down through context.
+
+
+
 
 import React, { createContext, isValidElement, type ReactNode, useContext } from "react";
 import { Box } from "ink";

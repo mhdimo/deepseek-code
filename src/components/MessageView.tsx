@@ -1,18 +1,18 @@
-// Message display — ported from Claude Code's message rendering chain
-// (Message.tsx → AssistantTextMessage / AssistantToolUseMessage /
-// AssistantThinkingMessage / UserPromptMessage).
-//
-// Layout:
-//   ⏺ user message on dark grey background (userMessageBackground)
-//
-//   ⏺ Assistant response with **markdown**.            ← ⏺ dot + rendered markdown
-//
-//   ⏺ Read(file_path: "src/App.tsx")                   ← tool block inline
-//     42 lines (ctrl+o to expand)
-//
-//   ⏺ More assistant text...
-//
-//   ∴ Thought (ctrl+o to expand)                       ← dim italic thinking
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React from "react";
 import { Box, Text } from "ink";
@@ -31,10 +31,10 @@ interface MessageViewProps {
   isTranscriptMode?: boolean;
 }
 
-/** Claude Code's assistant text block: ⏺ dot + markdown, dot in 'text' color. */
+
 function TextBlock({ content, isError, dim }: { content: string; isError?: boolean; dim?: boolean }): React.ReactElement {
   if (isError) {
-    // API-style error messages keep the ⎿ MessageResponse chrome
+    
     return (
       <MessageResponse>
         <Text color={resolveColor(theme.error)} wrap="wrap">
@@ -56,8 +56,8 @@ function TextBlock({ content, isError, dim }: { content: string; isError?: boole
 }
 
 function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageViewProps) {
-  // ── User messages — plain text (no background block; the full-width
-  //     tint read as a "white bar" on light terminals) ────────────────────
+  
+  
   if (message.role === "user") {
     return (
       <Box flexDirection="column" marginTop={1}>
@@ -66,7 +66,7 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
     );
   }
 
-  // ── System messages ───────────────────────────────────────────────────
+  
   if (message.role === "system") {
     return (
       <Box flexDirection="column">
@@ -77,7 +77,7 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
     );
   }
 
-  // ── Assistant messages — block stream with ⏺ per block ────────────────
+  
   if (message.role === "assistant") {
     const renderBlock = (block: MessageBlock, idx: number, first: boolean): React.ReactNode => {
       const marginTop = first ? 1 : 0;
@@ -118,26 +118,26 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
 
     return (
       <Box flexDirection="column">
-        {/* Legacy thinking (pre-blocks transcripts) — collapsed, like Claude Code */}
+        {}
         {message.thinking && (
           <Box marginTop={1}>
             <ThinkingBlock content={message.thinking} isTranscriptMode={isTranscriptMode} />
           </Box>
         )}
 
-        {/* Chronological message blocks — thinking blocks render in place */}
+        {}
         {message.blocks && message.blocks.length > 0 ? (
           message.blocks.map((block, idx) => renderBlock(block, idx, idx === 0 && !message.thinking))
         ) : (
           <>
-            {/* Text content — ⏺ dot + Markdown */}
+            {}
             {message.content && (
               <Box marginTop={1}>
                 <TextBlock content={message.content} isError={message.isError} />
               </Box>
             )}
 
-            {/* Tool blocks inline */}
+            {}
             {message.toolUse?.map((tool, i) => (
               <Box key={tool.toolCallId || i} marginTop={i === 0 ? 1 : 0}>
                 <ToolBlock

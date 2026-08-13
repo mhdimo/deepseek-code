@@ -1,6 +1,6 @@
-// Build a bounded, pruned index of relative file paths under a directory for
-// @-file autocompletion. Prunes dependency/build dirs and hidden VCS dirs so the
-// index stays small and relevant even in large projects.
+
+
+
 
 import { readdirSync } from "fs";
 import { join } from "path";
@@ -18,7 +18,7 @@ export function buildFileIndex(root: string): string[] {
   try {
     walk(root, "");
   } catch {
-    // ignore — best effort
+    
   }
   return out;
 

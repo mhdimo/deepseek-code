@@ -1,6 +1,6 @@
-// src/ui/index.ts — barrel export for the ported design system.
-// (The canonical theme module stays at src/utils/theme.ts — do not re-export
-// it from here; import getTheme/Theme directly from "../../utils/theme.js".)
+
+
+
 
 export {
   ThemeProvider,

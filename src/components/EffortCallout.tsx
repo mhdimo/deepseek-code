@@ -1,9 +1,9 @@
-// EffortCallout — ported from claude-code-main/src/components/EffortCallout.tsx.
-//
-// The interactive effort selector: a bordered dialog with the recommendation
-// text, the symbol legend (◯ low · ◐ medium · ● high, in the suggestion
-// color), and a Select (Medium (recommended) / High / Low). Auto-dismisses
-// after 30s like the reference; Esc/30s → "dismiss" without changing.
+
+
+
+
+
+
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -12,8 +12,8 @@ import type { EffortLevel } from "../state/storage.js";
 
 const AUTO_DISMISS_MS = 30_000;
 
-// Effort symbols ported from the reference figures (EffortIndicator.ts):
-// EFFORT_LOW '○' / EFFORT_MEDIUM '◐' / EFFORT_HIGH '●' / EFFORT_MAX '◉'
+
+
 const EFFORT_SYMBOLS: Record<string, string> = {
   low: "○",
   medium: "◐",
@@ -34,13 +34,13 @@ function EffortOptionLabel({ level, text }: { level: string; text: string }): Re
 }
 
 interface EffortCalloutProps {
-  /** Called with the picked level, or "dismiss" (Esc / 30s timeout). */
+  
   onDone: (selection: EffortLevel | "dismiss") => void;
-  /** Current level — pre-selects it (unset/"off" → medium). */
+  
   currentLevel?: EffortLevel;
 }
 
-// Effort options in ascending order (the Claude Code effort picker order).
+
 const EFFORT_OPTIONS = [
   { label: "Low", value: "low" },
   { label: "Medium", value: "medium" },
@@ -53,7 +53,7 @@ export default function EffortCallout({ onDone, currentLevel }: EffortCalloutPro
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
-  // Reference behavior: auto-dismiss after 30s.
+  
   const handleCancel = useCallback(() => onDoneRef.current("dismiss"), []);
   useEffect(() => {
     const timeoutId = setTimeout(handleCancel, AUTO_DISMISS_MS);
@@ -90,9 +90,7 @@ export default function EffortCallout({ onDone, currentLevel }: EffortCalloutPro
   );
 }
 
-/** Horizontal selector — options in one row, ←/→ move the highlight, Enter
- *  picks, Esc cancels. Each option shows its effort symbol in the suggestion
- *  color; the selected one gets the › cursor, brand color and bold. */
+
 function HorizontalSelect({
   options,
   onChange,
@@ -107,7 +105,7 @@ function HorizontalSelect({
   const claude = resolveColor(theme.claude);
   const [selectedIndex, setSelectedIndex] = useState(() => {
     const idx = options.findIndex((o) => o.value === defaultValue);
-    return idx >= 0 ? idx : 1; // default: Medium
+    return idx >= 0 ? idx : 1; 
   });
 
   useInput((_input, key) => {

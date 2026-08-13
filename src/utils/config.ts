@@ -1,8 +1,8 @@
-// Configuration loading — defaults ← config file ← env vars ← persisted settings ← CLI args
-//
-// Config supports named model "profiles", each with its own API key, plus
-// optional MCP server definitions. Runtime changes via /setup, /apikey, /model
-// are persisted to ~/.deepseek-code/settings.json.
+
+
+
+
+
 
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
@@ -18,7 +18,7 @@ import { loadSettings } from "../state/storage.js";
 import type { EffortLevel } from "../state/storage.js";
 import type { ThemeSetting } from "./theme.js";
 
-// ─── Defaults ───────────────────────────────────────────────────────────────
+
 
 const DEFAULTS: DeepSeekCodeConfig = {
   provider: "deepseek",
@@ -29,7 +29,7 @@ const DEFAULTS: DeepSeekCodeConfig = {
   dangerouslySkipPermissions: false,
 };
 
-// ─── Resolve "env:VAR_NAME" references ─────────────────────────────────────
+
 
 function resolveEnvRef(value: string): string {
   if (value.startsWith("env:")) {
@@ -38,13 +38,13 @@ function resolveEnvRef(value: string): string {
   return value;
 }
 
-// ─── Config file paths ─────────────────────────────────────────────────────
+
 
 const CONFIG_PATHS = [
   join(process.cwd(), ".deepseek-code.json"),
   join(homedir(), ".config", "deepseek-code", "config.json"),
   join(homedir(), ".deepseek-code.json"),
-  // Legacy paths for backward compatibility
+  
   join(process.cwd(), ".zcode.json"),
   join(homedir(), ".config", "z-code", "config.json"),
   join(homedir(), ".zcode.json"),
@@ -57,12 +57,12 @@ function loadConfigFile(): Partial<DeepSeekCodeConfig> {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw) as Partial<DeepSeekCodeConfig>;
 
-      // Resolve env refs in top-level apiKey
+      
       if (typeof parsed.apiKey === "string") {
         parsed.apiKey = resolveEnvRef(parsed.apiKey);
       }
 
-      // Resolve env refs in every profile's apiKey
+      
       if (parsed.profiles && typeof parsed.profiles === "object") {
         for (const [, profile] of Object.entries(parsed.profiles)) {
           const p = profile as ModelProfile;
@@ -72,7 +72,7 @@ function loadConfigFile(): Partial<DeepSeekCodeConfig> {
         }
       }
 
-      // Resolve env refs in MCP server env values
+      
       if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
         for (const [, server] of Object.entries(parsed.mcpServers)) {
           const s = server as MCPServerConfig;
@@ -86,13 +86,13 @@ function loadConfigFile(): Partial<DeepSeekCodeConfig> {
 
       return parsed;
     } catch {
-      // Skip invalid config files
+      
     }
   }
   return {};
 }
 
-// ─── Environment variables ─────────────────────────────────────────────────
+
 
 function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
   const config: Partial<DeepSeekCodeConfig> = {};
@@ -103,16 +103,16 @@ function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
   if (process.env.DEEPSEEK_MAX_STEPS) config.maxSteps = parseInt(process.env.DEEPSEEK_MAX_STEPS, 10);
   if (process.env.DEEPSEEK_AGENT) config.defaultAgent = process.env.DEEPSEEK_AGENT as AgentName;
 
-  // Support multiple key env vars for convenience
+  
   config.apiKey =
     process.env.DEEPSEEK_API_KEY ||
-    process.env.ZCODE_API_KEY || // Legacy support
+    process.env.ZCODE_API_KEY || 
     "";
 
   return config;
 }
 
-// ─── CLI argument parsing ──────────────────────────────────────────────────
+
 
 function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
   const args = process.argv.slice(2);
@@ -175,7 +175,7 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
           (config as any).resumeSession = "latest";
         }
         break;
-      // ── Headless / print mode (non-interactive, for scripting/CI) ──────────
+      
       case "--print":
       case "-p": {
         const np = args[i + 1];
@@ -183,7 +183,7 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
           (config as any).print = np;
           i++;
         } else {
-          // No prompt arg → read it from stdin.
+          
           (config as any).print = "";
         }
         break;
@@ -213,7 +213,7 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
   return config;
 }
 
-// ─── Help text ─────────────────────────────────────────────────────────────
+
 
 export function printHelp(): void {
   console.log(`
@@ -263,7 +263,7 @@ Examples:
 `);
 }
 
-// ─── Main loader ───────────────────────────────────────────────────────────
+
 
 export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
   const fileConfig = loadConfigFile();
@@ -271,7 +271,7 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
   const persistedConfig = loadPersistedSettings();
   const cliConfig = parseCliArgs();
 
-  // Merge: defaults ← file ← env ← persisted settings ← cli (cli wins)
+  
   const merged = {
     ...DEFAULTS,
     ...fileConfig,
@@ -280,16 +280,16 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
     ...cliConfig,
   };
 
-  // Filter out empty strings
+  
   if (!merged.apiKey) merged.apiKey = "";
 
-  // Ensure provider is always deepseek
+  
   merged.provider = "deepseek";
 
   return merged as DeepSeekCodeConfig & { help?: boolean; version?: boolean };
 }
 
-/** Load persisted settings from ~/.deepseek-code/settings.json */
+
 function loadPersistedSettings(): Partial<DeepSeekCodeConfig> & { themeMode?: ThemeSetting; effort?: EffortLevel } {
   const settings = loadSettings();
   const config: Partial<DeepSeekCodeConfig> & { themeMode?: ThemeSetting; effort?: EffortLevel } = {};

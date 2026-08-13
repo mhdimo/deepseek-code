@@ -1,27 +1,27 @@
-// exportConversation — export a conversation to Markdown or JSON
-//
-// Pure TS: consumes the Message type from types/index.ts and produces a
-// readable string. Markdown renders roles, code blocks, thinking, and tool
-// calls in a clean, reviewable form. JSON dumps a clean structured object.
-//
-// A writeToFile() helper is provided for the slash-command wiring to persist
-// the export to disk. It prefers Bun.write (see CLAUDE.md Bun conventions)
-// but falls back to fs/promises writeFile when Bun is unavailable.
+
+
+
+
+
+
+
+
+
 
 import type { Message, MessageBlock, ToolUseBlock } from "../types/index.js";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+
 
 export type ExportFormat = "markdown" | "json";
 
 export interface ExportOptions {
-  /** Include system messages in the export. Default: false. */
+  
   includeSystem?: boolean;
-  /** Include reasoning/thinking text. Default: true. */
+  
   includeThinking?: boolean;
-  /** Max chars of a tool call's output to include in the markdown summary. Default: 2000. */
+  
   maxToolOutputChars?: number;
-  /** Title used at the top of the markdown export. */
+  
   title?: string;
 }
 
@@ -30,7 +30,7 @@ export interface WriteResult {
   bytes: number;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+
 
 function indent(text: string, spaces: number): string {
   const pad = " ".repeat(spaces);
@@ -46,9 +46,9 @@ function truncate(text: string | undefined, max: number): string {
   return text.slice(0, max) + `\n... (${text.length - max} more chars truncated)`;
 }
 
-/** Wrap a chunk of text in a fenced code block, escaping any nested fences. */
+
 function fencedCodeBlock(text: string, lang = ""): string {
-  // Bump the fence width if the content contains a fence of the same length.
+  
   let fenceLen = 3;
   const fenceRe = /(`{3,})/g;
   let m: RegExpExecArray | null;
@@ -73,8 +73,8 @@ function roleLabel(role: Message["role"]): string {
 }
 
 function parseToolInput(block: ToolUseBlock): Record<string, unknown> {
-  // toolUse blocks may carry the args as a JSON string (input/argsJson) or
-  // as already-parsed text. Try JSON first, fall back to the raw string.
+  
+  
   const raw = block.argsJson ?? block.input;
   if (!raw) return {};
   if (typeof raw !== "string") return raw as Record<string, unknown>;
@@ -85,7 +85,7 @@ function parseToolInput(block: ToolUseBlock): Record<string, unknown> {
   }
 }
 
-/** Build a short, human-readable summary line of a tool call's arguments. */
+
 function summarizeToolArgs(input: Record<string, unknown>): string {
   const entries = Object.entries(input);
   if (entries.length === 0) return "";
@@ -107,7 +107,7 @@ function formatTimestamp(ts?: number): string {
   }
 }
 
-// ─── Markdown rendering ─────────────────────────────────────────────────────
+
 
 function renderToolUseMarkdown(
   block: ToolUseBlock,
@@ -141,8 +141,8 @@ function renderMessageMarkdown(message: Message, opts: ExportOptions): string {
 
   const sections: string[] = [header];
 
-  // Prefer the chronological `blocks` layout when present (text + tool calls
-  // interleaved). Otherwise fall back to content + toolUse.
+  
+  
   if (message.blocks && message.blocks.length > 0) {
     for (const block of message.blocks) {
       if (block.type === "text" && block.content) {
@@ -199,7 +199,7 @@ function renderMarkdown(messages: Message[], opts: ExportOptions): string {
   return parts.join("\n");
 }
 
-// ─── JSON rendering ─────────────────────────────────────────────────────────
+
 
 function toolUseToJson(block: ToolUseBlock): Record<string, unknown> {
   return {
@@ -261,16 +261,9 @@ function renderJson(messages: Message[], opts: ExportOptions): string {
   return JSON.stringify(payload, null, 2);
 }
 
-// ─── Public API ─────────────────────────────────────────────────────────────
 
-/**
- * Serialize a conversation (array of Messages) to a string.
- *
- * @param messages  The conversation messages to export.
- * @param format    "markdown" for a readable transcript, "json" for a
- *                  structured dump.
- * @param opts      Optional flags (see ExportOptions).
- */
+
+
 export function exportMessages(
   messages: readonly Message[],
   format: ExportFormat,
@@ -286,12 +279,7 @@ export function exportMessages(
   return renderMarkdown(filtered, opts);
 }
 
-/**
- * Export messages and write the result to a file.
- *
- * Prefers Bun.write when available; falls back to fs/promises writeFile.
- * Returns the absolute path written and the byte count.
- */
+
 export async function writeToFile(
   messages: readonly Message[],
   format: ExportFormat,
@@ -301,7 +289,7 @@ export async function writeToFile(
   const content = exportMessages(messages, format, opts);
   const bytes = Buffer.byteLength(content, "utf-8");
 
-  // Prefer Bun's fast write path (see CLAUDE.md Bun conventions).
+  
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const BunRef: any = (globalThis as { Bun?: any }).Bun;
   if (BunRef && typeof BunRef.write === "function") {

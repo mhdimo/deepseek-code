@@ -1,7 +1,7 @@
-// GlobTool — find files matching glob patterns
-//
-// Uses the find command with exclusions for node_modules and .git.
-// Returns matching file paths relative to the working directory.
+
+
+
+
 
 import { spawn } from "child_process";
 import { relative, resolve } from "path";
@@ -10,7 +10,7 @@ import { buildTool } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { GLOB_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const GlobInputSchema = z.object({
   pattern: z.string().describe(
@@ -21,11 +21,11 @@ const GlobInputSchema = z.object({
   ),
 });
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+
 
 const MAX_RESULTS = 200;
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const GlobTool = buildTool({
   name: GLOB_TOOL_NAME,

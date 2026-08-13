@@ -1,8 +1,8 @@
-// ConfigTool — read or update persisted user settings at runtime
-//
-// Backs reads/writes via ../state/storage.js loadSettings/saveSettings.
-// Reads (value omitted) are read-only and need no permission; writes
-// (value present) require Write permission and prompt the user.
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
@@ -13,7 +13,7 @@ import {
 } from "../../state/storage.js";
 import { CONFIG_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const ConfigInputSchema = z.object({
   setting: z
@@ -36,20 +36,20 @@ const ConfigInputSchema = z.object({
     ),
 });
 
-// ─── Setting registry ────────────────────────────────────────────────────────
+
 
 type SettingType = "string" | "boolean" | "number" | "stringArray" | "object";
 
 interface SettingConfig {
-  /** Dot-path into PersistedSettings. */
+  
   path: string[];
   type: SettingType;
   description: string;
-  /** Allowed scalar values. If omitted, any value of the right type is accepted. */
+  
   options?: readonly string[];
-  /** Treat writes as sensitive — hide the new value in the permission prompt. */
+  
   sensitive?: boolean;
-  /** Display name shown to the user in the permission prompt / result. */
+  
   label: string;
 }
 
@@ -158,7 +158,7 @@ const SUPPORTED_SETTINGS: Record<string, SettingConfig> = {
   },
 };
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 
 function isSupported(key: string): boolean {
   return key in SUPPORTED_SETTINGS;
@@ -168,7 +168,7 @@ function getConfig(key: string): SettingConfig {
   return SUPPORTED_SETTINGS[key]!;
 }
 
-/** Read a (possibly nested) value from PersistedSettings via a dot-path. */
+
 function getValue(settings: PersistedSettings, path: string[]): unknown {
   let current: unknown = settings;
   for (const key of path) {
@@ -181,7 +181,7 @@ function getValue(settings: PersistedSettings, path: string[]): unknown {
   return current;
 }
 
-/** Build a partial settings object that sets a nested path to a value. */
+
 function buildNestedUpdate(path: string[], value: unknown): Record<string, unknown> {
   if (path.length === 0) return {};
   const head = path[0]!;
@@ -192,7 +192,7 @@ function buildNestedUpdate(path: string[], value: unknown): Record<string, unkno
   return { [head]: buildNestedUpdate(rest, value) };
 }
 
-/** Merge deep-ish: shallow-merge each level (settings.json is flat-ish). */
+
 function deepMergeSettings(
   base: Record<string, unknown>,
   update: Record<string, unknown>,
@@ -209,18 +209,18 @@ function deepMergeSettings(
     ) {
       out[key] = { ...(out[key] as object), ...(val as object) };
     } else {
-      // Replace arrays and scalars wholesale. To *clear* a key, the update
-      // value should be undefined (caller must delete), since JSON.stringify
-      // drops undefined — handled separately in clearKey.
+      
+      
+      
       out[key] = val;
     }
   }
   return out;
 }
 
-/** Delete a nested key from settings (used for null/"default" clears). */
+
 function clearKey(path: string[]): Record<string, unknown> {
-  // Reload, delete, full rewrite.
+  
   const settings: Record<string, unknown> = loadSettings() as Record<string, unknown>;
   if (path.length === 1) {
     delete settings[path[0]!];
@@ -235,7 +235,7 @@ function clearKey(path: string[]): Record<string, unknown> {
       ) {
         current = (current as Record<string, unknown>)[key];
       } else {
-        return settings; // path doesn't exist; nothing to clear
+        return settings; 
       }
     }
     const last = path[path.length - 1]!;
@@ -250,7 +250,7 @@ function clearKey(path: string[]): Record<string, unknown> {
   return settings;
 }
 
-/** Format a value for human-readable display. */
+
 function formatValue(value: unknown): string {
   if (value === undefined) return "(not set)";
   if (typeof value === "string") return value;
@@ -258,12 +258,12 @@ function formatValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** Coerce + validate the incoming value against the setting's declared type. */
+
 function coerceAndValidate(
   config: SettingConfig,
   raw: unknown,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
-  // null means "clear" — caller handles; treat as valid sentinel here.
+  
   if (raw === null) return { ok: true, value: null };
 
   if (config.type === "boolean") {
@@ -290,7 +290,7 @@ function coerceAndValidate(
       return { ok: false, error: `${config.label} requires a string.` };
     }
     const str = String(raw);
-    // "default" clears scalar keys.
+    
     if (str.toLowerCase().trim() === "default") return { ok: true, value: null };
     if (config.options && !config.options.includes(str)) {
       return {
@@ -308,7 +308,7 @@ function coerceAndValidate(
     return { ok: true, value: raw };
   }
 
-  // object (env)
+  
   if (
     typeof raw !== "object" ||
     Array.isArray(raw) ||
@@ -323,7 +323,7 @@ function coerceAndValidate(
   return { ok: true, value: raw };
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const ConfigTool = buildTool({
   name: CONFIG_TOOL_NAME,
@@ -343,12 +343,12 @@ export const ConfigTool = buildTool({
   maxResultSizeChars: 100_000,
 
   checkPermissions: async (input, context) => {
-    // Reads need no permission.
+    
     if (input.value === undefined) {
       return { approved: true };
     }
 
-    // Writes require Write permission at the agent level.
+    
     if (!context.permissions.allowWrite) {
       return {
         approved: false,
@@ -381,7 +381,7 @@ export const ConfigTool = buildTool({
   call: async (input) => {
     const { setting, value } = input;
 
-    // 1. Validate the key.
+    
     if (!isSupported(setting)) {
       return {
         data: `Error: Unknown setting "${setting}". Supported settings: ${Object.keys(SUPPORTED_SETTINGS).join(", ")}.`,
@@ -389,7 +389,7 @@ export const ConfigTool = buildTool({
     }
     const config = getConfig(setting);
 
-    // 2. GET operation (no value).
+    
     if (value === undefined) {
       const current = getValue(loadSettings(), config.path);
       return {
@@ -397,7 +397,7 @@ export const ConfigTool = buildTool({
       };
     }
 
-    // 3. SET operation.
+    
     const validated = coerceAndValidate(config, value);
     if (!validated.ok) {
       return { data: `Error: ${validated.error}` };
@@ -405,12 +405,12 @@ export const ConfigTool = buildTool({
     const finalValue = validated.value;
 
     try {
-      // null => clear the key.
+      
       if (finalValue === null) {
         const cleared = clearKey(config.path);
-        // saveSettings does { ...existing, ...settings }. To force a full
-        // overwrite (so the deleted key is removed), pass the whole object;
-        // existing keys are preserved and the cleared one is absent.
+        
+        
+        
         saveSettings(cleared as PersistedSettings);
         const after = getValue(loadSettings(), config.path);
         return {
@@ -418,7 +418,7 @@ export const ConfigTool = buildTool({
         };
       }
 
-      // Write through merge.
+      
       const before = getValue(loadSettings(), config.path);
       const update = buildNestedUpdate(config.path, finalValue);
       const merged = deepMergeSettings(
@@ -444,7 +444,7 @@ export const ConfigTool = buildTool({
   },
 });
 
-// ─── Notes ───────────────────────────────────────────────────────────────────
+
 
 function needsRestartNote(setting: string): string | null {
   switch (setting) {

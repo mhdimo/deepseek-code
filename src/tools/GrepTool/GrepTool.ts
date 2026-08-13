@@ -1,12 +1,12 @@
-// GrepTool — search for text patterns in files
-//
-// Rich-params grep built on ripgrep (rg) via Bun.spawn, with a graceful
-// fallback to the legacy `grep -rn` implementation when rg is unavailable.
-//
-// Supports output_mode (content | files_with_matches | count), context lines
-// (-B/-A/-C/context), count, head_limit, offset, and multiline matching.
-// Read-only and concurrency-safe — every invocation spawns an isolated
-// child process and never mutates the filesystem.
+
+
+
+
+
+
+
+
+
 
 import { spawn } from "child_process";
 import { relative, resolve } from "path";
@@ -15,7 +15,7 @@ import { buildTool } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { GREP_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+
 
 type OutputMode = "content" | "files_with_matches" | "count";
 
@@ -34,7 +34,7 @@ interface GrepInput {
   head_limit?: number;
   offset?: number;
   multiline?: boolean;
-  // Legacy alias kept for backwards compatibility with old callers/sessions.
+  
   include?: string;
 }
 
@@ -44,9 +44,9 @@ interface RunResult {
   stderr: string;
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 
-// VCS / build directories to exclude automatically — they create noise.
+
+
 const VCS_DIRECTORIES_TO_EXCLUDE = [
   ".git",
   ".svn",
@@ -56,23 +56,17 @@ const VCS_DIRECTORIES_TO_EXCLUDE = [
   ".sl",
 ];
 
-// Default cap when head_limit is unspecified. Unbounded content-mode greps can
-// waste thousands of tokens in a grep-heavy session. Pass head_limit=0 for
-// unlimited.
+
+
+
 const DEFAULT_HEAD_LIMIT = 250;
 
-// rg exit codes: 0 = matches, 1 = no matches, 2 = error.
+
 const RG_SUCCESS_CODES = new Set([0, 1]);
 
-// ─── Pagination helper ───────────────────────────────────────────────────────
 
-/**
- * Apply offset + head_limit to a list of items.
- * head_limit === 0 is the explicit "unlimited" escape hatch.
- * Returns the sliced items plus the effective limit that was applied, but only
- * reports `appliedLimit` when truncation actually occurred (so the caller knows
- * there may be more results to paginate).
- */
+
+
 function applyHeadLimit<T>(
   items: T[],
   limit: number | undefined,
@@ -104,13 +98,9 @@ function pluralize(n: number, word: string): string {
   return n === 1 ? word : `${word}s`;
 }
 
-// ─── Backend detection ───────────────────────────────────────────────────────
 
-/**
- * Detect whether ripgrep (`rg`) is available on PATH. Memoized so the lookup
- * runs at most once per process. When false, we fall back to the legacy
- * grep -rn implementation (which loses the rich params but still works).
- */
+
+
 let rgAvailableCache: boolean | null = null;
 async function rgAvailable(): Promise<boolean> {
   if (rgAvailableCache !== null) return rgAvailableCache;
@@ -123,9 +113,9 @@ async function rgAvailable(): Promise<boolean> {
   return rgAvailableCache;
 }
 
-// ─── Process spawning ────────────────────────────────────────────────────────
 
-/** Run a command via Bun.spawn, capturing stdout/stderr and exit code. */
+
+
 async function runBun(
   cmd: string[],
   cwd: string,
@@ -146,15 +136,15 @@ async function runBun(
   return { code, stdout, stderr };
 }
 
-/** Cap an output string to avoid materializing enormous buffers. */
+
 function capBuffer(s: string): string {
-  const MAX = 20_000_000; // 20MB
+  const MAX = 20_000_000; 
   return s.length > MAX ? s.slice(0, MAX) : s;
 }
 
-// ─── ripgrep backend ─────────────────────────────────────────────────────────
 
-/** Build the ripgrep arg vector for the given input. */
+
+
 function buildRgArgs(input: GrepInput): string[] {
   const {
     pattern,
@@ -176,12 +166,12 @@ function buildRgArgs(input: GrepInput): string[] {
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     args.push("--glob", `!${dir}`);
   }
-  // Always exclude noisy dependency/build dirs.
+  
   args.push("--glob", "!node_modules");
   args.push("--glob", "!dist");
   args.push("--glob", "!build");
 
-  // Cap line length so base64/minified content doesn't blow up the result.
+  
   args.push("--max-columns", "500");
 
   if (multiline) {
@@ -212,7 +202,7 @@ function buildRgArgs(input: GrepInput): string[] {
     }
   }
 
-  // If pattern starts with a dash, use -e so rg doesn't treat it as an option.
+  
   if (pattern.startsWith("-")) {
     args.push("-e", pattern);
   } else {
@@ -223,10 +213,10 @@ function buildRgArgs(input: GrepInput): string[] {
     args.push("--type", type);
   }
 
-  // Glob filtering. `glob` is preferred; `include` is the legacy alias.
+  
   const globSource = glob ?? include;
   if (globSource) {
-    // Split on whitespace, then on commas (but preserve brace patterns).
+    
     const patterns: string[] = [];
     for (const raw of globSource.split(/\s+/)) {
       if (raw.includes("{") && raw.includes("}")) {
@@ -243,10 +233,7 @@ function buildRgArgs(input: GrepInput): string[] {
   return args;
 }
 
-/**
- * Run a ripgrep search and return the raw output lines.
- * Rejects on critical errors (ENOENT/EACCES/EPERM); resolves [] on "no matches".
- */
+
 async function ripgrep(
   args: string[],
   target: string,
@@ -264,13 +251,13 @@ async function ripgrep(
       .filter(Boolean);
   }
 
-  // Exit code 2 = rg usage error (bad pattern, bad flag). Surface the message.
+  
   if (code === 2) {
     throw new Error(
       `ripgrep error: ${stderr.trim() || stdout.trim() || "exit code 2"}`,
     );
   }
-  // Anything else — treat as "no usable output" but still surface in the empty case.
+  
   const hasOutput = stdout.trim().length > 0;
   if (!hasOutput) {
     throw new Error(
@@ -284,7 +271,7 @@ async function ripgrep(
     .filter(Boolean);
 }
 
-// ─── Result formatters (ripgrep path) ────────────────────────────────────────
+
 
 function renderContent(
   lines: string[],
@@ -303,7 +290,7 @@ function renderContent(
     : body;
 }
 
-/** rg content lines look like `/abs/path:NUM:content` or `/abs/path:content`. */
+
 function relativizeContentLine(line: string, cwd: string): string {
   const colonIdx = line.indexOf(":");
   if (colonIdx <= 0) return line;
@@ -325,7 +312,7 @@ function renderCount(
   let totalMatches = 0;
   let fileCount = 0;
   const rendered = items.map((line) => {
-    // Format: /abs/path:count
+    
     const colonIdx = line.lastIndexOf(":");
     if (colonIdx <= 0) return line;
     const filePath = line.slice(0, colonIdx);
@@ -370,7 +357,7 @@ function renderFilesWithMatches(
   return `${header}\n${rels.join("\n")}`;
 }
 
-/** Relative path that never throws (falls back to the original on failure). */
+
 function safeRelative(cwd: string, absPath: string): string {
   try {
     const rel = relative(cwd, absPath);
@@ -380,11 +367,11 @@ function safeRelative(cwd: string, absPath: string): string {
   }
 }
 
-// ─── Legacy grep fallback ────────────────────────────────────────────────────
-//
-// Used only when ripgrep is unavailable. Does not support the rich params
-// (context/-B/-A/-C/count/multiline); those are simply ignored. output_mode is
-// approximated: files_with_matches via -l, count via -c, content via -n.
+
+
+
+
+
 
 const MAX_MATCH_LINES = 100;
 
@@ -417,7 +404,7 @@ function grepFallback(
     args.push(`--exclude-dir=${d}`);
   }
   if (globSource) {
-    // Comma-separated globs: split and apply each.
+    
     for (const g of globSource.split(/[,\s]+/).filter(Boolean)) {
       args.push(`--include=${g}`);
     }
@@ -494,7 +481,7 @@ function grepFallback(
   });
 }
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const GrepInputSchema = z.object({
   pattern: z.string().describe(
@@ -562,7 +549,7 @@ const GrepInputSchema = z.object({
     .describe(
       "Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.",
     ),
-  // Legacy alias retained for backwards compatibility with older callers.
+  
   include: z
     .string()
     .optional()
@@ -571,7 +558,7 @@ const GrepInputSchema = z.object({
     ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const GrepTool = buildTool({
   name: GREP_TOOL_NAME,
@@ -599,7 +586,7 @@ export const GrepTool = buildTool({
     const output_mode: OutputMode = input.output_mode ?? "files_with_matches";
     const signal = context.abortController?.signal;
 
-    // ── ripgrep path (preferred) ──────────────────────────────────────────
+    
     if (await rgAvailable()) {
       try {
         const args = buildRgArgs(input);
@@ -613,18 +600,18 @@ export const GrepTool = buildTool({
         }
         return { data: renderFilesWithMatches(lines, cwd, input.head_limit, input.offset) };
       } catch (error) {
-        // If rg failed for a structural reason (bad pattern, ENOENT on target),
-        // surface the error rather than silently degrading to grep.
+        
+        
         const msg = (error as Error).message || "";
-        // Distinguish "target path missing" / "bad pattern" from a transient rg issue.
+        
         if (/exit code 2|ENOENT|EACCES|EPERM/i.test(msg)) {
           return { data: `Error: ${msg}` };
         }
-        // Otherwise fall through to the grep fallback below.
+        
       }
     }
 
-    // ── grep fallback (rg unavailable or transient rg failure) ────────────
+    
     try {
       return { data: await grepFallback(input, dir, cwd, signal) };
     } catch (error) {

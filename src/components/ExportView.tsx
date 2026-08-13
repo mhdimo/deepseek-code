@@ -1,13 +1,13 @@
-// ExportView — modal-ish export UI for /export. Ported from
-// claude-code-main's ExportDialog: a titled dialog with an option list
-// (format choice), plus an include-thinking toggle and a written-path
-// confirmation phase after the parent's write completes.
-//
-// Differences from the reference: the reference writes the file itself and
-// offers clipboard/file with a filename sub-screen; here the parent owns the
-// write (it auto-generates the filename and already has writeToFile), so
-// ExportView delegates via onExport() and only renders phases:
-//   choose (format + toggle) → working → result (✓ path / ✗ error).
+
+
+
+
+
+
+
+
+
+
 
 import React, { useCallback, useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -21,21 +21,17 @@ export interface ExportResult {
 }
 
 export interface ExportViewProps {
-  /** Format preselected when the view opens. Defaults to "markdown". */
+  
   defaultFormat?: ExportFormat;
-  /** Initial state of the include-thinking toggle. Defaults to true. */
+  
   includeThinking?: boolean;
-  /** Esc in any phase (and Enter after the result is shown). Parent unmounts. */
+  
   onCancel: () => void;
-  /**
-   * Perform the export. The returned (or resolved) result is shown as the
-   * written-path confirmation — the message usually carries the path and
-   * byte count (see utils/exportConversation.ts writeToFile).
-   */
+  
   onExport: (format: ExportFormat, includeThinking: boolean) => ExportResult | Promise<ExportResult>;
 }
 
-/** Fallback palette used when a theme token is missing (see shared rules). */
+
 const FALLBACK_PALETTE: Partial<Record<keyof Theme, string>> = {
   permission: "rgb(177, 185, 249)",
   suggestion: "rgb(177, 185, 249)",
@@ -52,7 +48,7 @@ const FORMAT_OPTIONS: Array<{ format: ExportFormat; label: string; detail: strin
   { format: "json", label: "Save as JSON", detail: "(.json) · structured data" },
 ];
 
-/** Rows: the two format options, then the include-thinking toggle. */
+
 const ROW_COUNT = FORMAT_OPTIONS.length + 1;
 const TOGGLE_ROW = FORMAT_OPTIONS.length;
 
@@ -97,12 +93,12 @@ export default function ExportView({
       onCancel();
       return;
     }
-    if (phase === "working") return; // ignore input while exporting
+    if (phase === "working") return; 
     if (phase === "result") {
       if (key.return) onCancel();
       return;
     }
-    // choose phase
+    
     if (key.return) {
       if (selected === TOGGLE_ROW) {
         setIncludeThinking((t) => !t);
@@ -116,14 +112,14 @@ export default function ExportView({
       return;
     }
     if (key.upArrow) {
-      setSelected((s) => Math.min(ROW_COUNT - 1, s + 1)); // previous option
+      setSelected((s) => Math.min(ROW_COUNT - 1, s + 1)); 
       return;
     }
     if (key.downArrow) {
-      setSelected((s) => Math.max(0, s - 1)); // next option
+      setSelected((s) => Math.max(0, s - 1)); 
       return;
     }
-    // Space / Tab / "t" toggle include-thinking from anywhere in the list.
+    
     if (key.tab || input === " " || input === "t" || input === "T") {
       setIncludeThinking((t) => !t);
     }
@@ -157,7 +153,7 @@ export default function ExportView({
               </Box>
             );
           })}
-          {/* Include-thinking toggle row */}
+          {}
           <Box flexDirection="row">
             <Text color={TOGGLE_ROW === selected ? token("suggestion") : undefined}>
               {TOGGLE_ROW === selected ? "▸ " : "  "}

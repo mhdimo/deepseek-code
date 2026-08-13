@@ -1,15 +1,15 @@
-// First-time setup — ported from claude-code-main/src/components/Onboarding.tsx.
-//
-// Same step-based flow and structure as the reference (welcome logo on top,
-// steps[] array, goToNextStep, Enter/Esc handling per step), adapted to
-// DeepSeek: there is no OAuth/preflight, so the flow is
-//
-//   theme → api-key (only when no key is configured) → security notes
-//
-// The theme step uses the same Select options as the reference ThemePicker
-// (Auto / Dark / Light); the api-key step replaces their ConsoleOAuthFlow
-// with a masked paste-in input; the security step is the reference's
-// OrderedList + PressEnterToContinue, with DeepSeek-adapted wording.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -30,9 +30,9 @@ interface OnboardingStep {
 export type ThemeChoice = ThemeSetting;
 
 interface OnboardingProps {
-  /** Whether an API key is already configured (skips the api-key step). */
+  
   hasApiKey: boolean;
-  /** The currently active theme (pre-selected in the theme step). */
+  
   initialTheme: ThemeChoice;
   version: string;
   onDone(result: { theme: ThemeChoice; apiKey?: string }): void;
@@ -45,7 +45,7 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
   const [selectedTheme, setSelectedTheme] = useState<ThemeChoice>(initialTheme);
   const [apiKey, setApiKey] = useState("");
 
-  // Esc cancels the live preview (ThemePicker handles preview/save itself).
+  
   const { cancelPreview } = usePreviewTheme();
 
   function goToNextStep() {
@@ -61,10 +61,10 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
     goToNextStep();
   }
 
-  // ── Steps (built each render, like the reference) ────────────────────
+  
 
-  // The theme step is the ported ThemePicker (reference
-  // components/ThemePicker.tsx) — shared with the /theme command.
+  
+  
   const themeStep = (
     <Box marginX={1}>
       <ThemePicker
@@ -116,7 +116,7 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
     </Box>
   );
 
-  // Determine which steps to include based on whether a key is configured.
+  
   const steps: OnboardingStep[] = [];
   steps.push({ id: "theme", component: themeStep });
   if (!hasApiKey) {
@@ -126,16 +126,16 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
 
   const currentStep = steps[currentStepIndex];
 
-  // Enter continues on the security step (the reference binds 'confirm:yes'
-  // to it); Enter is handled by Select / ApiKeyInput on the other steps.
+  
+  
   useInput((_input, key) => {
     if (currentStep?.id === "security" && key.return) {
       goToNextStep();
     }
   });
 
-  // Welcome header: the whale + wordmark (the reference shows WelcomeV2
-  // here; we reuse the welcome screen's mascot).
+  
+  
   const whale = MASCOT_FRAMES[0];
   return (
     <Box flexDirection="column">
@@ -162,8 +162,7 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
   );
 }
 
-/** Masked API key input: typed characters are hidden as •, backspace
- *  deletes, Enter submits, Esc skips (leaves the key empty). */
+
 function ApiKeyInput({
   value,
   onChange,

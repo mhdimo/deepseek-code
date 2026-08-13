@@ -1,7 +1,7 @@
-// AskUserQuestionTool — asks the user questions and returns their answers
-//
-// Presents questions with predefined options to the user via the permission
-// prompt mechanism. Returns a JSON object mapping question headers to answers.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -40,7 +40,7 @@ export const AskUserQuestionTool = buildTool({
     args: z.infer<typeof inputSchema>,
     context: ToolUseContext,
   ): Promise<ToolResult<string>> {
-    // If the context has askUserQuestions wired up, use it
+    
     if (context.askUserQuestions) {
       try {
         const answers = await context.askUserQuestions(
@@ -54,8 +54,8 @@ export const AskUserQuestionTool = buildTool({
       }
     }
 
-    // Fallback: format the questions as text and prompt the user via permission
-    // mechanism. The user's feedback becomes the answer.
+    
+    
     const answers: Record<string, string> = {};
 
     for (const q of args.questions) {

@@ -1,6 +1,6 @@
-// TaskGetTool — retrieves a single task by ID from the task store
-//
-// Read-only, concurrency-safe. Looks up a task and returns its details.
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";

@@ -1,24 +1,24 @@
-// CommandPicker — slash-command palette with keyboard navigation
-//
-// Appears above the input when the user types "/", filtered in real-time.
-// Navigate with ↑↓, confirm with Enter or Tab, dismiss with Esc.
+
+
+
+
 
 import React from "react";
 import { Box, Text } from "ink";
 
-// ─── Command registry ────────────────────────────────────────────────────────
+
 
 export interface CommandDef {
-  name: string;         // e.g. "/clear"
-  description: string;  // short label shown in picker
-  /** Text to fill the input on selection (leave undefined for no-arg commands) */
+  name: string;         
+  description: string;  
+  
   usage?: string;
   category?: "general" | "session" | "model" | "agent" | "mcp" | "project";
   aliases?: string[];
 }
 
 export const ALL_COMMANDS: CommandDef[] = [
-  // ─── General ──────────────────────────────────────────────────────
+  
   { name: "/help",    description: "Show help & keybindings", category: "general", aliases: ["/?", "/shortcuts"] },
   { name: "/shortcuts", description: "Toggle shortcuts panel", category: "general", aliases: ["/?"] },
   { name: "/think",   description: "Toggle thinking mode (off / whale)", usage: "/think ", category: "general", aliases: ["/reason"] },
@@ -47,7 +47,7 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/hooks",    description: "List configured lifecycle hooks", category: "general" },
   { name: "/plugin",   description: "Manage plugins and browse marketplaces", category: "general", aliases: ["/plugins"] },
 
-  // ─── Session ──────────────────────────────────────────────────────
+  
   { name: "/clear",   description: "Clear conversation history and free context", category: "session" },
   { name: "/compact", description: "Summarize conversation to save context. Optional: /compact [instructions]", category: "session" },
   { name: "/sessions", description: "List saved sessions", category: "session" },
@@ -60,18 +60,18 @@ export const ALL_COMMANDS: CommandDef[] = [
   { name: "/rewind",   description: "Rewind conversation back to a specific message", usage: "/rewind ", category: "session" },
   { name: "/exit",    description: "Exit DeepSeek Code", category: "session", aliases: ["/quit"] },
 
-  // ─── Model ────────────────────────────────────────────────────────
+  
   { name: "/setup",   description: "Quick API key setup", usage: "/setup ", category: "model" },
   { name: "/model",   description: "Show or switch model / profile", usage: "/model ", category: "model" },
   { name: "/models",  description: "List available models and profiles", category: "model" },
   { name: "/apikey",  description: "Set or update API key", usage: "/apikey ", category: "model", aliases: ["/key"] },
   { name: "/baseurl", description: "Set custom API base URL", usage: "/baseurl ", category: "model" },
 
-  // ─── Agent ────────────────────────────────────────────────────────
+  
   { name: "/agent",   description: "Switch agent (code / plan / review)", usage: "/agent ", category: "agent" },
   { name: "/tools",   description: "List available tools for current agent", category: "agent" },
 
-  // ─── MCP ──────────────────────────────────────────────────────────
+  
   { name: "/mcp",     description: "Show MCP connections and toggle servers", usage: "/mcp ", category: "mcp", aliases: ["/servers"] },
 ];
 
@@ -96,8 +96,8 @@ export function filterCommands(query: string, customCommands: CommandDef[] = [])
   if (!q.startsWith("/")) return [];
   if (q.includes(" ")) return [];
 
-  // Full filtered list (no cap) — the picker renders a scrolling window
-  // around the selection, so ↑/↓ reaches every match like Claude Code's.
+  
+  
   return [...ALL_COMMANDS, ...customCommands]
     .map((cmd) => ({ cmd, score: rankCommand(cmd, q) }))
     .filter((x) => x.score >= 0)
@@ -105,28 +105,27 @@ export function filterCommands(query: string, customCommands: CommandDef[] = [])
     .map((x) => x.cmd);
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+
 
 interface CommandPickerProps {
   commands: CommandDef[];
   selectedIndex: number;
 }
 
-/** Rows of the filtered list visible at once; the window scrolls with the
- *  selection so ↑/↓ reaches every match (Claude Code slash-menu behavior). */
+
 const MAX_VISIBLE = 10;
 
 export default React.memo(function CommandPicker({ commands, selectedIndex }: CommandPickerProps) {
   if (commands.length === 0) return null;
 
-  // Scrolling window around the selection.
+  
   const start = Math.max(0, Math.min(selectedIndex - Math.floor(MAX_VISIBLE / 2), commands.length - MAX_VISIBLE));
   const visible = commands.slice(start, start + MAX_VISIBLE);
   const showTopEllipsis = start > 0;
   const showBottomEllipsis = start + MAX_VISIBLE < commands.length;
 
-  // Flat list (no border), matching the reference TUI's slash menu:
-  //   /name padded to a fixed column, description beside it, selected row highlighted.
+  
+  
   return (
     <Box flexDirection="column" paddingX={2}>
       {showTopEllipsis && <Text dimColor>…</Text>}

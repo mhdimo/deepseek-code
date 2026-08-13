@@ -1,7 +1,7 @@
-// NotebookEditTool — read/write Jupyter .ipynb cells
-//
-// Supports replacing, inserting, and deleting cells in Jupyter notebooks.
-// Uses Node.js fs/promises for file I/O with JSON parse/stringify.
+
+
+
+
 
 import { z } from "zod";
 import { readFile, writeFile, stat } from "fs/promises";
@@ -49,12 +49,12 @@ function cellSourceToString(source: string | string[]): string {
 }
 
 function stringToCellSource(content: string): string[] {
-  // Jupyter convention: each line except the last ends with \n
+  
   const lines = content.split("\n");
   return lines.map((line, i) => (i < lines.length - 1 ? line + "\n" : line));
 }
 
-/** Build a new cell with the given type and source */
+
 function buildCell(cellType: CellType, source: string): NotebookCell {
   const base: NotebookCell = {
     cell_type: cellType,
@@ -80,7 +80,7 @@ export const NotebookEditTool = buildTool({
     const fullPath = resolvePath(context.workingDir, args.notebook_path);
 
     try {
-      // Read and parse the notebook
+      
       let exists = false;
       try {
         await stat(fullPath);
@@ -141,7 +141,7 @@ export const NotebookEditTool = buildTool({
           const source = new_source ?? cellSourceToString(existing.source);
 
           nb.cells[cell_number] = buildCell(type, source);
-          // Preserve execution count for code cells
+          
           if (
             type === "code" &&
             existing.cell_type === "code" &&
@@ -172,7 +172,7 @@ export const NotebookEditTool = buildTool({
     input: z.infer<typeof inputSchema>,
     context: ToolUseContext,
   ) {
-    // Only need write permission for non-read operations
+    
     if (input.edit_mode === "delete" || input.edit_mode === "insert" || input.edit_mode === "replace") {
       if (!context.permissions.allowWrite) {
         return { approved: false, feedback: "Write permission denied for this agent." };

@@ -1,36 +1,36 @@
-// Help catalog — the /help content as data.
-//
-// The command list mirrors the real slash-command switch in
-// src/components/App.tsx (handleCommand). If a command is added, removed, or
-// renamed there, update this catalog to match. Rendered by
-// src/components/HelpView.tsx.
 
-/** One slash command shown in /help. */
+
+
+
+
+
+
+
 export interface HelpCommand {
-  /** Command name including the leading slash, e.g. "/model". */
+  
   name: string;
-  /** One-line description of what the command does. */
+  
   description: string;
-  /** Optional usage lines shown under the description. */
+  
   usage?: string[];
-  /** Alternate spellings / aliases, e.g. "/usage" for "/cost". */
+  
   aliases?: string[];
 }
 
-/** A titled section of commands in the help output. */
+
 export interface CommandGroup {
   title: string;
   commands: HelpCommand[];
 }
 
-/** Intro line shown at the top of the help output. */
+
 export const HELP_INTRO =
   "DeepSeek Code understands your codebase, makes edits with your permission, and executes commands — right from your terminal.";
 
-/** Footer line with a link to further documentation. */
+
 export const HELP_FOOTER = "For more help: https://api-docs.deepseek.com";
 
-/** Keyboard shortcuts section of the help output. */
+
 export const KEYBOARD_SHORTCUTS: ReadonlyArray<{ keys: string; description: string }> = [
   { keys: "↑↓", description: "Navigate command picker (type / first)" },
   { keys: "Tab", description: "Confirm picker selection / autocomplete" },
@@ -43,7 +43,7 @@ export const KEYBOARD_SHORTCUTS: ReadonlyArray<{ keys: string; description: stri
   { keys: "Ctrl+C", description: "Exit DeepSeek Code" },
 ];
 
-/** The command catalog, grouped by topic. */
+
 export const HELP_GROUPS: CommandGroup[] = [
   {
     title: "Setup & model",
@@ -224,6 +224,10 @@ export const HELP_GROUPS: CommandGroup[] = [
         name: "/usage",
         description: "Open the tabbed Settings UI on the Usage tab (sessions, tokens, activity)",
       },
+      {
+        name: "/stats",
+        description: "Show session stats (heatmap, streaks, models)",
+      },
     ],
   },
   {
@@ -301,7 +305,7 @@ export const HELP_GROUPS: CommandGroup[] = [
   },
 ];
 
-/** All command names (with aliases), used by HelpView to render /help output. */
+
 export function allCommandNames(): string[] {
   const names: string[] = [];
   for (const group of HELP_GROUPS) {

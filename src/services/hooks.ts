@@ -1,27 +1,27 @@
-// Lifecycle hooks — user-configured shell commands that run on agent events.
-//
-// Standard coding-agent hook contract:
-//   PreToolUse      — runs before a tool executes. Exit code 2, or a JSON
-//                     decision {"decision":"block","reason":...}, BLOCKS the
-//                     tool (the reason is returned to the model).
-//   PostToolUse     — runs after a tool completes (non-blocking).
-//   UserPromptSubmit— runs when the user submits a prompt (non-blocking).
-//   Stop            — runs when the agent finishes a turn (non-blocking).
-//   Notification    — runs on notifications e.g. permission prompts.
-//
-// Config lives in ~/.deepseek-code/settings.json under "hooks", in the standard
-// shape:
-//   {
-//     "hooks": {
-//       "PreToolUse": [
-//         { "matcher": "Bash", "hooks": [ { "type": "command", "command": "echo check" } ] }
-//       ]
-//     }
-//   }
-//
-// Each command receives a JSON payload on stdin describing the event and is run
-// with the working directory as cwd. Hooks are a TS-side safety/notification
-// layer in the tool wrapper; the C++ engine remains the loop owner.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
@@ -41,13 +41,13 @@ export interface HookCommand {
 }
 
 export interface HookGroup {
-  matcher?: string; // tool name(s), comma-separated; "", "*", or omitted = all
+  matcher?: string; 
   hooks?: HookCommand[];
 }
 
 export type HooksConfig = Partial<Record<HookEvent, HookGroup[]>>;
 
-// Configurable via DEEPSEEK_CONFIG_DIR (testability / XDG-style override).
+
 const DATA_DIR = process.env.DEEPSEEK_CONFIG_DIR ?? join(homedir(), ".deepseek-code");
 const SETTINGS_FILE = join(DATA_DIR, "settings.json");
 
@@ -96,7 +96,7 @@ interface HookOutcome {
   exitCode: number | null;
 }
 
-/** Run one hook command with the JSON payload on stdin. Never throws. */
+
 function runOne(command: string, payload: HookPayload, timeoutMs = 10_000): Promise<HookOutcome> {
   return new Promise((resolve) => {
     let stdout = "";
@@ -111,7 +111,7 @@ function runOne(command: string, payload: HookPayload, timeoutMs = 10_000): Prom
         stdout += d.toString();
       });
       child.stderr.on("data", () => {
-        /* ignore stderr */
+        
       });
       const done = (code: number | null) => {
         if (timer) clearTimeout(timer);
@@ -125,7 +125,7 @@ function runOne(command: string, payload: HookPayload, timeoutMs = 10_000): Prom
         try {
           child.kill("SIGKILL");
         } catch {
-          /* ignore */
+          
         }
         done(null);
       }, timeoutMs);
@@ -136,11 +136,11 @@ function runOne(command: string, payload: HookPayload, timeoutMs = 10_000): Prom
 }
 
 function interpretPre(out: HookOutcome): { blocked: boolean; reason?: string } {
-  // Exit code 2 → block.
+  
   if (out.exitCode === 2) {
     return { blocked: true, reason: out.stdout.trim() || "blocked by PreToolUse hook (exit 2)" };
   }
-  // JSON decision on stdout.
+  
   const text = out.stdout.trim();
   if (text.startsWith("{")) {
     try {
@@ -157,13 +157,13 @@ function interpretPre(out: HookOutcome): { blocked: boolean; reason?: string } {
         return { blocked: true, reason };
       }
     } catch {
-      /* not JSON — ignore */
+      
     }
   }
   return { blocked: false };
 }
 
-/** PreToolUse: run matching hooks in order; first block wins. */
+
 export async function runPreToolUse(
   toolName: string,
   input: unknown,
@@ -179,12 +179,12 @@ export async function runPreToolUse(
   return { blocked: false };
 }
 
-/** Non-blocking hooks: run all matching commands, ignore output (best-effort). */
+
 export function runHooksFireAndForget(event: HookEvent, payload: Omit<HookPayload, "event">): void {
   const cmds = commandsFor(event, payload.tool);
   for (const cmd of cmds) {
     runOne(cmd, { ...payload, event }).catch(() => {
-      /* ignore */
+      
     });
   }
 }

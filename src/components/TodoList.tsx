@@ -1,8 +1,8 @@
-// TodoList — live, always-on checklist panel driven by the TodoWrite tool.
-//
-// The C++ agent loop calls TodoWrite, which fires onTodosChange → this panel
-// updates in place each time the model revises its plan. Rendered above the
-// input while any todos exist; cleared on /clear.
+
+
+
+
+
 
 import React from "react";
 import { Box, Text } from "ink";
@@ -11,7 +11,7 @@ import type { TodoItem } from "../types/index.js";
 
 interface TodoListProps {
   todos: TodoItem[];
-  /** Highlighted row (Claude Code tasks panel: ↓ expands, ↑/↓ navigates). */
+  
   selectedIndex?: number;
 }
 
@@ -40,7 +40,7 @@ export default function TodoList({ todos, selectedIndex = -1 }: TodoListProps): 
       </Box>
       {todos.map((t, i) => {
         const style = STATUS_STYLE[t.status];
-        // While a task is active, prefer its present-progressive form.
+        
         const label = t.status === "in_progress" ? t.activeForm || t.content : t.content;
         const isDone = t.status === "completed";
         const isActive = t.status === "in_progress";

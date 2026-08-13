@@ -1,27 +1,27 @@
-// EnterWorktreeTool — creates an isolated git worktree and returns its path
-//
-// Creates a new git worktree under `.deepseek-code/worktrees/` on a new branch
-// based on the current HEAD. This gives sub-agents (or the main agent) an
-// isolated checkout to work in without disturbing the caller's working tree.
-//
-// Git operations are performed via Bun.spawn. Requires Write permission because
-// creating a worktree writes to the filesystem inside the repo.
+
+
+
+
+
+
+
+
 
 import { resolve, join } from "path";
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
 import { ENTER_WORKTREE_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+
 
 const WORKTREE_DIR = ".deepseek-code/worktrees";
 const BRANCH_PREFIX = "deepseek-worktree";
 const MAX_NAME_LEN = 64;
 
-// Allowed characters for each "/"-separated segment of the worktree name.
+
 const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const EnterWorktreeInputSchema = z.object({
   name: z
@@ -32,9 +32,9 @@ const EnterWorktreeInputSchema = z.object({
     ),
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Validate a user-supplied worktree slug. Throws on invalid input. */
+
+
 function validateWorktreeSlug(slug: string): void {
   if (slug.length === 0) {
     throw new Error("Worktree name must not be empty.");
@@ -57,22 +57,22 @@ function validateWorktreeSlug(slug: string): void {
       );
     }
   }
-  // Reject path traversal attempts.
+  
   if (slug.includes("..")) {
     throw new Error("Worktree name must not contain '..'.");
   }
 }
 
-/** Generate a short random slug. */
+
 function randomSlug(): string {
   const ts = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 8);
   return `${ts}-${rand}`;
 }
 
-/** Sanitize a slug into a filesystem/git-safe path segment group. */
+
 function sanitizeSlug(slug: string): string {
-  // Collapse any runs of invalid characters into a single '-' and trim.
+  
   return slug
     .split("/")
     .map((s) => s.replace(/[^A-Za-z0-9._-]+/g, "-"))
@@ -81,7 +81,7 @@ function sanitizeSlug(slug: string): string {
     .join("/");
 }
 
-/** Spawn a process and capture stdout/stderr. Resolves with trimmed output. */
+
 async function runGit(
   args: string[],
   cwd: string,
@@ -100,12 +100,7 @@ async function runGit(
   return { code, stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
-/**
- * Resolve the canonical git repository root for `cwd`.
- * Uses `git rev-parse --path-format=absolute --git-common-dir` so it returns the
- * main repository root even when invoked from within an existing worktree.
- * Returns null if `cwd` is not inside a git repository.
- */
+
 async function findCanonicalGitRoot(cwd: string): Promise<string | null> {
   const inside = await runGit(["rev-parse", "--is-inside-work-tree"], cwd);
   if (inside.code !== 0 || inside.stdout !== "true") {
@@ -116,16 +111,16 @@ async function findCanonicalGitRoot(cwd: string): Promise<string | null> {
     cwd,
   );
   if (common.code !== 0 || !common.stdout) {
-    // Fall back to --show-toplevel for non-worktree checkouts.
+    
     const top = await runGit(["rev-parse", "--show-toplevel"], cwd);
     if (top.code !== 0 || !top.stdout) return null;
     return resolve(top.stdout);
   }
-  // git-common-dir is `<root>/.git` for a normal repo; the parent is the root.
+  
   return resolve(common.stdout, "..");
 }
 
-/** Check whether `cwd` is itself a worktree created under our worktree dir. */
+
 function isInsideManagedWorktree(cwd: string, repoRoot: string): boolean {
   const managedRoot = resolve(repoRoot, WORKTREE_DIR);
   const normalizedCwd = resolve(cwd);
@@ -135,7 +130,7 @@ function isInsideManagedWorktree(cwd: string, repoRoot: string): boolean {
   );
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const EnterWorktreeTool = buildTool({
   name: ENTER_WORKTREE_TOOL_NAME,
@@ -172,7 +167,7 @@ export const EnterWorktreeTool = buildTool({
   ): Promise<ToolResult<string>> => {
     const cwd = resolve(context.workingDir);
 
-    // 1. Find the canonical git root.
+    
     const repoRoot = await findCanonicalGitRoot(cwd);
     if (!repoRoot) {
       return {
@@ -180,14 +175,14 @@ export const EnterWorktreeTool = buildTool({
       };
     }
 
-    // 2. Refuse if we're already inside one of our managed worktrees.
+    
     if (isInsideManagedWorktree(cwd, repoRoot)) {
       return {
         data: "Error: already inside a managed worktree (.deepseek-code/worktrees/). Refusing to create a nested worktree.",
       };
     }
 
-    // 3. Resolve + validate the worktree name.
+    
     let rawName: string;
     try {
       rawName = input.name ? input.name.trim() : "";
@@ -202,29 +197,29 @@ export const EnterWorktreeTool = buildTool({
       return { data: "Error: invalid worktree name resolved to empty string." };
     }
 
-    // 4. Compute the target path and branch.
+    
     const worktreePath = resolve(repoRoot, WORKTREE_DIR, slug);
     const branchName = `${BRANCH_PREFIX}/${slug}`;
 
-    // 5. Ensure the worktree base dir exists (git creates the leaf, not parents).
+    
     const baseDir = resolve(repoRoot, WORKTREE_DIR);
     try {
       await Bun.write(baseDir + "/.gitkeep", "");
     } catch {
-      // mkdir -p semantics via a no-op file write into the directory.
-      // Bun.write creates parent directories automatically.
+      
+      
     }
 
-    // 6. Create the worktree on a new branch from HEAD.
-    //    `git worktree add -b <branch> <path>` fails if the branch already
-    //    exists, which is the safety we want.
+    
+    
+    
     const add = await runGit(
       ["worktree", "add", "-b", branchName, worktreePath],
       repoRoot,
     );
     if (add.code !== 0) {
-      // Common failure: branch already exists. Try once with a unique branch
-      // name so a retry-friendly path is returned rather than a hard failure.
+      
+      
       if (add.stderr.includes("already exists")) {
         const unique = `${branchName}-${Date.now().toString(36)}`;
         const retry = await runGit(
@@ -249,7 +244,7 @@ export const EnterWorktreeTool = buildTool({
   },
 });
 
-// ─── Output formatting ───────────────────────────────────────────────────────
+
 
 interface FormatOpts {
   renamed?: boolean;

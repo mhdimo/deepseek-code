@@ -1,7 +1,7 @@
-// TodoWriteTool — replaces the entire todo list
-//
-// Accepts an array of todo items and replaces the current list wholesale.
-// Always allowed (no user approval needed).
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -61,7 +61,7 @@ export const TodoWriteTool = buildTool({
   isReadOnly: () => false,
   isConcurrencySafe: () => true,
 
-  // Always allowed — no permission prompt
+  
   async checkPermissions() {
     return { approved: true };
   },

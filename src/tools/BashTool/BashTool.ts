@@ -1,7 +1,7 @@
-// BashTool — execute shell commands
-//
-// Spawns commands via sh -c with configurable timeout. Output is truncated
-// at 50KB. Permission is requested with a command preview.
+
+
+
+
 
 import { spawn } from "child_process";
 import { resolve } from "path";
@@ -10,7 +10,7 @@ import { buildTool } from "../../Tool.js";
 import { BASH_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 import { registerTask } from "../../services/tasks/backgroundFramework.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const BashInputSchema = z.object({
   command: z.string().describe(
@@ -29,13 +29,13 @@ const BashInputSchema = z.object({
   ),
 });
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+
 
 const DEFAULT_TIMEOUT = 120_000;
 const MAX_TIMEOUT = 600_000;
 const MAX_OUTPUT_BYTES = 50_000;
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const BashTool = buildTool({
   name: BASH_TOOL_NAME,
@@ -62,11 +62,11 @@ export const BashTool = buildTool({
     const { command } = input;
     const cwd = resolve(context.workingDir);
 
-    // ── Background mode ────────────────────────────────────────────────────
-    // Spawn detached, redirect output to a file under
-    // ~/.deepseek-code/task-outputs/, register it, and return the task id
-    // immediately. Foreground behavior (below) is unchanged when this is
-    // false/absent.
+    
+    
+    
+    
+    
     if (input.run_in_background) {
       try {
         const task = registerTask(command, {

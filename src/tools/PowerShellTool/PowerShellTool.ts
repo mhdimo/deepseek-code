@@ -1,12 +1,12 @@
-// PowerShellTool — execute PowerShell commands on Windows
-//
-// A Bash-equivalent tool that runs commands via powershell.exe (Windows
-// PowerShell 5.1) or pwsh (PowerShell 7+) when available. Mirrors BashTool's
-// structure: spawn with a configurable timeout, capture stdout/stderr,
-// truncate output at 50KB, request Execute permission with a command preview.
-//
-// isEnabled() returns true only on Windows (process.platform === "win32") so
-// the tool is hidden from the model on macOS/Linux where BashTool is used.
+
+
+
+
+
+
+
+
+
 
 import { spawn } from "child_process";
 import { resolve } from "path";
@@ -14,7 +14,7 @@ import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { POWERSHELL_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const PowerShellInputSchema = z.object({
   command: z.string().describe(
@@ -25,26 +25,17 @@ const PowerShellInputSchema = z.object({
   ),
 });
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+
 
 const DEFAULT_TIMEOUT = 120_000;
 const MAX_TIMEOUT = 600_000;
 const MAX_OUTPUT_BYTES = 50_000;
 
-/**
- * Resolve which PowerShell executable to invoke. Prefer PowerShell 7+ (pwsh)
- * if it is on PATH, otherwise fall back to Windows PowerShell 5.1
- * (powershell.exe). Both accept the same -NoProfile -NonInteractive -Command
- * argument shape used below.
- *
- * Detection is best-effort: if neither is found we still return "powershell"
- * so spawn surfaces a clear "command not found" error to the model rather than
- * failing the whole tool assembly.
- */
+
 function resolvePowerShellExecutable(): string {
-  // On Windows, `where` is the equivalent of `which`. Keep this synchronous and
-  // cheap — it only runs once per tool call, and only on Windows (isEnabled()
-  // gates the whole tool off-platform).
+  
+  
+  
   if (process.platform === "win32") {
     try {
       const { spawnSync } = require("child_process");
@@ -53,15 +44,15 @@ function resolvePowerShellExecutable(): string {
         return "pwsh";
       }
     } catch {
-      // Fall through to powershell.exe default.
+      
     }
     return "powershell";
   }
-  // Off Windows the tool is disabled, but return a sensible default anyway.
+  
   return "pwsh";
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const PowerShellTool = buildTool({
   name: POWERSHELL_TOOL_NAME,
@@ -70,8 +61,8 @@ export const PowerShellTool = buildTool({
 
   userFacingName: (_input) => "PowerShell",
 
-  // Only offer the tool on Windows. On macOS/Linux the BashTool covers shell
-  // execution and PowerShell is typically not installed.
+  
+  
   isEnabled: () => process.platform === "win32",
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
@@ -93,9 +84,9 @@ export const PowerShellTool = buildTool({
     const exe = resolvePowerShellExecutable();
 
     return new Promise<{ data: string }>((resolvePromise) => {
-      // -NoProfile: don't load the user profile (faster, deterministic).
-      // -NonInteractive: never pop a prompt that would hang the tool.
-      // -Command: treat the next arg as the command line to execute.
+      
+      
+      
       const child = spawn(
         exe,
         ["-NoProfile", "-NonInteractive", "-Command", command],

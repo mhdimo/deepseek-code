@@ -26,26 +26,26 @@ interface StructuredDiffProps {
   width: number;
 }
 
-// Ported from claude-code-main/src/components/StructuredDiff/Fallback.tsx:
-// skip word-level diffing when the paired remove/add lines changed by more
-// than this ratio — those are real rewrites, not edits, and the per-word
-// highlight would be noise. Word-level diffing is also skipped in dim mode.
+
+
+
+
 const CHANGE_THRESHOLD = 0.4;
 
 function wrapText(text: string, maxWidth: number): string {
   return wrapAnsi(text, maxWidth, { trim: false, hard: true });
 }
 
-// Ink unconditionally calls `.trimEnd()` on every rendered line
-// (node_modules/ink/build/output.js:174), which strips trailing whitespace —
-// including background-colored padding. That made it impossible to fill a diff
-// line's background to the right margin with plain spaces (the old code tried,
-// producing the inconsistent "bg stops short of the edge" bleeding).
-//
-// ​ (ZERO WIDTH SPACE, U+200B) is non-whitespace (Unicode category Cf, not Zs),
-// so trimEnd leaves it alone. Appending one after the padding spaces anchors the
-// line so the colored spaces survive → full-width background, like Claude Code.
-// It renders zero-width, so it is invisible and does not shift layout.
+
+
+
+
+
+
+
+
+
+
 const FILL_ANCHOR = "​";
 
 function bgWordFor(type: DiffLine["type"], dim: boolean, theme: Theme): string | undefined {
@@ -73,7 +73,7 @@ function sliceLineParts(
     const partStart = currentOffset;
     const partEnd = currentOffset + partLen;
 
-    // Check overlap of [partStart, partEnd] with [start, end]
+    
     const overlapStart = Math.max(start, partStart);
     const overlapEnd = Math.min(end, partEnd);
 
@@ -99,13 +99,13 @@ function bgFor(type: DiffLine["type"], dim: boolean, theme: Theme): string | und
   return undefined;
 }
 
-// Each diff line is ONE full-width <Text> constrained to a single terminal row.
-// This replaced the old two-<Text>-in-a-row flex layout (line-number Text beside
-// content Text), which bled background colors, drifted line numbers when content
-// wrapped, and produced phantom extra lines. Word-level inline highlighting is
-// gated the same way claude-code's StructuredDiffFallback gates it (CHANGE_THRESHOLD):
-// only similar-enough paired lines get per-word colors, so major rewrites render
-// as plain full-line add/remove blocks.
+
+
+
+
+
+
+
 function formatDiff(
   lines: string[],
   startingLineNumber: number,
@@ -120,11 +120,11 @@ function formatDiff(
 
   const maxLineNumber = Math.max(...ls.map(({ i }) => i), 0);
   const maxWidth = Math.max(maxLineNumber.toString().length + 1, 0);
-  // prefix = line number (maxWidth) + separating space + sigil
+  
   const prefixWidth = maxWidth + 2;
   const contentWidth = Math.max(1, safeWidth - prefixWidth);
 
-  // Pre-calculate word-level diffs for paired removal and addition lines
+  
   const lineHighlights = new Map<number, { value: string; isHighlight: boolean }[]>();
   const lsLength = ls.length;
   let idx = 0;
@@ -150,12 +150,12 @@ function formatDiff(
         const removeLine = ls[removeIdx]!;
         const addLine = ls[addIdx]!;
 
-        // diffWordsWithSpace (not diffWords) preserves whitespace so paired
-        // lines stay aligned — same choice as claude-code's fallback.
+        
+        
         const diffParts = diffWordsWithSpace(removeLine.code, addLine.code);
 
-        // claude-code CHANGE_THRESHOLD gate: skip word-level highlighting for
-        // substantially rewritten lines (and always in dim mode).
+        
+        
         const totalLength = removeLine.code.length + addLine.code.length;
         const changedLength = diffParts
           .filter((part) => part.added || part.removed)
@@ -197,8 +197,8 @@ function formatDiff(
     const bg = bgFor(type, dim, theme);
     const dimRow = dim || type === "nochange";
 
-    // Wrap long content so the full change stays visible; each wrapped sub-line
-    // becomes its own single full-width row (line number only on the first).
+    
+    
     const wrapped = wrapText(code, contentWidth).split("\n");
     const finalLines = wrapped.length === 0 ? [""] : wrapped;
 
@@ -251,7 +251,7 @@ function formatDiff(
   return rows;
 }
 
-// Transform lines to line objects with type information
+
 export function transformLinesToObjects(lines: string[]): LineObject[] {
   return lines.map((code) => {
     if (code.startsWith("+")) {
@@ -318,10 +318,7 @@ export function StructuredDiff({ patch, dim = false, width }: StructuredDiffProp
   return <Box flexDirection="column">{diff}</Box>;
 }
 
-/**
- * Utility to parse diff string outputs (e.g. from buildSimpleDiffPreview or asAddedLines)
- * into a single StructuredPatchHunk object.
- */
+
 export function parseDiffTextToHunk(diffText: string): StructuredPatchHunk | null {
   const allLines = diffText.split("\n");
   const diffLines = allLines.filter(

@@ -1,12 +1,12 @@
-// Shared utilities for tool implementations
-//
-// Extracted from the original tool/index.ts for reuse across per-directory tools.
+
+
+
 
 import { resolve, relative, dirname } from "path";
 import { mkdir } from "fs/promises";
 import { diffLines } from "diff";
 
-// ─── Path resolution ─────────────────────────────────────────────────────────
+
 
 export function resolvePath(workingDir: string, p: string | undefined | null): string {
   const cwd = resolve(workingDir);
@@ -22,12 +22,12 @@ export function relativePath(workingDir: string, fullPath: string): string {
   return relative(resolve(workingDir), fullPath);
 }
 
-/** Ensure parent directories exist */
+
 export async function ensureDir(filePath: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
 }
 
-// ─── Output formatting ───────────────────────────────────────────────────────
+
 
 export function previewRawBlock(
   text: string,
@@ -66,7 +66,7 @@ export function buildSimpleDiffPreview(
       }
     } else {
       const lines = part.value.replace(/\n$/, "").split("\n");
-      // Show up to 2 context lines on each side of a change
+      
       for (let i = 0; i < lines.length; i++) {
         if (i < 2 || i >= lines.length - 2) {
           out.push(` ${lines[i]}`);
@@ -94,7 +94,7 @@ export function asAddedLines(text: string, maxLines = 40): string {
   return clipped.join("\n");
 }
 
-// ─── File reading with line numbers ──────────────────────────────────────────
+
 
 export function formatFileContent(
   content: string,
@@ -110,7 +110,7 @@ export function formatFileContent(
     .join("\n");
 }
 
-// ─── System Prompt Environment Injection ─────────────────────────────────────
+
 
 export function buildSystemInstructions(systemPrompt: string, workingDir: string): string {
   const envPrompt = `

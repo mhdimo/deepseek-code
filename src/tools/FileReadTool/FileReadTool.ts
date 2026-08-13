@@ -1,24 +1,24 @@
-// FileReadTool — reads file contents with line numbers
-//
-// Text files are returned in cat -n format with line numbers. Beyond plain
-// text, this tool handles:
-//   - Jupyter notebooks (.ipynb): all code + markdown cells with outputs
-//   - PDFs: best-effort embedded-text extraction (see pdf.ts for scope)
-//   - Images (PNG/JPEG/GIF/WebP): a size + dimensions summary — the model
-//     cannot view image content, so the bytes are NOT sent as a visual
-//
-// Safety:
-//   - Binary files are detected (known-binary extension OR NUL-byte heuristic)
-//     and returned as a short summary instead of decoding garbage into context.
-//   - Device / pseudo-filesystem paths (/dev, /proc, /sys) are blocked, since
-//     reading them can hang, leak kernel state, or produce unbounded streams.
-//
-// Limits (see src/utils/limits.ts):
-//   - Whole-file reads of files larger than maxSizeBytes (256 KB default)
-//     return an error before reading — use offset/limit for big files.
-//   - Returned content over the token budget (25,000 tokens default) is
-//     truncated at a line boundary with a marker naming the continuation
-//     offset, so the model can pick up where it left off.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { readFile, stat } from "fs/promises";
 import { z } from "zod";
@@ -45,12 +45,12 @@ import {
 import { readNotebookText } from "./notebook.js";
 import { buildImageSummary, IMAGE_EXTENSIONS } from "./image.js";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 
-/** Long lines are truncated at this many characters with an omission marker. */
+
+
 const MAX_LINE_CHARS = 2000;
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const FileReadInputSchema = z.object({
   file_path: z.string().describe(
@@ -64,7 +64,7 @@ const FileReadInputSchema = z.object({
   ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const FileReadTool = buildTool({
   name: FILE_READ_TOOL_NAME,
@@ -94,7 +94,7 @@ export const FileReadTool = buildTool({
     const { file_path, offset, limit } = input;
     const fullPath = resolvePath(context.workingDir, file_path);
 
-    // ── Block dangerous device / pseudo-filesystem paths ────────────────────
+    
     if (isDeviceOrProcPath(fullPath)) {
       return {
         data:
@@ -105,15 +105,15 @@ export const FileReadTool = buildTool({
     }
 
     try {
-      // stat up front: gives us the size cap check for whole-file reads and a
-      // clean ENOENT for missing files.
+      
+      
       const stats = await stat(fullPath);
       const ext = getExtension(fullPath);
       const limits = getDefaultFileReadingLimits();
-      // Bun's Stats.size is typed number | bigint — normalize once.
+      
       const sizeBytes = Number(stats.size);
 
-      // ── Format-specific handling ──────────────────────────────────────────
+      
       if (ext === "ipynb") return readNotebookResult(fullPath, sizeBytes, limits);
       if (ext === "pdf") return readPDFResult(fullPath, sizeBytes, limits);
       if (IMAGE_EXTENSIONS.has(ext)) return readImageResult(fullPath, sizeBytes);
@@ -125,7 +125,7 @@ export const FileReadTool = buildTool({
   },
 });
 
-// ─── Text files ──────────────────────────────────────────────────────────────
+
 
 function renderLine(lineNo: number, line: string): string {
   if (line.length <= MAX_LINE_CHARS) {
@@ -146,8 +146,8 @@ async function readTextResult(
 ): Promise<ToolResult<string>> {
   const { offset, limit } = range;
 
-  // Whole-file reads are capped on TOTAL file size (cheap pre-read check).
-  // Explicit range reads may target larger files.
+  
+  
   if (offset === undefined && limit === undefined && sizeBytes > limits.maxSizeBytes) {
     return {
       data:
@@ -158,13 +158,13 @@ async function readTextResult(
     };
   }
 
-  // Read raw bytes first so we can run binary detection before decoding.
+  
   const buf = await readFile(fullPath);
 
-  // A file is binary if it has a known-binary extension OR its contents
-  // contain a NUL byte. The extension check also catches empty binary
-  // files (e.g. a freshly-touched `foo.png` with 0 bytes), where the
-  // null-byte scan is inconclusive.
+  
+  
+  
+  
   const isBinary =
     buf.length > 0 && (hasBinaryExtension(fullPath) || hasBinaryContent(buf));
 
@@ -178,12 +178,12 @@ async function readTextResult(
 
   const content = buf.toString("utf-8");
   const lines = content.split("\n");
-  // A file ending in "\n" splits into a phantom trailing empty line — drop
-  // it so we don't render a bogus numbered line for nothing.
+  
+  
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   const totalLines = lines.length;
 
-  // offset is 1-based per the schema ("line number to start reading from").
+  
   const startIdx = offset !== undefined ? Math.max(0, offset - 1) : 0;
 
   if (offset !== undefined && startIdx >= totalLines) {
@@ -196,11 +196,11 @@ async function readTextResult(
 
   let endIdx: number;
   if (offset !== undefined || limit !== undefined) {
-    // Explicit range: read exactly the requested window (bounded by EOF).
+    
     const requestedEnd = limit !== undefined ? startIdx + limit : totalLines;
     endIdx = Math.min(totalLines, requestedEnd);
   } else {
-    // Default: read from the beginning, up to MAX_LINES_TO_READ.
+    
     endIdx = Math.min(totalLines, MAX_LINES_TO_READ);
   }
 
@@ -211,9 +211,9 @@ async function readTextResult(
 
   let result = rendered || "(empty file)";
 
-  // Token budget: truncate at a line boundary and point the model at the
-  // continuation offset. Checked BEFORE the "more lines" note so the note
-  // can't shift the line accounting.
+  
+  
+  
   const trunc = truncateToTokenBudget(result, limits.maxTokens);
   if (trunc.truncated) {
     const nextLine = startIdx + trunc.keptLines + 1;
@@ -225,14 +225,14 @@ async function readTextResult(
     return { data: result };
   }
 
-  // Default full reads note how many lines were left unread.
+  
   if (offset === undefined && limit === undefined && totalLines > endIdx) {
     result = `${result}\n... (${totalLines - endIdx} more lines)`;
   }
   return { data: result };
 }
 
-// ─── Jupyter notebooks ───────────────────────────────────────────────────────
+
 
 async function readNotebookResult(
   fullPath: string,
@@ -263,7 +263,7 @@ async function readNotebookResult(
   return { data: result };
 }
 
-// ─── PDFs ────────────────────────────────────────────────────────────────────
+
 
 async function readPDFResult(
   fullPath: string,
@@ -310,7 +310,7 @@ async function readPDFResult(
   return { data: result };
 }
 
-// ─── Images ──────────────────────────────────────────────────────────────────
+
 
 async function readImageResult(
   fullPath: string,

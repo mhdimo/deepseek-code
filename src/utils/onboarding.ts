@@ -1,58 +1,58 @@
-// onboarding.ts — project scanning + CLAUDE.md/DEEP.md generation for /init
-//
-// generateProjectSummary(workingDir) inspects the project via Bun/Node APIs
-// (package.json, README, manifest files, directory structure) and returns a
-// markdown string that summarizes the project for the agent. This powers the
-// /init slash command, which writes DEEP.md (DeepSeek Code's CLAUDE.md
-// equivalent) and/or offers it to the agent for refinement.
-//
-// Design goals:
-//   - Pure TS, no side effects (does not write files). The caller decides what
-//     to do with the returned string.
-//   - Defensive: every filesystem read is guarded; missing files / unreadable
-//     dirs never throw. We'd rather produce a sparse summary than crash.
-//   - No C++ needed: this is a TS-only utility invoked from a slash command.
-//   - Prefers Bun.file() / Bun APIs (per project conventions) with safe fallbacks.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { join, relative, sep, basename } from "node:path";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
-/** What was detected about a project during the scan. */
+
+
 export interface ProjectSummary {
-  /** Absolute path that was scanned. */
+  
   workingDir: string;
-  /** Best-effort project name (package.json name, or dir basename). */
+  
   name: string;
-  /** Detected primary language(s). */
+  
   languages: string[];
-  /** Detected framework(s) / runtime, e.g. "React", "Express", "Next.js". */
+  
   frameworks: string[];
-  /** Detected package manager, e.g. "bun", "npm", "pnpm", "yarn", "cargo". */
+  
   packageManager: string | null;
-  /** Whether this looks like a monorepo (workspaces). */
+  
   isMonorepo: boolean;
-  /** Workspace package names, if detected. */
+  
   workspaces: string[];
-  /** Build / dev / test / lint scripts discovered from manifest. */
+  
   scripts: Record<string, string>;
-  /** Headings extracted from a README, if present. */
+  
   readmeHighlights: string[];
-  /** Top-level directory entries (depth 1), for an architecture sketch. */
+  
   topDirs: string[];
-  /** Any AI-tool config files already present (CLAUDE.md, AGENTS.md, ...). */
+  
   existingAiConfigs: string[];
-  /** Notable config files present (tsconfig, eslint, prettier, ...). */
+  
   notableConfigs: string[];
-  /** Notes about things we saw but couldn't fully classify. */
+  
   notes: string[];
 }
 
-// ─── Small defensive helpers ─────────────────────────────────────────────────
+
 
 async function readTextIfExists(path: string): Promise<string | null> {
   try {
-    // Prefer Bun.file() per project conventions.
+    
     const file = (globalThis as any).Bun?.file;
     if (typeof file === "function") {
       const f = file(path);
@@ -61,7 +61,7 @@ async function readTextIfExists(path: string): Promise<string | null> {
       return await f.text();
     }
   } catch {
-    // fall through to node fs
+    
   }
   try {
     const { readFile } = await import("node:fs/promises");
@@ -78,7 +78,7 @@ async function pathExists(path: string): Promise<boolean> {
       return await file(path).exists();
     }
   } catch {
-    // ignore
+    
   }
   try {
     const { stat } = await import("node:fs/promises");
@@ -105,7 +105,7 @@ function listDirSync(dir: string): { name: string; isDirectory: boolean }[] {
   }
 }
 
-/** Parse a JSON file defensively; returns null on any error. */
+
 async function readJson<T = any>(path: string): Promise<T | null> {
   const text = await readTextIfExists(path);
   if (text === null) return null;
@@ -116,13 +116,13 @@ async function readJson<T = any>(path: string): Promise<T | null> {
   }
 }
 
-/** Truncate to N chars with an ellipsis. */
+
 function clip(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + "…";
 }
 
-// ─── Manifest / language / framework detection ───────────────────────────────
+
 
 interface ParsedManifest {
   languages: string[];
@@ -133,7 +133,7 @@ interface ParsedManifest {
   name: string | null;
 }
 
-/** Marker filenames → language they imply. */
+
 const LANGUAGE_MARKERS: Record<string, string> = {
   "package.json": "TypeScript/JavaScript",
   "tsconfig.json": "TypeScript",
@@ -154,7 +154,7 @@ const LANGUAGE_MARKERS: Record<string, string> = {
   "Makefile": "Make",
 };
 
-/** dep names / patterns → framework label. */
+
 function detectFrameworks(pkg: any): string[] {
   const out = new Set<string>();
   const deps = {
@@ -213,7 +213,7 @@ async function parsePackageJson(path: string): Promise<ParsedManifest | null> {
   return {
     languages: ["TypeScript", "JavaScript"],
     frameworks: detectFrameworks(pkg),
-    packageManager: null, // resolved by lockfile separately
+    packageManager: null, 
     scripts,
     workspaces,
     name: typeof pkg.name === "string" ? pkg.name : null,
@@ -221,7 +221,7 @@ async function parsePackageJson(path: string): Promise<ParsedManifest | null> {
 }
 
 async function detectPackageManager(dir: string): Promise<string | null> {
-  // Order matters: bun first (this is a Bun project), then the rest.
+  
   const candidates: Array<[string, string]> = [
     ["bun.lockb", "bun"],
     ["bun.lock", "bun"],
@@ -242,13 +242,13 @@ async function detectPackageManager(dir: string): Promise<string | null> {
 }
 
 async function detectManifest(dir: string): Promise<ParsedManifest | null> {
-  // Node/TS first
+  
   const pj = await parsePackageJson(join(dir, "package.json"));
   if (pj) {
-    // pyproject + others can coexist; we keep Node primary here.
+    
     return pj;
   }
-  // Non-JS manifests — minimal detection, no script parsing.
+  
   const py = await readTextIfExists(join(dir, "pyproject.toml"));
   if (py !== null) {
     return {
@@ -285,7 +285,7 @@ async function detectManifest(dir: string): Promise<ParsedManifest | null> {
   return null;
 }
 
-/** Languages implied purely by which marker files exist. */
+
 function detectLanguagesByMarkers(
   dir: string,
   entries: { name: string }[],
@@ -295,17 +295,17 @@ function detectLanguagesByMarkers(
   for (const [marker, lang] of Object.entries(LANGUAGE_MARKERS)) {
     if (names.has(marker)) langs.add(lang);
   }
-  // Rust crate modules
+  
   if (entries.some((e) => e.name === "src")) {
-    // no-op; keep markers as source of truth
+    
   }
   void dir;
   return [...langs];
 }
 
-// ─── README highlights ──────────────────────────────────────────────────────
 
-/** Pull `#`/`##` headings from a README as a quick highlights list. */
+
+
 function extractReadmeHighlights(text: string, max = 12): string[] {
   const out: string[] = [];
   for (const line of text.split(/\r?\n/)) {
@@ -319,7 +319,7 @@ function extractReadmeHighlights(text: string, max = 12): string[] {
   return out;
 }
 
-// ─── Config / AI-tool file detection ─────────────────────────────────────────
+
 
 const NOTABLE_CONFIGS = [
   "tsconfig.json",
@@ -364,7 +364,7 @@ const AI_CONFIG_FILES = [
   ".github/copilot-instructions.md",
 ];
 
-// ─── Main entry: scan a project ──────────────────────────────────────────────
+
 
 export async function generateProjectSummary(
   workingDir: string,
@@ -384,13 +384,13 @@ export async function generateProjectSummary(
   const workspaces = manifest?.workspaces ?? [];
   const scripts = manifest?.scripts ?? {};
 
-  // Project name
+  
   const name =
     manifest?.name ||
     (await readJson<any>(join(dir, "package.json")))?.name ||
     basename(dir);
 
-  // README
+  
   let readmeHighlights: string[] = [];
   for (const cand of ["README.md", "README.MD", "README", "readme.md"]) {
     const txt = await readTextIfExists(join(dir, cand));
@@ -400,7 +400,7 @@ export async function generateProjectSummary(
     }
   }
 
-  // Top-level dirs (skip noise) for an architecture sketch
+  
   const NOISE_DIRS = new Set([
     "node_modules",
     ".git",
@@ -458,19 +458,14 @@ export async function generateProjectSummary(
   };
 }
 
-// ─── Markdown rendering ──────────────────────────────────────────────────────
+
 
 function bulletList(items: string[]): string {
   if (items.length === 0) return "_(none detected)_";
   return items.map((i) => `- ${i}`).join("\n");
 }
 
-/**
- * Render a `ProjectSummary` into a CLAUDE.md/DEEP.md markdown body.
- *
- * The returned string does NOT include the top-level title — `generateMarkdown()`
- * adds it — so this body can be reused for previews or agent suggestions.
- */
+
 export function renderSummaryBody(s: ProjectSummary): string {
   const pm = s.packageManager ?? "(unknown)";
   const lines: string[] = [];
@@ -488,7 +483,7 @@ export function renderSummaryBody(s: ProjectSummary): string {
   lines.push(`- **Monorepo:** ${s.isMonorepo ? "yes" : "no"}`);
   lines.push("");
 
-  // Commands — derive sensible defaults from package manager + scripts.
+  
   lines.push("## Commands");
   lines.push("");
   const cmd = (key: string, fallback: string): string => {
@@ -517,7 +512,7 @@ export function renderSummaryBody(s: ProjectSummary): string {
   }
   lines.push("");
 
-  // Architecture sketch from top-level dirs.
+  
   lines.push("## Structure");
   lines.push("");
   if (s.topDirs.length > 0) {
@@ -542,7 +537,7 @@ export function renderSummaryBody(s: ProjectSummary): string {
   }
   lines.push("");
 
-  // README highlights, if any.
+  
   if (s.readmeHighlights.length > 0) {
     lines.push("## README highlights");
     lines.push("");
@@ -550,7 +545,7 @@ export function renderSummaryBody(s: ProjectSummary): string {
     lines.push("");
   }
 
-  // Tooling.
+  
   const tooling = [
     ...s.notableConfigs,
     ...(s.existingAiConfigs.length > 0 ? [`AI configs: ${s.existingAiConfigs.join(", ")}`] : []),
@@ -577,12 +572,7 @@ export function renderSummaryBody(s: ProjectSummary): string {
   return lines.join("\n");
 }
 
-/**
- * Generate a full CLAUDE.md / DEEP.md document for the project at `workingDir`.
- *
- * Returns the complete markdown string (with title), or null if the directory
- * could not be scanned at all. Always produces something for a valid dir.
- */
+
 export async function generateMarkdown(workingDir: string): Promise<string | null> {
   let summary: ProjectSummary;
   try {
@@ -595,17 +585,9 @@ export async function generateMarkdown(workingDir: string): Promise<string | nul
   return `${title}\n${body}\n`;
 }
 
-// ─── /init agent prompt ──────────────────────────────────────────────────────
 
-/**
- * Build the agent prompt that the `/init` slash command dispatches.
- *
- * It embeds the auto-generated draft so the agent can read the project at a
- * glance, refine it (read more files, fill the Conventions section), and write
- * the final DEEP.md — proposing diffs if one already exists rather than
- * silently overwriting. This mirrors Claude Code's `/init` behavior, adapted to
- * DeepSeek Code's tool set and the DEEP.md convention.
- */
+
+
 export async function buildInitPrompt(workingDir: string): Promise<string> {
   const draft = (await generateMarkdown(workingDir)) ?? "(project scan failed)";
   const summary = await generateProjectSummary(workingDir).catch(() => null);

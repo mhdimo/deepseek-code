@@ -1,10 +1,10 @@
-// MessageResponse — ⎿ left border wrapper matching Claude Code's <MessageResponse>
-//
-// Renders a dimmed ⎿ character to the left of all assistant message content,
-// creating the distinctive left-border visual that separates Claude Code's
-// assistant responses from user messages.
-//
-// Nested MessageResponse components avoid duplicate ⎿ characters.
+
+
+
+
+
+
+
 
 import React, { createContext, useContext } from "react";
 import { Box, Text } from "ink";
@@ -18,7 +18,7 @@ interface MessageResponseProps {
 export default function MessageResponse({ children }: MessageResponseProps) {
   const isNested = useContext(MessageResponseContext);
 
-  // Avoid duplicate ⎿ characters in nested contexts
+  
   if (isNested) return <>{children}</>;
 
   return (

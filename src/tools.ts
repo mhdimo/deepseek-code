@@ -1,7 +1,7 @@
-// Tool registry — assembles tools and converts to AI SDK format
-//
-// This is the bridge between the Tool interface and AI SDK's tool format.
-// Tools use Zod internally, but we convert to jsonSchema() for DeepSeek API.
+
+
+
+
 
 import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
@@ -10,7 +10,7 @@ import { runPreToolUse, runHooksFireAndForget } from "./services/hooks.js";
 import { parsePermissionSettings, matchDecision } from "./services/permissions.js";
 import { loadSettings } from "./state/storage.js";
 
-// ─── Tool imports ─────────────────────────────────────────────────────────────
+
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.js";
 import { FileWriteTool } from "./tools/FileWriteTool/FileWriteTool.js";
 import { FileEditTool } from "./tools/FileEditTool/FileEditTool.js";
@@ -45,13 +45,13 @@ import { SkillTool } from "./tools/SkillTool/SkillTool.js";
 import { buildLSPTool } from "./tools/LSPTool/LSPTool.js";
 import { initializeLspServerManager } from "./services/lsp/manager.js";
 
-// ─── LSP tool (non-blocking) ──────────────────────────────────────────────────
-//
-// The LSP tool is built once via its factory and registered with the rest of
-// the tools. Manager initialization is kicked off (idempotent; server
-// processes spawn lazily on first use) inside a try/catch so an unavailable
-// or misconfigured LSP never fails app startup — worst case the tool is
-// dropped from the registry and the rest of the app is unaffected.
+
+
+
+
+
+
+
 
 let lspTool: Tool | null = null;
 let lspToolResolved = false;
@@ -68,7 +68,7 @@ function getLSPTool(): Tool | null {
   return lspTool;
 }
 
-// ─── All tools ────────────────────────────────────────────────────────────────
+
 
 export function getAllBaseTools(): Tools {
   const lsp = getLSPTool();
@@ -108,26 +108,18 @@ export function getAllBaseTools(): Tools {
   ];
 }
 
-// ─── Permission-aware filtering ───────────────────────────────────────────────
 
-/**
- * Get tools filtered by permissions and enabled status.
- * Permission checks happen at execution time per-tool, but we pre-filter
- * tools that are completely disabled by the permission ruleset.
- */
+
+
 export function getTools(permissions: PermissionRuleset): Tools {
   return getAllBaseTools().filter((tool) => tool.isEnabled());
 }
 
-// ─── AI SDK adapter ───────────────────────────────────────────────────────────
+
 
 let permissionWaitMs = 0;
 
-/**
- * Convert Tools to ai-sdk-cpp (native) tool format. Each tool's execute runs
- * the permission check + tool.call on the JS side; the C++ loop awaits it via
- * the async-tool bridge, so interactive permissions work.
- */
+
 export function toolsToBindingFormat(
   tools: Tools,
   context: ToolUseContext,
@@ -155,10 +147,10 @@ export function toolsToBindingFormat(
         let resultString = "";
         let isError = false;
         try {
-          // Permission RULE engine (settings.permissions allow/deny/ask, in
-          // Tool(spec:pattern) syntax). Consulted first so a global rule can
-          // auto-allow or hard-deny without prompting. "ask"/no-match falls
-          // through to the per-tool checkPermissions below.
+          
+          
+          
+          
           let ruleDenied = false;
           let ruleAllowed = false;
           try {
@@ -170,7 +162,7 @@ export function toolsToBindingFormat(
               else if (d.decision === "allow") ruleAllowed = true;
             }
           } catch {
-            // best-effort — fall back to per-tool checkPermissions
+            
           }
 
           if (ruleDenied) {
@@ -192,7 +184,7 @@ export function toolsToBindingFormat(
                 : "Permission denied by user.";
               isError = true;
             } else {
-              // PreToolUse hooks — may block the tool (exit 2 / JSON decision).
+              
               const pre = await runPreToolUse(tool.name, input, context.workingDir);
               if (pre.blocked) {
                 resultString = `Blocked by PreToolUse hook: ${pre.reason ?? ""}`.trim();
@@ -205,7 +197,7 @@ export function toolsToBindingFormat(
                 resultString = typeof result.data === "string"
                   ? result.data
                   : JSON.stringify(result.data, null, 2);
-                // PostToolUse hooks — non-blocking notification.
+                
                 runHooksFireAndForget("PostToolUse", {
                   tool: tool.name,
                   input,
@@ -238,9 +230,7 @@ export function toolsToBindingFormat(
   return out;
 }
 
-/**
- * Track permission wait time for accurate tool duration reporting.
- */
+
 export function recordPermissionWait(ms: number): void {
   permissionWaitMs = ms;
 }
@@ -251,7 +241,7 @@ export function getLastPermissionWaitMs(): number {
   return ms;
 }
 
-// ─── Tool descriptions for display ────────────────────────────────────────────
+
 
 export function getToolDescriptions(): Array<{ name: string; description: string }> {
   return getAllBaseTools().map((tool) => ({

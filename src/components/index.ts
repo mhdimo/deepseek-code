@@ -1,4 +1,4 @@
-// TUI index — exports all components
+
 
 export { default as App } from "./App.js";
 export { default as ChatPanel } from "./ChatPanel.js";

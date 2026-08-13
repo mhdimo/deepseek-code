@@ -1,7 +1,7 @@
-// WebFetchTool — fetches URL content and returns it as plain text
-//
-// Uses Bun's built-in fetch(). Strips HTML tags to produce readable text.
-// Size-limited to 50KB to avoid flooding the context window.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -17,17 +17,17 @@ const inputSchema = z.object({
     .describe("If true, return raw text without stripping HTML tags"),
 }) satisfies z.ZodType;
 
-/** Strip HTML tags and collapse whitespace to produce readable plain text */
+
 function htmlToText(html: string): string {
-  // Remove <script> and <style> blocks entirely
+  
   let text = html.replace(/<script[\s\S]*?<\/script>/gi, "");
   text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
-  // Replace <br>, <p>, <div>, <li> etc. with newlines
+  
   text = text.replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, "\n");
   text = text.replace(/<br\s*\/?>/gi, "\n");
-  // Remove all remaining HTML tags
+  
   text = text.replace(/<[^>]+>/g, "");
-  // Decode common HTML entities
+  
   text = text
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -35,7 +35,7 @@ function htmlToText(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ");
-  // Collapse multiple blank lines into one
+  
   text = text.replace(/\n{3,}/g, "\n\n");
   return text.trim();
 }
@@ -68,12 +68,12 @@ export const WebFetchTool = buildTool({
       const contentType = response.headers.get("content-type") ?? "";
       let text = await response.text();
 
-      // Strip HTML if the content looks like HTML and raw mode is off
+      
       if (!args.raw && (contentType.includes("html") || text.includes("<html"))) {
         text = htmlToText(text);
       }
 
-      // Enforce size limit
+      
       if (text.length > MAX_SIZE_CHARS) {
         text = text.slice(0, MAX_SIZE_CHARS) + "\n\n... (truncated at 50KB)";
       }
@@ -98,8 +98,8 @@ export const WebFetchTool = buildTool({
     if (context.permissions.allowNetwork) {
       return { approved: true };
     }
-    // Even without explicit allowNetwork, fetch is read-only so we allow it
-    // but ask the user
+    
+    
     return context.requestPermission(
       "WebFetch",
       `Fetch content from ${_input.url}?`,

@@ -1,14 +1,14 @@
-// Agent configurations and manager
-//
-// Three built-in agents:
-//   - code:   Full-access coding agent (read + write + execute)
-//   - plan:   Read-only analysis and planning agent
-//   - review: Code review agent (read-only)
+
+
+
+
+
+
 
 import { Agent } from "./base.ts";
 import type { AgentConfig, AgentName, ProviderConfig } from "../../types/index.js";
 
-// ─── Agent configs ──────────────────────────────────────────────────────────
+
 
 const AGENTS: Record<AgentName, AgentConfig> = {
   code: {
@@ -124,7 +124,7 @@ Review guidelines:
   },
 };
 
-// ─── Agent manager ──────────────────────────────────────────────────────────
+
 
 export class AgentManager {
   createAgent(name: AgentName, provider: ProviderConfig): Agent {

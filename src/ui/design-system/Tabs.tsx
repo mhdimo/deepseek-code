@@ -1,16 +1,16 @@
-// Tabs — tab header row with arrow-key switching and a fixed-height content
-// area. Ported from claude-code-main/src/components/design-system/Tabs.tsx
-// onto stock Ink:
-//
-//   - fork-ink keybindings ("tabs:next"/"tabs:previous") → stock `useInput`
-//     (right/tab switches forward, left/shift-tab backward, while the header
-//     is focused; down-arrow hands focus to content when a child opted in via
-//     useTabHeaderFocus).
-//   - modal-slot ScrollBox branch → stripped (no modal context in this app);
-//     content renders in a plain height-capped Box.
-//   - fork-ink terminal-size hook → useStdout().stdout.columns.
-//   - fork-ink theme-key colors ("permission", "inverseText") → resolved via
-//     getTheme()/resolveColor() like the other ported design-system pieces.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React, {
   createContext,
@@ -31,31 +31,19 @@ export type TabsProps = {
   defaultTab?: string;
   hidden?: boolean;
   useFullWidth?: boolean;
-  /** Controlled mode: current selected tab id/title */
+  
   selectedTab?: string;
-  /** Controlled mode: callback when tab changes */
+  
   onTabChange?: (tabId: string) => void;
-  /** Optional banner to display below tabs header */
+  
   banner?: React.ReactNode;
-  /** Disable keyboard navigation (e.g. when a child component handles arrow keys) */
+  
   disableNavigation?: boolean;
-  /**
-   * Initial focus state for the tab header row. Defaults to true (header
-   * focused, nav always works). Pass false when the content binds
-   * left/right/tab (e.g. enum cycling) — content starts focused instead.
-   */
+  
   initialHeaderFocused?: boolean;
-  /**
-   * Fixed height for the content area. When set, all tabs render within the
-   * same height (overflow hidden) so switching tabs doesn't cause layout
-   * shifts. Shorter tabs get whitespace; taller tabs are clipped.
-   */
+  
   contentHeight?: number;
-  /**
-   * Let Tab/←/→ switch tabs from focused content. Opt-in since some content
-   * uses those keys; pass a reactive boolean to cede them when needed.
-   * Switching from content focuses the header.
-   */
+  
   navFromContent?: boolean;
 };
 
@@ -71,8 +59,8 @@ type TabsContextValue = {
 const TabsContext = createContext<TabsContextValue>({
   selectedTab: undefined,
   width: undefined,
-  // Default for components rendered outside a Tabs (tests, standalone):
-  // content has focus, focusHeader is a no-op.
+  
+  
   headerFocused: false,
   focusHeader: () => {},
   blurHeader: () => {},
@@ -97,20 +85,28 @@ export function Tabs({
   const { stdout } = useStdout();
   const terminalWidth = stdout.columns ?? 80;
 
-  const tabs: Array<[string | undefined, string | undefined]> = children.map(
-    (child) => [child.props.id ?? child.props.title, child.props.title],
-  );
+  
+  
+  const childrenArray = React.Children.toArray(
+    children,
+  ) as Array<React.ReactElement<TabProps>>;
+
+  const tabs: Array<[string | undefined, string | undefined]> =
+    childrenArray.map((child) => [
+      child.props.id ?? child.props.title,
+      child.props.title,
+    ]);
   const defaultTabIndex = defaultTab
     ? tabs.findIndex((tab) => defaultTab === tab[0])
     : 0;
 
-  // Support both controlled and uncontrolled modes
+  
   const isControlled = controlledSelectedTab !== undefined;
   const [internalSelectedTab, setInternalSelectedTab] = useState(
     defaultTabIndex !== -1 ? defaultTabIndex : 0,
   );
 
-  // In controlled mode, find the index of the controlled tab
+  
   const controlledTabIndex = isControlled
     ? tabs.findIndex((tab) => tab[0] === controlledSelectedTab)
     : -1;
@@ -120,18 +116,18 @@ export function Tabs({
       : 0
     : internalSelectedTab;
 
-  // Header focus: left/right/tab only switch tabs when the header row is
-  // focused. Children with interactive content call focusHeader() (via
-  // useTabHeaderFocus) on up-arrow to hand focus back here; down-arrow
-  // returns it. Tabs that never call the hook see no behavior change —
-  // initialHeaderFocused defaults to true so nav always works.
+  
+  
+  
+  
+  
   const [headerFocused, setHeaderFocused] = useState(initialHeaderFocused);
   const focusHeader = useCallback(() => setHeaderFocused(true), []);
   const blurHeader = useCallback(() => setHeaderFocused(false), []);
-  // Count of mounted children using useTabHeaderFocus(). Down-arrow blur and
-  // the "↑ tabs" hint only engage when at least one child opted in —
-  // otherwise pressing down on a legacy tab would strand the user with nav
-  // disabled.
+  
+  
+  
+  
   const [optInCount, setOptInCount] = useState(0);
   const registerOptIn = useCallback(() => {
     setOptInCount((n) => n + 1);
@@ -149,14 +145,14 @@ export function Tabs({
     } else {
       setInternalSelectedTab(newIndex);
     }
-    // Tab switching is a header action — stay focused so the user can keep
-    // cycling. The newly mounted tab can blur via its own interaction.
+    
+    
     setHeaderFocused(true);
   };
 
-  // Header navigation: right/tab → next, left/shift-tab → previous. When at
-  // least one child opted in (useTabHeaderFocus), down-arrow returns focus to
-  // the content.
+  
+  
+  
   useInput(
     (_input, key) => {
       if (key.rightArrow || key.tab) {
@@ -170,8 +166,8 @@ export function Tabs({
     { isActive: !hidden && !disableNavigation && headerFocused },
   );
 
-  // Opt-in: same tabs:next/previous actions, active from content. Focuses
-  // the header so subsequent presses cycle via the handler above.
+  
+  
   useInput(
     (_input, key) => {
       if (key.rightArrow || key.tab) {
@@ -192,12 +188,12 @@ export function Tabs({
     },
   );
 
-  // Calculate spacing to fill the available width. No keyboard hint in the
-  // header row — content footers own hints (see useTabHeaderFocus docs).
-  const titleWidth = title ? stringWidth(title) + 1 : 0; // +1 for gap
+  
+  
+  const titleWidth = title ? stringWidth(title) + 1 : 0; 
   const tabsWidth = tabs.reduce(
     (sum, [, tabTitle]) =>
-      sum + (tabTitle ? stringWidth(tabTitle) : 0) + 2 + 1, // +2 padding, +1 gap
+      sum + (tabTitle ? stringWidth(tabTitle) : 0) + 2 + 1, 
     0,
   );
   const usedWidth = titleWidth + tabsWidth;
@@ -206,7 +202,7 @@ export function Tabs({
     : 0;
   const contentWidth = useFullWidth ? terminalWidth : undefined;
 
-  // Resolve theme keys to raw ink colors (stock Ink does not resolve them).
+  
   const [themeName] = useTheme();
   const theme = getTheme(themeName);
   const resolvedColor = color ? resolveColor(theme[color]) : undefined;
@@ -253,12 +249,18 @@ export function Tabs({
         )}
         {banner}
         <Box
+          flexDirection="column"
           width={contentWidth}
           marginTop={hidden ? 0 : 1}
           height={contentHeight}
           overflowY={contentHeight !== undefined ? "hidden" : undefined}
+          
+          
+          
+          
+          flexShrink={0}
         >
-          {children}
+          {childrenArray}
         </Box>
       </Box>
     </TabsContext.Provider>
@@ -278,7 +280,13 @@ export function Tab({ title, id, children }: TabProps): React.ReactNode {
     return null;
   }
 
-  return <Box width={width}>{children}</Box>;
+  
+  
+  return (
+    <Box width={width} flexShrink={0}>
+      {children}
+    </Box>
+  );
 }
 
 export function useTabsWidth(): number | undefined {
@@ -286,17 +294,7 @@ export function useTabsWidth(): number | undefined {
   return width;
 }
 
-/**
- * Opt into header-focus gating. Returns the current header focus state and a
- * callback to hand focus back to the tab row. For a Select, pass
- * `isDisabled={headerFocused}` and `onUpFromFirstItem={focusHeader}`; keep the
- * parent Tabs' initialHeaderFocused at its default so tab/←/→ work on mount.
- *
- * Calling this hook registers a ↓-blurs-header opt-in on mount. Don't call it
- * above an early return that renders static text — ↓ will blur the header with
- * no onUpFromFirstItem to recover. Split the component so the hook only runs
- * when the Select renders.
- */
+
 export function useTabHeaderFocus(): {
   headerFocused: boolean;
   focusHeader: () => void;

@@ -5,7 +5,7 @@ import { theme, resolveColor } from "../utils/theme.js";
 import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
 
 
-// Shared blink store
+
 let blinkState = true;
 const listeners = new Set<() => void>();
 if (typeof setInterval !== "undefined") {
@@ -31,14 +31,14 @@ export function useBlink() {
   return useSyncExternalStore(blinkStore.subscribe, blinkStore.getSnapshot);
 }
 
-// Claude Code's BLACK_CIRCLE glyph: '⏺' on macOS, '●' elsewhere.
+
 export const BLACK_CIRCLE = process.platform === "darwin" ? "⏺" : "●";
 
-// Tool-use status dot — ported from Claude Code's ToolUseLoader: an
-// unresolved (running) tool shows a blinking dim ⏺, resolved tools show a
-// static ⏺ colored success (done) or error. Only RUNNING tools subscribe to
-// the blink ticker, so committed tool blocks never re-render every 400ms (a
-// major flicker source).
+
+
+
+
+
 function BlinkingDot({ color }: { color: string }): React.ReactElement {
   const show = useBlink();
   return <Text color={color}>{show ? `${BLACK_CIRCLE} ` : "  "}</Text>;
@@ -53,7 +53,7 @@ function StatusIcon({ status, color }: { status: "running" | "done" | "error"; c
   );
 }
 
-// Tool label display names
+
 const TOOL_LABELS: Record<string, string> = {
   Read: "Read",
   Write: "Write",
@@ -93,8 +93,8 @@ function relPath(p: string): string {
   return p;
 }
 
-// Compact, Claude-style argument summary — extracts the meaningful arg from the
-// tool's JSON input instead of dumping raw {"file_path": "..."}.
+
+
 function formatToolArgs(toolName: string, input: unknown): string {
   let obj: Record<string, unknown> | undefined;
   if (typeof input === "string") {
@@ -166,14 +166,14 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const isError = block.status === "error";
   const isDone = block.status === "done";
 
-  // Claude Code status colors: unresolved → dim, done → success, error → error.
+  
   const statusColor = isRunning
     ? resolveColor(theme.inactive)
     : isDone
       ? resolveColor(theme.success)
       : resolveColor(theme.error);
 
-  // Output lines
+  
   const expanded = block.isExpanded || isTranscriptMode;
   const maxOutputLines = expanded ? (isTranscriptMode ? 1000 : 200) : 12;
   const outputText = block.output || "";
@@ -182,7 +182,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   const truncated = allLines.length > maxOutputLines;
   const outputLines = outputText.trim() ? outputText.replace(/\n+$/, "").split("\n").length : 0;
 
-  // Line color for diff-style output
+  
   const lineColor = (line: string): string | undefined => {
     const trimmed = line.trimStart();
     if (trimmed.startsWith("+")) return resolveColor(theme.diffAddedWord);
@@ -190,14 +190,14 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
     return undefined;
   };
 
-  // Structured Diff support. The diff box sits under marginLeft={3} with
-  // paddingX={1} (2 cols) and no left/right borders ⇒ 5 cols of chrome.
+  
+  
   const cols = process.stdout.columns || 80;
   const diffWidth = Math.max(20, cols - 12);
   const isDiffTool = block.toolName === "Edit" || block.toolName === "Write";
   const hunk = isDiffTool && outputText ? parseDiffTextToHunk(outputText) : null;
 
-  // Count lines added/removed for stats (claude-code style)
+  
   const diffStats = hunk ? (() => {
     let added = 0, removed = 0;
     for (const line of hunk.lines) {
@@ -231,8 +231,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
 
   return (
     <Box flexDirection="column" marginY={0}>
-      {/* Header: ⏺ ToolName(args) — ported from Claude Code's
-          AssistantToolUseMessage: status dot + bold tool name + plain args */}
+      {}
       <Box flexDirection="row">
         {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
         <StatusIcon status={isRunning ? "running" : isDone ? "done" : "error"} color={statusColor} />
@@ -256,7 +255,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
         )}
       </Box>
 
-      {/* Output preview */}
+      {}
       {outputText && (expanded || isError) && (
         <Box flexDirection="column" marginLeft={3}>
           {displayHunk ? (
@@ -325,7 +324,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
         </Box>
       )}
 
-      {/* Result summary for done blocks */}
+      {}
       {isDone && outputText && !expanded && (
         <Box marginLeft={3}>
           {["Read", "Write", "Edit", "NotebookEdit"].includes(block.toolName) ? (

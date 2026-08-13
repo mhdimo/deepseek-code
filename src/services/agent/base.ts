@@ -1,9 +1,9 @@
-// Agent system — agentic loop via ai-sdk-cpp (native C++ engine).
-//
-// The C++ owns the multi-step tool loop (model calls + tool execution through
-// the async-tool bridge, so interactive permissions work). This Agent class
-// maps the native event stream to deepseek-code's AgentEvent shape for the TUI.
-// (Was a manual Vercel-AI-SDK loop; ported to the binding.)
+
+
+
+
+
+
 
 import { streamText as bindingStreamText, type Model as BindingModel } from "ai-sdk-cpp";
 import type { AgentConfig, AgentEvent, Message, ProviderConfig } from "../../types/index.js";
@@ -12,7 +12,7 @@ import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { PermissionCallback, ToolUseContext } from "../../Tool.js";
 import { buildSystemInstructions } from "../../utils/toolUtils.js";
 
-// ─── Error categorization ──────────────────────────────────────────────────
+
 
 type ErrorCategory = "auth" | "rate-limit" | "network" | "server" | "timeout" | "unknown";
 
@@ -66,10 +66,7 @@ export class Agent {
     this.abortController?.abort();
   }
 
-  /**
-   * Run the agent with a user message and history.
-   * Yields AgentEvents for the TUI. The C++ engine drives the tool loop.
-   */
+  
   async *run(
     userMessage: string,
     history: Message[],
@@ -104,7 +101,7 @@ export class Agent {
       .map((m) => ({ role: m.role, content: m.content }));
     apiMessages.push({ role: "user", content: userMessage });
 
-    // Native finish carries no token usage yet; usage stays zero here.
+    
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     try {

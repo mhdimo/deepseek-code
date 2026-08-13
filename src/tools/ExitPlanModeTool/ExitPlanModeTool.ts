@@ -1,6 +1,6 @@
-// ExitPlanModeTool — exits plan mode and returns to normal execution
-//
-// Restores the agent's ability to write and execute, depending on permissions.
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";

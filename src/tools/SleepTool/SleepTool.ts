@@ -1,22 +1,22 @@
-// SleepTool — pauses for a given number of milliseconds
-//
-// A lightweight, read-only, concurrency-safe timer. Useful for polling: call it
-// between checks rather than busy-waiting. Preferring this over `Bash(sleep N)`
-// avoids holding a shell process and keeps the TUI responsive.
-//
-// The sleep is abortable: if the run's AbortController fires (e.g. the user
-// cancels), the pending timer is rejected immediately.
+
+
+
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { SLEEP_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 
-/** Maximum allowed sleep duration: 10 minutes. */
+
+
 const MAX_DURATION_MS = 600_000;
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const SleepInputSchema = z.object({
   duration_ms: z
@@ -28,12 +28,9 @@ const SleepInputSchema = z.object({
     ),
 });
 
-// ─── Abortable sleep ─────────────────────────────────────────────────────────
 
-/**
- * Resolve after `ms` milliseconds, unless `signal` aborts first.
- * Cleans up its timer + listener on resolve/reject so nothing leaks.
- */
+
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -56,7 +53,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// ─── Tool definition ────────────────────────────────────────────────────────
+
 
 export const SleepTool = buildTool({
   name: SLEEP_TOOL_NAME,
@@ -74,7 +71,7 @@ export const SleepTool = buildTool({
 
   maxResultSizeChars: 1_000,
 
-  // No permission gating — sleeping is harmless and read-only.
+  
   checkPermissions: async () => ({ approved: true }),
 
   call: async (input, context) => {
@@ -89,7 +86,7 @@ export const SleepTool = buildTool({
     try {
       await sleep(durationMs, context.abortController.signal);
     } catch (error) {
-      // Abort/cancel — surface to caller so the binding layer can flag it.
+      
       const elapsed = Date.now() - start;
       throw new Error(
         `Sleep interrupted after ${elapsed}ms: ${(error as Error).message}`,

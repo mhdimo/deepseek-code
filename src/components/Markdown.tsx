@@ -1,18 +1,18 @@
-// Rich Markdown rendering for Ink terminal UI
-//
-// Ported from Claude Code's markdown rendering (utils/markdown.ts formatToken
-// + components/Markdown.tsx MarkdownBody), restyled onto our dependency-free
-// hand-rolled parser so stock Ink stays the only renderer:
-//   • inline code  → permission color            (Claude: color('permission'))
-//   • headings     → h1 bold+italic+underline, h2+ bold, blank line after
-//   • blockquote   → dim ▎ bar + italic text     (Claude: BLOCKQUOTE_BAR)
-//   • lists        → '-' bullets / 'N.' ordered, 2-space indent, letter/roman
-//                    numerals at depth 2/3       (Claude: getListNumber)
-//   • hr           → ---                         (Claude: plain '---')
-//   • code blocks  → syntax-highlighted lines, no language banner
-//   • links        → display text (Claude wraps in an OSC8 hyperlink; stock
-//                    Ink has no hyperlink escape, so the text renders plainly)
-//   • block stack  → gap={1} like Claude's MarkdownBody
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React, { useMemo } from "react";
 import { Text, Box } from "ink";
@@ -20,9 +20,9 @@ import { theme, resolveColor } from "../utils/theme.js";
 import { highlightLine } from "./codeHighlight.js";
 
 
-// ---------------------------------------------------------------------------
-// Token types — inline elements produced by the tokenizer
-// ---------------------------------------------------------------------------
+
+
+
 
 type TokenType = "text" | "bold" | "italic" | "code-inline" | "link";
 
@@ -32,9 +32,9 @@ interface Token {
   href?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Block types — structural elements produced by the block parser
-// ---------------------------------------------------------------------------
+
+
+
 
 type BlockType =
   | "paragraph"
@@ -59,70 +59,58 @@ interface Block {
   rows?: string[][];
 }
 
-// ---------------------------------------------------------------------------
-// Inline tokenizer — handles bold, italic, code, links
-// ---------------------------------------------------------------------------
 
-/**
- * Ordered list of inline patterns. Order matters:
- *   1. Inline code (backtick-delimited, greedy)
- *   2. Links [text](url)
- *   3. Bold+italic ***text***
- *   4. Bold **text**
- *   5. Italic *text*
- *   6. Italic (alternate) _text_
- */
+
+
+
+
 const INLINE_PATTERNS: readonly {
   regex: RegExp;
   type: TokenType;
   group: (m: RegExpMatchArray) => { content: string; href?: string };
 }[] = [
   {
-    // Inline code: `code` or ``code``
+    
     regex: /^(`+)([\s\S]*?)\1/,
     type: "code-inline",
     group: (m) => ({ content: m[2] ?? "" }),
   },
   {
-    // Links: [text](url)
+    
     regex: /^\[([^\]]*)\]\(([^)]*)\)/,
     type: "link",
     group: (m) => ({ content: m[1] ?? "", href: m[2] ?? "" }),
   },
   {
-    // Bold + italic: ***text***
+    
     regex: /^\*\*\*([\s\S]+?)\*\*\*/,
     type: "bold",
     group: (m) => ({ content: m[1] ?? "" }),
   },
   {
-    // Bold: **text**
+    
     regex: /^\*\*([\s\S]+?)\*\*/,
     type: "bold",
     group: (m) => ({ content: m[1] ?? "" }),
   },
   {
-    // Italic: *text*
+    
     regex: /^\*(?!\s)([\s\S]+?)(?<!\s)\*/,
     type: "italic",
     group: (m) => ({ content: m[1] ?? "" }),
   },
   {
-    // Italic (alternate): _text_
+    
     regex: /^_(?!\s)([\s\S]+?)(?<!\s)_/,
     type: "italic",
     group: (m) => ({ content: m[1] ?? "" }),
   },
 ];
 
-/** Characters that can start an inline pattern — used for fast skip. */
+
 const SPECIAL_CHARS = new Set(["`", "[", "*", "_"]);
 
-/**
- * Special-char proximity lookup: precompute the index of the next special
- * character from every position so the plain-text accumulation loop can jump
- * forward instead of checking one character at a time.
- */
+
 function nextSpecialFrom(text: string, start: number): number {
   for (let j = start; j < text.length; j++) {
     if (SPECIAL_CHARS.has(text[j]!)) return j;
@@ -138,7 +126,7 @@ function tokenizeInline(text: string): Token[] {
   while (i < len) {
     let matched = false;
 
-    // Only attempt pattern matching at special characters for speed
+    
     if (SPECIAL_CHARS.has(text[i]!)) {
       const rest = text.slice(i);
 
@@ -157,18 +145,18 @@ function tokenizeInline(text: string): Token[] {
     }
 
     if (!matched) {
-      // Fast-forward through plain text to the next special character
+      
       const start = i;
       i = nextSpecialFrom(text, start + 1);
-      // But verify that the special character actually starts a pattern — if
-      // not, include it in the plain text and advance.
-      // We already know position `start` did not match, so include it.
+      
+      
+      
       tokens.push({ type: "text", content: text.slice(start, i) });
 
-      // If we landed on a special char that doesn't match any pattern we'll
-      // catch it on the next iteration and it'll be consumed as a single-char
-      // text token — but first let's extend the plain text greedily by checking
-      // whether the special char actually triggers a match.
+      
+      
+      
+      
       if (i < len && SPECIAL_CHARS.has(text[i]!)) {
         const rest = text.slice(i);
         let triggers = false;
@@ -179,7 +167,7 @@ function tokenizeInline(text: string): Token[] {
           }
         }
         if (!triggers) {
-          // Not a real delimiter — include it and keep scanning
+          
           i++;
         }
       }
@@ -189,7 +177,7 @@ function tokenizeInline(text: string): Token[] {
   return mergeTextTokens(tokens);
 }
 
-/** Merge adjacent plain-text tokens for fewer React elements. */
+
 function mergeTextTokens(tokens: Token[]): Token[] {
   const merged: Token[] = [];
   for (const tok of tokens) {
@@ -203,9 +191,9 @@ function mergeTextTokens(tokens: Token[]): Token[] {
   return merged;
 }
 
-// ---------------------------------------------------------------------------
-// Block parser — splits raw markdown into structured blocks
-// ---------------------------------------------------------------------------
+
+
+
 
 function parseBlocks(input: string): Block[] {
   const lines = input.split("\n");
@@ -215,20 +203,20 @@ function parseBlocks(input: string): Block[] {
   while (i < lines.length) {
     const line = lines[i]!;
 
-    // --- Empty line (paragraph separator) ---
+    
     if (line.trim() === "") {
       i++;
       continue;
     }
 
-    // --- Horizontal rule: --- or *** or ___ (3+ chars, nothing else) ---
+    
     if (/^(?:[-*_]){3,}\s*$/.test(line) && !/[^-*_\s]/.test(line)) {
       blocks.push({ type: "hr" });
       i++;
       continue;
     }
 
-    // --- Fenced code block: ```lang ... ``` ---
+    
     const fenceMatch = line.match(/^```(\S*)/);
     if (fenceMatch) {
       const lang = fenceMatch[1] || "";
@@ -238,7 +226,7 @@ function parseBlocks(input: string): Block[] {
         codeLines.push(lines[i]!);
         i++;
       }
-      if (i < lines.length) i++; // skip closing ```
+      if (i < lines.length) i++; 
       blocks.push({
         type: "code-block",
         language: lang || undefined,
@@ -247,7 +235,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- Heading: # ## ### etc ---
+    
     const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1]!.length;
@@ -261,7 +249,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- Blockquote: > text ---
+    
     if (/^>\s?/.test(line)) {
       const quoteLines: string[] = [];
       while (i < lines.length && /^>\s?/.test(lines[i]!)) {
@@ -277,7 +265,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- Unordered list: - item, * item, + item ---
+    
     if (/^\s*([-*+])\s+/.test(line)) {
       while (i < lines.length) {
         const liMatch = lines[i]?.match(/^(\s*)([-*+])\s+(.+)$/);
@@ -294,7 +282,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- Ordered list: 1. item ---
+    
     if (/^\s*\d+\.\s+/.test(line)) {
       let idx = 1;
       while (i < lines.length) {
@@ -314,7 +302,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- GFM table: header row | separator row | data rows ---
+    
     const tableSep = (l: string) =>
       /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l) && l.includes("-") && l.includes("|");
     if (line.includes("|") && i + 1 < lines.length && tableSep(lines[i + 1]!)) {
@@ -341,7 +329,7 @@ function parseBlocks(input: string): Block[] {
       continue;
     }
 
-    // --- Paragraph: collect consecutive non-special lines ---
+    
     const paraLines: string[] = [];
     while (i < lines.length) {
       const l = lines[i]!;
@@ -366,9 +354,9 @@ function parseBlocks(input: string): Block[] {
   return blocks;
 }
 
-// ---------------------------------------------------------------------------
-// Inline token renderer
-// ---------------------------------------------------------------------------
+
+
+
 
 function renderTokens(
   tokens: Token[],
@@ -398,15 +386,15 @@ function renderTokens(
           </Text>
         );
       case "code-inline":
-        // Claude Code: inline code renders in the permission color
+        
         return (
           <Text key={key} color={resolveColor(theme.permission)} dimColor={dim} wrap="wrap">
             {tok.content}
           </Text>
         );
       case "link":
-        // Claude Code: link text renders plainly (OSC8 hyperlink on top);
-        // stock Ink has no hyperlink escape, so just the display text shows.
+        
+        
         return (
           <Text key={key} dimColor={dim} wrap="wrap">
             {tok.content}
@@ -422,14 +410,14 @@ function renderTokens(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Block renderers — one function per block type
-// ---------------------------------------------------------------------------
+
+
+
 
 function renderHeading(block: Block, key: string, dim?: boolean): React.ReactNode {
   const level = block.level ?? 1;
-  // Claude Code: h1 is bold+italic+underline; h2+ is bold. Headings keep a
-  // blank line after (h + 2 EOLs in the reference; gap={1} supplies the rest).
+  
+  
   return (
     <Box key={key} flexDirection="column" marginBottom={1}>
       <Text bold={level >= 2} italic={level === 1} underline={level === 1} dimColor={dim} wrap="wrap">
@@ -444,8 +432,8 @@ function renderCodeBlock(block: Block, key: string): React.ReactNode {
   const content = block.content ?? "";
   const lines = content.split("\n");
 
-  // Claude Code: code blocks render as syntax-highlighted lines only — no
-  // language banner. Unknown languages fall back to plain text.
+  
+  
   return (
     <Box key={key} flexDirection="column">
       {lines.map((line, i) => {
@@ -466,8 +454,7 @@ function renderCodeBlock(block: Block, key: string): React.ReactNode {
   );
 }
 
-/** Ordered-list numeral per nesting depth — Claude Code's getListNumber:
- *  depth 0/1 → arabic, depth 2 → letters, depth 3 → lowercase roman. */
+
 function numberToLetter(n: number): string {
   let result = "";
   while (n > 0) {
@@ -507,8 +494,8 @@ function getListNumber(listDepth: number, orderedListNumber: number): string {
 
 function renderListItem(block: Block, key: string): React.ReactNode {
   const indent = block.indent ?? 0;
-  // Claude Code: '-' bullet for every unordered level; ordered lists get a
-  // numeral per nesting depth; 2 spaces of indentation per level.
+  
+  
   const bullet = block.ordered
     ? `${getListNumber(indent, block.index ?? 1)}.`
     : "-";
@@ -524,8 +511,8 @@ function renderListItem(block: Block, key: string): React.ReactNode {
 }
 
 function renderBlockquote(block: Block, key: string, dim?: boolean): React.ReactNode {
-  // Claude Code: each line prefixed with a dim ▎ bar, text italic at normal
-  // brightness (chalk.dim is nearly invisible on dark themes).
+  
+  
   return (
     <Box key={key}>
       <Text dimColor>{"▎ "}</Text>
@@ -537,7 +524,7 @@ function renderBlockquote(block: Block, key: string, dim?: boolean): React.React
 }
 
 function renderHR(key: string): React.ReactNode {
-  // Claude Code renders an <hr> as plain '---'
+  
   return <Text key={key}>---</Text>;
 }
 
@@ -553,11 +540,11 @@ function renderParagraph(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
 
-// ── Word-wrap helper for table cells ────────────────────────────────────────
+
+
+
+
 
 function wrapWords(text: string, width: number): string[] {
   if (width <= 1) return [text];
@@ -584,10 +571,10 @@ function renderTable(block: Block, key: string): React.ReactNode {
   if (cols === 0) return null;
 
   const termWidth = process.stdout.columns || 80;
-  const sepOverhead = Math.max(0, cols - 1) * 3; // " │ " between columns
+  const sepOverhead = Math.max(0, cols - 1) * 3; 
   const avail = Math.max(20, termWidth - sepOverhead);
 
-  // Natural column widths, shrunk proportionally to fit the terminal.
+  
   const widths: number[] = [];
   for (let c = 0; c < cols; c++) {
     let w = header[c]?.length ?? 0;
@@ -659,10 +646,10 @@ export default function Markdown({
   children,
   dim,
 }: MarkdownProps): React.ReactElement {
-  // Memoize block parsing so we don't re-parse on every render
+  
   const blocks = useMemo(() => parseBlocks(children), [children]);
 
-  // Claude Code's MarkdownBody stacks blocks with gap={1}
+  
   return (
     <Box flexDirection="column" gap={1}>
       {blocks.map((block, idx) => {

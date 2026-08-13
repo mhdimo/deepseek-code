@@ -1,11 +1,11 @@
-// Main App component — real agent integration with streaming
-//
-// This wires together:
-//   - Agent system (code/plan/review agents with tool calling)
-//   - Streaming display (text + tool blocks in real-time)
-//   - Permission prompts (approve/deny tool execution)
-//   - Slash commands (/help, /agent, /clear, /model, /compact)
-//   - Token tracking
+
+
+
+
+
+
+
+
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
@@ -68,8 +68,6 @@ import {
   pruneSessions,
   pruneOldSessions,
 } from "../state/storage.js";
-import SettingsPanel from "./SettingsPanel.js";
-import type { TabType } from "./SettingsPanel.js";
 import { Settings } from "./Settings/Settings.js";
 import { recordSessionStats } from "../state/stats.js";
 import { loadHooks, runHooksFireAndForget } from "../services/hooks.js";
@@ -96,14 +94,14 @@ import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../ut
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
 
-// ── Thinking mode constants ───────────────────────────────────────────────
+
 
 export default function App({ config, workingDirectory, resumeSessionHash: cliResumeHash }: { config: DeepSeekCodeConfig; workingDirectory: string; resumeSessionHash?: string }) {
   const { exit } = useApp();
   const handleExit = useCallback(() => {
-    // Fire-and-forget LSP shutdown so configured language server processes
-    // aren't orphaned on exit. Never throws; the 50ms exit window may cut it
-    // short, in which case process exit reaps the children anyway.
+    
+    
+    
     void shutdownLspServerManager();
     exit();
     setTimeout(() => {
@@ -111,7 +109,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }, 50);
   }, [exit]);
 
-  // ── State ─────────────────────────────────────────────────────────────
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -131,21 +129,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   } | null>(null);
   const [sessionAllowAll, setSessionAllowAll] = useState(false);
 
-  // ── Runtime-mutable provider state ────────────────────────────────────
+  
   const [activeProvider, setActiveProvider] = useState<ProviderType>(config.provider);
   const [activeModel, setActiveModel] = useState(config.model);
   const [activeApiKey, setActiveApiKey] = useState(config.apiKey);
   const [activeBaseURL, setActiveBaseURL] = useState(config.baseURL);
 
-  // ── Thinking / extended reasoning ─────────────────────────────────────
+  
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("off");
 
-  // ── Reasoning effort (StatusBar chip + persisted setting) ─────────────
-  // Initialized from getEffortLevel() (CLI > persisted settings > unset);
-  // /effort <level> updates both the state (immediate chip refresh) and the
-  // persisted setting. NOTE: if a CLI --effort flag is active it wins over
-  // the persisted value in getEffortLevel() — the chip may then show the
-  // command-set value while the session uses the CLI value.
+  
+  
+  
+  
+  
+  
   const [effortLevel, setEffortLevel] = useState<EffortLevel | undefined>(() => {
     try {
       return getEffortLevel();
@@ -158,27 +156,25 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [queuedSubmissions, setQueuedSubmissions] = useState<string[]>([]);
 
-  // ── Tool Inspection Mode ──────────────────────────────────────────────
+  
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectIndex, setInspectIndex] = useState(0);
   const [isTranscriptMode, setIsTranscriptMode] = useState(false);
 
-  // ── Session Picker Mode (ctrl+a) ──────────────────────────────────────
+  
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [sessionPickerIndex, setSessionPickerIndex] = useState(0);
   const [sessionsList, setSessionsList] = useState<any[]>([]);
 
-  // ── Stats Tracking State & Refs ──────────────────────────────────────
+  
   const sessionStartMs = useRef(Date.now());
   const [apiDurationMs, setApiDurationMs] = useState(0);
   const [sessionLinesAdded, setSessionLinesAdded] = useState(0);
   const [sessionLinesRemoved, setSessionLinesRemoved] = useState(0);
-  const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
-  const [settingsOverlayTab, setSettingsOverlayTab] = useState<TabType>("usage");
 
-  // ── Tabbed Settings UI (/config · /status · /usage) ───────────────────
+  
   const [showSettingsUI, setShowSettingsUI] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"Status" | "Config" | "Usage">("Status");
+  const [settingsTab, setSettingsTab] = useState<"Status" | "Config" | "Usage" | "Stats">("Status");
 
   const getFlatToolBlocks = useCallback(() => {
     const flat: Array<{ messageIdx: number; toolIdx: number; block: ToolUseBlock }> = [];
@@ -206,7 +202,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
   }, [messages, inspectIndex, getFlatToolBlocks]);
 
-  // Cleanup throttle timer on unmount
+  
   useEffect(() => {
     return () => {
       if (outputThrottleTimerRef.current) {
@@ -215,16 +211,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     };
   }, []);
 
-  // Keep the committed message count in a ref so callbacks that are recreated
-  // rarely (processAgentStream, submitUserPrompt internals) can compute the
-  // current 1-based message index without stale closures.
+  
+  
+  
   useEffect(() => {
     messagesLenRef.current = messages.length;
   }, [messages.length]);
 
-  // Sleep prevention: hold a caffeinate assertion while a turn is running so
-  // long generations don't let the machine idle-sleep, release it when idle.
-  // Ref-counted + defensive — never throws, no-op off macOS.
+  
+  
+  
   useEffect(() => {
     try {
       if (isLoading) {
@@ -233,15 +229,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         allowSleep();
       }
     } catch {
-      // best-effort — sleep management must never break the chat loop
+      
     }
   }, [isLoading]);
 
-  // ── Terminal resize handler ──────────────────────────────────────────
-  // Forces a React re-render on terminal resize so components reading
-  // process.stdout.columns get the updated value.
-  // Debounced: resize events fire rapidly during a drag; we batch them
-  // to a single render to avoid flickering from intermediate states.
+  
+  
+  
+  
+  
   const [resizeTick, setResizeTick] = useState(0);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -250,7 +246,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       timer = setTimeout(() => {
         timer = null;
         setResizeTick((t) => t + 1);
-      }, 50); // debounce 50ms — coalesces rapid resize events
+      }, 50); 
     };
     process.stdout.on("resize", handler);
     return () => {
@@ -258,10 +254,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       if (timer) clearTimeout(timer);
     };
   }, []);
-  // Reference resizeTick to force re-render — value itself unused
+  
   void resizeTick;
 
-  // MCP runtime state (loaded from config)
+  
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>(
     config.mcpServers || {},
   );
@@ -272,40 +268,39 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const lastCtrlCTimeRef = useRef(0);
   const tokenTrackerRef = useRef(new TokenTracker(activeModel));
   const contextManagerRef = useRef(new ContextManager(activeModel));
-  /** Lets handleSubmit know the picker is intercepting Enter */
+  
   const pickerActiveRef = useRef(false);
-  /** Ref to handleSubmit so useInput can call it without stale closure */
+  
   const handleSubmitRef = useRef<(overrideInput?: string) => void>(() => {});
 
   const streamingTextRef = useRef("");
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
   const streamingBlocksRef = useRef<MessageBlock[]>([]);
-  /** The in-progress thinking block (between thinking-start and thinking-end). */
+  
   const thinkingOpenRef = useRef<MessageBlock | null>(null);
   const pendingOutputsRef = useRef<Record<string, string>>({});
   const outputThrottleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  /** Current committed message count (effect-synced — avoids stale closures). */
+  
   const messagesLenRef = useRef(0);
-  /** Absolute paths touched by file-mutating tools (Write/Edit/NotebookEdit),
-   *  cumulative across turns — feeds /rewind file snapshots. */
+  
   const touchedFilesRef = useRef<Set<string>>(new Set());
-  /** Epoch ms when the current user turn started — drives the finish notify rule. */
+  
   const turnStartRef = useRef(0);
-  /** One-shot overload-recovery guard: never retry more than once per turn. */
+  
   const recoveryAttemptedRef = useRef(false);
-  /** Set by processAgentStream's error case when a fallback retry is armed. */
+  
   const retryFallbackRef = useRef<ProviderConfig | null>(null);
 
-  // Dirty flags — track which refs actually changed since the last flush so
-  // we don't setState with fresh (but identical) array references every tick.
-  // Without this, the flush creates new [...array] references every 80ms even
-  // when only text changed, forcing a full React reconcile + Ink diff for
-  // arrays that are logically identical — a major CPU drain during streaming.
+  
+  
+  
+  
+  
   const flushDirtyRef = useRef({ text: false, blocks: false, toolUse: false });
 
-  // Batch streaming text/thinking/blocks state updates into an ~80ms flush so
-  // fast token streams don't re-render (and flicker) on every token.
+  
+  
   const streamingFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scheduleStreamingFlush = useCallback(() => {
     if (streamingFlushTimerRef.current) return;
@@ -319,10 +314,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }, 80);
   }, []);
 
-  // ── Session state ────────────────────────────────────────────────────
+  
   const [activeSessionHash, setActiveSessionHash] = useState<string | null>(null);
 
-  // ── Theme / Settings states ──────────────────────────────────────────
+  
   const [themeMode, setThemeModeState] = useState<ThemeSetting>(() => {
     try {
       const settings = loadSettings();
@@ -332,12 +327,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
   });
 
-  // ── Pinned bottom bar (Claude Code REPL parity) ──────────────────────
-  // The reference REPL wraps everything in an <AlternateScreen>'s
-  // <Box height={rows}> so its ScrollBox flexGrow has a ceiling and the
-  // bottom slot (input + status line, flexShrink={0}) never moves. Stock
-  // ink gets the same with a terminal-height root box: messages flexGrow
-  // in the middle, the input/status bar pins to the last rows.
+  
+  
+  
+  
+  
+  
   const { stdout } = useStdout();
   const [termRows, setTermRows] = useState<number>(() => stdout?.rows ?? process.stdout.rows ?? 40);
   useEffect(() => {
@@ -349,12 +344,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     };
   }, [stdout, termRows]);
 
-  // ── Theme picker overlay (Claude Code parity: /theme opens the same
-  // interactive ThemePicker as the first-time setup) ────────────────────
+  
+  
   const [showThemePicker, setShowThemePicker] = useState(false);
 
-  // ── Effort selector callout (Claude Code parity: /effort with no args
-  // opens the interactive EffortCallout dialog) ─────────────────────────
+  
+  
   const [showEffortCallout, setShowEffortCallout] = useState(false);
   const handleEffortCalloutDone = useCallback((selection: EffortLevel | "dismiss") => {
     setShowEffortCallout(false);
@@ -379,10 +374,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     ]);
   }, []);
 
-  // ── First-time setup (Claude Code parity: Onboarding) ────────────────
-  // Shown on the very first run when no API key is configured. /setup and
-  // /apikey remain available afterwards; finishing (or skipping) the flow
-  // persists `onboarded` so it never reappears.
+  
+  
+  
+  
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     try {
       return !config.apiKey && !loadSettings().onboarded;
@@ -401,7 +396,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       try {
         saveSettings({ onboarded: true, themeMode: result.theme, apiKey: result.apiKey });
       } catch {
-        // best-effort
+        
       }
       setShowOnboarding(false);
     },
@@ -410,14 +405,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
 
-  // Permission modes (cycled with Shift+Tab, like the reference TUI).
+  
   const [permissionMode, setPermissionMode] = useState<"default" | "acceptEdits" | "plan" | "bypassPermissions">(
     config.dangerouslySkipPermissions ? "bypassPermissions" : "default",
   );
   const permissionModeRef = useRef(permissionMode);
   permissionModeRef.current = permissionMode;
 
-  // Snapshot of all persisted settings (drives the Settings editor + behavior flags).
+  
   const [settingsSnapshot, setSettingsSnapshot] = useState<Record<string, unknown>>(() => {
     try {
       return loadSettings() as Record<string, unknown>;
@@ -430,7 +425,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       saveSettings({ [key]: value } as any);
       setSettingsSnapshot(loadSettings() as Record<string, unknown>);
     } catch {
-      // best-effort
+      
     }
   }, []);
 
@@ -458,31 +453,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     } catch {}
   }, []);
 
-  // ── Plugins state & integration ──────────────────────────────────────
+  
   const [showPluginOverlay, setShowPluginOverlay] = useState(false);
   const [pluginCommands, setPluginCommands] = useState<CommandDef[]>([]);
 
-  // ── Custom slash commands (markdown files) ────────────────────────────
+  
   const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
 
-  // ── Live todo list (driven by the TodoWrite tool via onTodosChange) ────
+  
   const [todos, setTodos] = useState<TodoItem[]>([]);
-  // Tasks footer (Claude Code parity): the pill lives in the status footer;
-  // ↓ expands the navigable list, Esc/Enter collapses it.
+  
+  
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const [tasksSelectedIndex, setTasksSelectedIndex] = useState(0);
 
-  // ── Prompt history search (Ctrl+R) + @-file mentions ─────────────────
+  
   const [showHistorySearch, setShowHistorySearch] = useState(false);
   const [historySnapshot, setHistorySnapshot] = useState<string[]>([]);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionSuppressed, setMentionSuppressed] = useState(false);
   const fileIndexRef = useRef<string[] | null>(null);
 
-  // ── Ported Claude Code command surfaces ──────────────────────────────
-  // /help → HelpView pane; /export → ExportView dialog; /search →
-  // SearchResultsView overlay. Each owns its own keyboard handling while
-  // open; App's useInput defers to them (see the overlay gate below).
+  
+  
+  
+  
   const [showHelp, setShowHelp] = useState(false);
   const [exportDialog, setExportDialog] = useState<{ defaultFormat: ExportFormat } | null>(null);
   const [searchResults, setSearchResults] = useState<{
@@ -491,21 +486,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     total: number;
   } | null>(null);
 
-  // ── Custom status line (Claude Code parity, /statusline) ─────────────
-  // When settings.statusLine is set, run its command (trust-gated, 5s
-  // timeout) and render the trimmed stdout right-aligned on the status bar.
+  
+  
+  
   const [statusLineText, setStatusLineText] = useState<string | null>(null);
   const statusLineTextRef = useRef<string | null>(null);
   const statusLineAbortRef = useRef<AbortController | null>(null);
   const statusLineTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  /** Current statusLine setting (re-read from the settings snapshot). */
+  
   const statusLineSetting = (settingsSnapshot as { statusLine?: { type: "command"; command: string } })
     .statusLine;
 
-  // Run the configured status-line command once, storing trimmed stdout.
-  // SECURITY: like claude-code hooks, only executes in a trusted workspace
-  // (isTrusted) — untrusted workspaces skip execution entirely.
+  
+  
+  
   const runStatusLineCommand = useCallback(() => {
     if (statusLineTimerRef.current) {
       clearTimeout(statusLineTimerRef.current);
@@ -525,8 +520,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
     const command = setting.command;
-    if (!isTrusted(workingDirectory)) return; // trust gate — never run untrusted
-    statusLineAbortRef.current?.abort(); // cancel any in-flight run
+    if (!isTrusted(workingDirectory)) return; 
+    statusLineAbortRef.current?.abort(); 
     const controller = new AbortController();
     statusLineAbortRef.current = controller;
     const killTimer = setTimeout(() => controller.abort(), 5000);
@@ -548,14 +543,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           setStatusLineText(trimmed);
         }
       } catch {
-        // A slow/failing status-line command must never crash the UI —
-        // keep the previous output (or nothing), stay dim.
+        
+        
       }
     })();
   }, [workingDirectory]);
 
-  // Debounced scheduling (300ms, like the reference) — coalesces rapid
-  // triggers (turn finish + interval can land together).
+  
+  
   const scheduleStatusLineRun = useCallback(() => {
     if (statusLineTimerRef.current) clearTimeout(statusLineTimerRef.current);
     statusLineTimerRef.current = setTimeout(() => {
@@ -564,7 +559,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }, 300);
   }, [runStatusLineCommand]);
 
-  // Run once on mount, and whenever the configured command changes.
+  
   useEffect(() => {
     runStatusLineCommand();
     return () => {
@@ -574,15 +569,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runStatusLineCommand, statusLineSetting]);
 
-  // Refresh on a modest interval while configured (20s — cheap, keeps the
-  // output fresh without hammering the command).
+  
+  
   useEffect(() => {
     if (!statusLineSetting) return;
     const id = setInterval(() => runStatusLineCommand(), 20_000);
     return () => clearInterval(id);
   }, [statusLineSetting, runStatusLineCommand]);
 
-  // Refresh after each finished turn (isLoading edge true → false).
+  
   const prevLoadingRef = useRef(isLoading);
   useEffect(() => {
     if (prevLoadingRef.current && !isLoading) scheduleStatusLineRun();
@@ -594,9 +589,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       const plugins = loadInstalledPlugins();
       const enabled = plugins.filter((p) => p.enabled);
 
-      // Keep the picker clean (Claude Code's slash menu): one-line
-      // descriptions, no duplicates across plugins, and built-in commands
-      // win over plugin skills with the same name.
+      
+      
+      
       const seen = new Set(ALL_COMMANDS.map((c) => c.name));
       const truncate = (s: string, max = 70) => (s.length > max ? s.slice(0, max - 1) + "…" : s);
       const cmds: CommandDef[] = [];
@@ -646,11 +641,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     refreshPlugins();
   }, [refreshPlugins]);
 
-  // ── Input history ────────────────────────────────────────────────────
+  
   const inputHistory = useRef<string[]>([]);
-  const historyIndex = useRef(-1); // -1 = not navigating history
+  const historyIndex = useRef(-1); 
 
-  // ── Persist settings helper ──────────────────────────────────────────
+  
   const persistSettings = useCallback((updates: {
     apiKey?: string;
     model?: string;
@@ -664,34 +659,34 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     try {
       saveSettings(updates);
     } catch {
-      // Best-effort persistence
+      
     }
   }, []);
 
-  // Helper: yield to the event loop so React/Ink can render between tokens
+  
   const yieldToRenderer = () => new Promise<void>((r) => setTimeout(r, 0));
 
-  // ── Command picker (derived) ──────────────────────────────────────────
+  
   const extraCommands = useMemo(
     () => [...pluginCommands, ...toCommandDefs(customCommands)],
     [pluginCommands, customCommands],
   );
   const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, extraCommands) : [];
-  // Hide picker once the user has typed an exact command name (ready to press Enter)
+  
   const isExactCommandMatch =
     filteredCommands.length === 1 && filteredCommands[0]?.name === input.trimEnd().toLowerCase();
-  // Also hide once the first word is a complete command — the user has typed
-  // "/effort " and is now typing the argument (Claude Code behavior: the
-  // picker completes on space and gets out of the way).
+  
+  
+  
   const firstWord = input.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   const hasExactCommandPrefix =
     firstWord.length > 0 && filteredCommands.some((c) => c.name === firstWord);
   const showCommandPicker =
     filteredCommands.length > 0 && !isExactCommandMatch && !hasExactCommandPrefix && !input.includes("\n");
-  // Keep ref in sync every render so handleSubmit can read it without stale closure
+  
   pickerActiveRef.current = showCommandPicker;
 
-  // ── @-file mention detection (trailing @query at the cursor / end) ────
+  
   const mention = useMemo(
     () => (isLoading || showCommandPicker ? null : detectTrailingMention(input)),
     [input, isLoading, showCommandPicker],
@@ -699,8 +694,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const mentionMatches = useMemo(() => {
     if (!mention || mentionSuppressed) return [];
 
-    // Support dynamic file/folder autocompletion for relative/absolute paths
-    // (e.g. starting with . or .. or containing /)
+    
+    
     if (mention.query.includes("/") || mention.query.startsWith("..") || mention.query.startsWith(".")) {
       const lastSlashIdx = mention.query.lastIndexOf("/");
       let dirPath = "";
@@ -740,12 +735,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     setMentionIndex(0);
   }, [mention?.query]);
 
-  // Load persisted prompt history + build the file index once on mount.
+  
   useEffect(() => {
     try {
       inputHistory.current = loadHistory();
     } catch {
-      // best-effort
+      
     }
     try {
       fileIndexRef.current = buildFileIndex(workingDirectory);
@@ -755,13 +750,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     try {
       setCustomCommands(loadCustomCommands(workingDirectory));
     } catch {
-      // best-effort
+      
     }
-    // Prune sessions older than the configured cutoff (default 30 days).
+    
     try {
       pruneOldSessions(loadSettings().cleanupPeriodDays ?? 30);
     } catch {
-      // best-effort
+      
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -770,7 +765,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const mcpCount = mcpEntries.length;
   const mcpEnabledCount = mcpEntries.filter(([, s]) => s.enabled !== false).length;
 
-  // Derived — always reflects current mutable state
+  
   const providerConfig: ProviderConfig = {
     type: activeProvider,
     apiKey: activeApiKey,
@@ -778,8 +773,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     model: activeModel,
   };
 
-  // ── Session auto-save ────────────────────────────────────────────────
-  // Save session whenever messages change
+  
+  
   useEffect(() => {
     if (messages.length === 0) return;
     try {
@@ -805,11 +800,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           workingDirectory,
         });
         setActiveSessionHash(currentHash);
-        // Prune old sessions
+        
         pruneSessions(50);
       }
 
-      // Sync to global stats.json
+      
       const record = {
         id: currentHash,
         name: workingDirectory.split("/").pop() || "session",
@@ -831,23 +826,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       };
       recordSessionStats(record);
     } catch {
-      // Best-effort
+      
     }
   }, [messages.length, tokenCount, cost, apiDurationMs, sessionLinesAdded, sessionLinesRemoved]);
 
-  // ── Resume session ONLY when --resume <hash> is passed explicitly ────
+  
   useEffect(() => {
-    if (!cliResumeHash) return; // No --resume flag → fresh session
+    if (!cliResumeHash) return; 
     try {
       let sessionHashToLoad = cliResumeHash;
       if (cliResumeHash === "latest") {
         const sessions = listSessions();
-        // Find the latest session in the current directory
+        
         const localSession = sessions.find((s) => s.workingDirectory === workingDirectory);
         if (localSession) {
           sessionHashToLoad = localSession.hash;
         } else {
-          // If no local session, check the overall newest session
+          
           const overallLatest = sessions[0];
           if (overallLatest) {
             if (overallLatest.workingDirectory !== workingDirectory) {
@@ -862,7 +857,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               sessionHashToLoad = overallLatest.hash;
             }
           } else {
-            // No sessions at all → starting fresh
+            
             setMessages((prev) => [
               ...prev,
               { role: "system", content: "No saved sessions found. Started a fresh session.", timestamp: Date.now() },
@@ -890,11 +885,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         ]);
       }
     } catch {
-      // Fresh start on error
+      
     }
   }, []);
 
-  // Helper: switch to a named profile
+  
   const switchModel = useCallback(
     (name: string): string | null => {
       const profile = config.profiles?.[name];
@@ -906,14 +901,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return `Switched to profile "${name}" → ${profile.provider}/${profile.model}${profile.baseURL ? ` (${profile.baseURL})` : ""}`;
       }
 
-      return null; // not found
+      return null; 
     },
     [config.profiles],
   );
 
-  // ── Keybindings ───────────────────────────────────────────────────────
+  
   useInput((_input, key) => {
-    // Ctrl+C: quit (if not in transcript mode, otherwise exit transcript mode)
+    
     if (key.ctrl && _input === "c") {
       if (isTranscriptMode) {
         setIsTranscriptMode(false);
@@ -921,10 +916,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
       if (showSessionPicker) {
         setShowSessionPicker(false);
-        return;
-      }
-      if (showSettingsOverlay) {
-        setShowSettingsOverlay(false);
         return;
       }
       if (showSettingsUI) {
@@ -946,7 +937,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       const now = Date.now();
       if (isLoading) {
-        // Interrupt on first Ctrl+C
+        
         abortRef.current?.abort();
         lastCtrlCTimeRef.current = now;
         setMessages((prev) => [
@@ -958,7 +949,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           },
         ]);
       } else if (now - lastCtrlCTimeRef.current < 1500) {
-        // Exit on second Ctrl+C within 1.5s
+        
         handleExit();
       } else {
         lastCtrlCTimeRef.current = now;
@@ -974,39 +965,39 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // Onboarding owns the keyboard while it's showing (it has its own
-    // useInput handlers; ctrl+c above still quits).
+    
+    
     if (showOnboarding) {
       return;
     }
 
-    // Full-screen overlays manage their own input — defer all other keys to them.
-    if (showHistorySearch || showSettingsOverlay || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker) {
+    
+    if (showHistorySearch || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker) {
       return;
     }
 
-    // The tabbed Settings UI owns its keyboard input, including Esc: the
-    // Settings shell's handler calls onClose (Esc dismisses unless the Config
-    // tab's search/edit submenu is open, where Config layers Esc itself —
-    // clear query → exit search → close). Ink dispatches every key to all
-    // handlers, so closing here too would fire on the same Esc and break that
-    // layering (e.g. the first Esc in Config search would close the pane
-    // instead of clearing the query). This mirrors the reference, where the
-    // Settings pane binds confirm:no (Esc) itself.
+    
+    
+    
+    
+    
+    
+    
+    
     if (showSettingsUI) {
-      return; // defer all other keys to the Settings UI
+      return; 
     }
 
-    // Esc closes the /help pane (HelpView has no input handler of its own).
+    
     if (showHelp) {
       if (key.escape) {
         setShowHelp(false);
         return;
       }
-      return; // eat other keys while /help is open
+      return; 
     }
 
-    // Ctrl+A: toggle session picker
+    
     if (key.ctrl && _input === "a") {
       if (showSessionPicker) {
         setShowSessionPicker(false);
@@ -1019,7 +1010,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // Handle keypresses while Session Picker is open
+    
     if (showSessionPicker) {
       if (key.escape || _input === "q") {
         setShowSessionPicker(false);
@@ -1037,7 +1028,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const selected = sessionsList[sessionPickerIndex];
         if (selected) {
           if (selected.workingDirectory === workingDirectory) {
-            // Resume in-place
+            
             const session = loadSession(selected.hash);
             if (session) {
               setMessages(session.messages.map((m) => ({ ...m, toolUse: [] })));
@@ -1046,7 +1037,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             }
             setShowSessionPicker(false);
           } else {
-            // Exit and print/copy resume command
+            
             const cmd = `cd ${selected.workingDirectory} && deepseek-code --resume ${selected.hash}`;
             try {
               const { execSync } = require("child_process");
@@ -1058,34 +1049,34 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
         return;
       }
-      return; // Eat other key inputs while in session picker mode
+      return; 
     }
 
-    // Ctrl+O: toggle transcript mode (expands thinking/reasoning + all tool
-    // blocks). Some terminals send Ctrl+O as the raw SI control char (\x0f)
-    // without setting key.ctrl — accept both.
+    
+    
+    
     if ((key.ctrl && _input === "o") || _input === "\x0f") {
       setIsTranscriptMode((prev) => !prev);
       return;
     }
 
-    // Escape or q exits transcript mode if active
+    
     if (isTranscriptMode) {
       if (key.escape || _input === "q") {
         setIsTranscriptMode(false);
         return;
       }
-      return; // Eat other key inputs while in transcript mode
+      return; 
     }
 
-    // Ctrl+E: toggle inspect mode
+    
     if (key.ctrl && _input === "e") {
       const flatCount = getFlatToolBlocks().length;
       if (flatCount > 0) {
         setInspectMode((prev) => {
           const next = !prev;
           if (next) {
-            setInspectIndex(flatCount - 1); // Select last block by default
+            setInspectIndex(flatCount - 1); 
           }
           return next;
         });
@@ -1123,17 +1114,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
         return;
       }
-      return; // Eat other key inputs while in inspect mode
+      return; 
     }
 
-    // Ctrl+R: fuzzy-search persisted prompt history
+    
     if (key.ctrl && _input === "r" && !isLoading) {
       setHistorySnapshot(inputHistory.current);
       setShowHistorySearch(true);
       return;
     }
 
-    // @-file mention: navigate / accept / dismiss while the dropdown is open
+    
     if (mention && mentionMatches.length > 0) {
       const pick = () =>
         mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)] ?? mentionMatches[0]!;
@@ -1158,7 +1149,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
     }
 
-    // Ctrl+Q: clear queued prompts
+    
     if (key.ctrl && _input === "q" && isLoading && queuedSubmissions.length > 0) {
       const count = queuedSubmissions.length;
       setQueuedSubmissions([]);
@@ -1169,13 +1160,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // ? toggles shortcuts panel (only when input is empty, to avoid accidental popups while typing)
+    
     if (_input === "?" && !isLoading && input.trim().length === 0 && !showCommandPicker) {
       setShowShortcuts((prev) => !prev);
       return;
     }
 
-    // Escape: interrupt generation OR dismiss picker OR clear input on double press
+    
     if (key.escape) {
       if (pendingPermission) {
         pendingPermission.resolve({ approved: false, feedback: "Cancelled with Esc" });
@@ -1201,7 +1192,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       } else if (showShortcuts) {
         setShowShortcuts(false);
       } else {
-        // Double Escape check to clear the input prompt
+        
         const now = Date.now();
         if (now - lastEscTimeRef.current < 500 && input.length > 0) {
           setInput("");
@@ -1211,7 +1202,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return;
     }
 
-    // Command picker navigation (only while picker is open)
+    
     if (showCommandPicker && filteredCommands.length > 0) {
       if (key.upArrow) {
         setCommandPickerIndex((prev) => Math.max(0, prev - 1));
@@ -1226,10 +1217,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const cmd = filteredCommands[safeIdx];
         if (cmd) {
           if (key.return && !cmd.usage) {
-            // Enter on no-arg command → execute immediately
+            
             handleSubmitRef.current(cmd.name);
           } else {
-            // Tab, or Enter on command with args → autocomplete (fill usage template)
+            
             setInput(cmd.usage ?? cmd.name);
           }
           setCommandPickerIndex(0);
@@ -1238,14 +1229,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
     }
 
-    // Reset picker selection index on any non-navigation keypress
+    
     if (!key.upArrow && !key.downArrow && !key.tab && !key.return) {
       setCommandPickerIndex(0);
     }
 
-    // Tasks panel (Claude Code footer parity): ↓ on an empty prompt expands
-    // the task list; ↑/↓ navigates inside it; Esc/Enter collapses it back
-    // into the footer pill.
+    
+    
+    
     if (todos.length > 0 && !showCommandPicker && !isLoading) {
       if (tasksExpanded) {
         if (key.upArrow) {
@@ -1268,12 +1259,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
     }
 
-    // Input history navigation (when picker is not active)
+    
     if (!showCommandPicker && !isLoading) {
       if (key.upArrow) {
         if (inputHistory.current.length === 0) return;
         if (historyIndex.current === -1) {
-          // Start navigating from the most recent entry
+          
           historyIndex.current = inputHistory.current.length - 1;
         } else if (historyIndex.current > 0) {
           historyIndex.current -= 1;
@@ -1293,7 +1284,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             setInput(historical);
           }
         } else {
-          // Bottom of history — clear input
+          
           historyIndex.current = -1;
           setInput("");
         }
@@ -1301,7 +1292,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
     }
 
-    // Shift+Tab: cycle permission mode (default → acceptEdits → plan → bypass)
+    
     if (key.shift && key.tab) {
       setPermissionMode((prev) => {
         const order: ("default" | "acceptEdits" | "plan" | "bypassPermissions")[] = [
@@ -1314,7 +1305,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
   });
 
-  // ── Permission callback ───────────────────────────────────────────────
+  
   const requestPermission = useCallback(
     (toolName: string, description: string): Promise<{ approved: boolean; feedback?: string }> => {
       const mode = permissionModeRef.current;
@@ -1348,7 +1339,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       if (showShortcuts && value.trim().length > 0) {
         setShowShortcuts(false);
       }
-      // Re-enable mention suggestions once the @ token is closed (space) or removed.
+      
       if (!detectTrailingMention(value)) {
         setMentionSuppressed(false);
       }
@@ -1358,16 +1349,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const handleToolResult = useCallback((toolName: string, input: any, output: string, isError: boolean) => {
     if (!isError && input && typeof input === "object") {
-      // Track file-mutating tool targets — the cumulative set feeds /rewind
-      // file snapshots (snapshotFiles at the next turn start). Bash is
-      // deliberately excluded: it can touch arbitrary paths.
+      
+      
+      
       if (toolName === "Write" || toolName === "Edit" || toolName === "NotebookEdit") {
         const fp = (input as { file_path?: unknown }).file_path;
         if (typeof fp === "string" && fp.length > 0) {
           try {
             touchedFilesRef.current.add(resolve(workingDirectory, fp));
           } catch {
-            // best-effort — a bad path must never break the chat loop
+            
           }
         }
       }
@@ -1407,7 +1398,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             score += matches / (totalKeys || 1);
           }
         } catch {
-          // ignore parsing error
+          
         }
 
         if (score > maxScore) {
@@ -1433,7 +1424,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       nextToolUse = next;
       streamingToolUseRef.current = next;
 
-      // Update chronological blocks ref & state
+      
       const blockInListIdx = streamingBlocksRef.current.findIndex(
         (b) => b.type === "tool" && b.block?.toolName === toolName && b.block?.status === "running"
       );
@@ -1448,24 +1439,24 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       return next;
     });
 
-    // NOTE: Do NOT commit intermediate steps to <Static> mid-stream.
-    // Accumulate everything in the streaming area; commit once at finish.
-    // This eliminates the flicker from tool blocks jumping between the live
-    // area and <Static> scrollback on every tool completion.
+    
+    
+    
+    
   }, [workingDirectory]);
 
   const handleToolOutput = useCallback((toolName: string, text: string) => {
-    if (toolName !== "Bash") return; // Only bash streams live output
+    if (toolName !== "Bash") return; 
 
-    // Append output text to the throttle buffer
+    
     pendingOutputsRef.current[toolName] = (pendingOutputsRef.current[toolName] || "") + text;
 
-    // Schedule state update if not already scheduled
+    
     if (!outputThrottleTimerRef.current) {
       outputThrottleTimerRef.current = setTimeout(() => {
         outputThrottleTimerRef.current = null;
 
-        // Flush buffer to state
+        
         const flushed = pendingOutputsRef.current;
         pendingOutputsRef.current = {};
 
@@ -1482,7 +1473,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           };
           streamingToolUseRef.current = next;
 
-          // Update chronological blocks ref & state
+          
           const blockInListIdx = streamingBlocksRef.current.findIndex(
             (b) => b.type === "tool" && b.block?.toolName === "Bash" && b.block?.status === "running"
           );
@@ -1496,19 +1487,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
           return next;
         });
-      }, 100); // Throttle to at most 10 updates per second
+      }, 100); 
     }
   }, []);
 
-  // Live todo list — driven by the TodoWrite tool via onTodosChange.
+  
   const handleTodosChange = useCallback((next: TodoItem[]) => {
     setTodos(next);
   }, []);
 
-  // ── Process agent/query events ──────────────────────────────────────────────
+  
   const processAgentStream = useCallback(
     async (events: AsyncGenerator<AgentEvent | QueryEvent>) => {
-      // Reset refs before starting
+      
       streamingTextRef.current = "";
       streamingToolUseRef.current = [];
       streamingBlocksRef.current = [];
@@ -1518,8 +1509,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       for await (const event of events) {
         switch (event.type) {
           case "thinking-start":
-            // Open a chronological thinking block (rendered collapsed, like
-            // Claude Code) — no longer hoisted above the whole turn.
+            
+            
             {
               const block: MessageBlock = { type: "thinking", content: "" };
               streamingBlocksRef.current.push(block);
@@ -1530,8 +1521,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
 
           case "thinking-delta": {
-            // Defensive: lazily open the block if a delta arrives without a
-            // preceding start (older bindings / provider quirks).
+            
+            
             if (!thinkingOpenRef.current) {
               const block: MessageBlock = { type: "thinking", content: "" };
               streamingBlocksRef.current.push(block);
@@ -1553,7 +1544,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           case "text-delta":
             streamingTextRef.current += event.text;
             flushDirtyRef.current.text = true;
-            // Update chronological blocks (ref is source of truth; flush syncs state)
+            
             {
               const lastBlock = streamingBlocksRef.current[streamingBlocksRef.current.length - 1];
               if (lastBlock && lastBlock.type === "text") {
@@ -1596,13 +1587,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               const newArgsJson = (block.argsJson || "") + event.text;
               block.argsJson = newArgsJson;
 
-              // Parse accumulated JSON arguments best-effort
+              
               let parsedInput = "";
               try {
                 const parsed = JSON.parse(newArgsJson);
                 parsedInput = formatToolInput(event.toolName, parsed);
               } catch {
-                // Try parsing basic fields from partial JSON string using regexes
+                
                 const pathMatch = newArgsJson.match(/"file_path"\s*:\s*"([^"]*)/);
                 const path = pathMatch ? pathMatch[1] : "";
                 
@@ -1623,7 +1614,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 }
               }
 
-              // Update in chronological blocks
+              
               const blockInList = streamingBlocksRef.current.find(
                 (b) => b.type === "tool" && b.block?.toolCallId === event.toolCallId
               );
@@ -1648,10 +1639,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 const parsed = JSON.parse(block.argsJson || "{}");
                 block.input = formatToolInput(event.toolName, parsed);
               } catch {
-                // Keep the last input we set
+                
               }
 
-              // Update in chronological blocks
+              
               const blockInList = streamingBlocksRef.current.find(
                 (b) => b.type === "tool" && b.block?.toolCallId === event.toolCallId
               );
@@ -1666,7 +1657,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           }
 
           case "tool-call-result":
-            // Managed via handleToolResult callback in real-time, skip stream event
+            
             break;
 
           case "step-finish":
@@ -1690,12 +1681,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
 
           case "finish":
-            setTokenCount(event.usage.totalTokens); // Set (not add) — finish carries cumulative
+            setTokenCount(event.usage.totalTokens); 
             setInputTokens(event.usage.promptTokens);
             setOutputTokens(event.usage.completionTokens);
-            // Feed the C++ reported usage into the context manager for tracking
+            
             contextManagerRef.current.trackUsage(event.usage);
-            // Warn user if approaching context limit
+            
             if (contextManagerRef.current.shouldWarn()) {
               const pct = contextManagerRef.current.getUsagePercent();
               setMessages((prev) => [
@@ -1711,12 +1702,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               const totalCost = event.cost.totalCost;
               setCost((prev) => prev + totalCost);
             }
-            // Finish notification rule (documented): the TUI has no
-            // document-visibility API (Claude Code relies on document.hidden
-            // in the webview), so we use the closest TUI analogue — notify on
-            // finish ONLY when the turn took longer than 20s, i.e. the user
-            // likely looked away. Short turns never notify (user is watching
-            // the stream). Deliberately simple: no keybind, no state.
+            
+            
+            
+            
+            
+            
             if (turnStartRef.current > 0 && Date.now() - turnStartRef.current > 20_000) {
               void notify({ body: `Response ready (${activeModel})`, bell: true }).catch(() => {});
             }
@@ -1727,9 +1718,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             const errorText = event.error;
             const cls = classifyError(errorText);
 
-            // ── Prompt too long (413 / "prompt is too long" / "maximum
-            //    context length"): the C++ session owns compaction, so never
-            //    attempt it TS-side. Surface the recovery commands instead.
+            
+            
+            
             if (cls === "prompt-too-long") {
               setMessages((prev) => [
                 ...prev,
@@ -1746,14 +1737,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               return;
             }
 
-            // ── Overload (429): one-shot retry against a fallback provider.
+            
             if (cls === "overload") {
               if (!recoveryAttemptedRef.current) {
                 const fallback = resolveFallbackProvider(config, providerConfig);
                 if (fallback) {
-                  // Arm the retry; submitUserPrompt re-issues the same prompt
-                  // after this stream returns. Keep isLoading=true so the
-                  // retry renders as one continuous turn.
+                  
+                  
+                  
                   recoveryAttemptedRef.current = true;
                   retryFallbackRef.current = fallback;
                   streamingTextRef.current = "";
@@ -1766,8 +1757,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                   return;
                 }
               }
-              // No fallback configured, or already retried once → surface a
-              // clear overload message with a retry hint.
+              
+              
               setMessages((prev) => [
                 ...prev,
                 {
@@ -1810,9 +1801,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
       }
 
-      // Finalize the assistant message. Drop any still-running tool blocks
-      // (starts whose results never matched — e.g. concurrent same-tool calls)
-      // so they don't leave empty ⏺ entries in the committed transcript.
+      
+      
+      
       const remainingText = streamingTextRef.current;
       const remainingToolUse = streamingToolUseRef.current.filter(
         (b) => b.status !== "running",
@@ -1845,32 +1836,32 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   const submitUserPrompt = useCallback(
     async (trimmedInput: string, promptOverride?: string) => {
-      // UserPromptSubmit hooks (non-blocking).
+      
       runHooksFireAndForget("UserPromptSubmit", { prompt: trimmedInput, cwd: workingDirectory });
 
-      // fileHistory: snapshot the CURRENT on-disk state of every file touched
-      // by earlier turns, keyed by the 1-based index of the user message about
-      // to be appended. /rewind <N> restores snapshot N, so rewinding to this
-      // user message reverts files to their pre-turn state. (Files touched by
-      // the very first turn have no snapshot — the pre-session state is
-      // outside the fileHistory store's model; see utils/fileHistory.ts.)
+      
+      
+      
+      
+      
+      
       try {
         const files = [...touchedFilesRef.current];
         if (files.length > 0) {
           void snapshotFiles(messagesLenRef.current + 1, files, workingDirectory).catch(() => {});
         }
       } catch {
-        // best-effort — snapshots must never block the chat loop
+        
       }
 
-      // Turn bookkeeping for the finish-notify rule + overload recovery guard.
-      // retryFallbackRef is cleared here too so a leftover armed retry from a
-      // turn that died mid-stream can never fire on a later turn.
+      
+      
+      
       turnStartRef.current = Date.now();
       recoveryAttemptedRef.current = false;
       retryFallbackRef.current = null;
 
-      // Add user message
+      
       const userMessage: Message = {
         role: "user",
         content: trimmedInput,
@@ -1879,7 +1870,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
 
-      // Check if API key is configured
+      
       if (!activeApiKey) {
         setMessages((prev) => [
           ...prev,
@@ -1899,24 +1890,24 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return;
       }
 
-      // Create abort controller for this run
+      
       const abortController = new AbortController();
       abortRef.current = abortController;
 
-      // Sync token tracker and context manager to current model
+      
       tokenTrackerRef.current.setModel(activeModel);
       contextManagerRef.current.setModel(activeModel);
 
       try {
         const agentConfig = agentManager.getConfig(currentAgent);
 
-        // C++ owns history + memory + compaction; session is persistent across turns.
+        
         const { session } = getOrCreateMemorySession({
           providerConfig,
           agentConfig,
           workingDir: workingDirectory,
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-          maxContextTokens: 1_000_000, // DeepSeek v4: 1M context window
+          maxContextTokens: 1_000_000, 
           requestPermission,
           mcpServers,
           abortController,
@@ -1938,12 +1929,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
         await processAgentStream(events);
 
-        // One-shot overload recovery: if the stream ended with an overload
-        // error AND a fallback was armed (error case in processAgentStream),
-        // recreate the memory session with the fallback provider config and
-        // re-issue the same prompt once. Guarded by recoveryAttemptedRef so
-        // this can never loop. (Cast defeats TS flow-narrowing, which sees the
-        // null reset above and would otherwise type the read as null.)
+        
+        
+        
+        
+        
+        
         const fallback = retryFallbackRef.current as ProviderConfig | null;
         if (fallback && !abortController.signal.aborted) {
           retryFallbackRef.current = null;
@@ -1980,8 +1971,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             });
             await processAgentStream(retryEvents);
           } catch (retryError) {
-            // If the fallback attempt itself throws, surface the ORIGINAL
-            // overload condition via the overload hint.
+            
+            
             setMessages((prev) => [
               ...prev,
               {
@@ -2003,10 +1994,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       } catch (error) {
         const raw = (error as Error).message || String(error);
 
-        // Route thrown errors through the same classification as stream
-        // errors (session/model creation failures). No fallback retry here —
-        // if session creation itself failed, re-creating it is unlikely to
-        // succeed; surface the actionable hint instead.
+        
+        
+        
+        
         const cls = classifyError(raw);
         if (cls === "prompt-too-long") {
           setMessages((prev) => [
@@ -2049,7 +2040,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     ],
   );
 
-  // ── Slash commands ────────────────────────────────────────────────────
+  
   const handleCommand = useCallback(
     (cmd: string): boolean => {
       const parts = cmd.trim().split(/\s+/);
@@ -2059,13 +2050,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       switch (command) {
         case "/help": {
-          // Rendered by the ported HelpView pane (catalog in
-          // src/constants/help.ts); Esc closes it.
+          
+          
           setShowHelp(true);
           return true;
         }
 
-        // ── /statusline (custom status line, Claude Code parity) ────────
+        
         case "/statusline": {
           const current = (() => {
             try {
@@ -2128,7 +2119,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /setup ─────────────────────────────────────────────────────
+        
         case "/setup": {
           const mode = (parts[1] || "").toLowerCase();
 
@@ -2159,7 +2150,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             return true;
           }
 
-          // /setup <api-key> [model]
+          
           const key = parts[2];
           const modelOverride = parts[3];
 
@@ -2201,10 +2192,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /model ─────────────────────────────────────────────────────
+        
         case "/model": {
           if (!arg) {
-            // Show current model info
+            
             setMessages((prev) => [
               ...prev,
               {
@@ -2227,7 +2218,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             return true;
           }
 
-          // /model <model-name> or /model <profile-name>
+          
           const result = switchModel(arg);
           if (result) {
             persistSettings({ model: arg, apiKey: config.profiles?.[arg]?.apiKey });
@@ -2236,7 +2227,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               { role: "system", content: `✓ ${result}\n✓ Saved to ~/.deepseek-code/settings.json`, timestamp: Date.now() },
             ]);
           } else {
-            // Try as a raw model name
+            
             setActiveModel(arg);
             persistSettings({ model: arg });
             setMessages((prev) => [
@@ -2251,7 +2242,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /models ────────────────────────────────────────────────────
+        
         case "/models": {
           const profileEntries = Object.entries(config.profiles || {});
 
@@ -2283,9 +2274,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /apikey ────────────────────────────────────────────────────
+        
         case "/apikey": {
-          const key = restArgs.join(""); // API keys may have special chars
+          const key = restArgs.join(""); 
           if (!key) {
             setMessages((prev) => [
               ...prev,
@@ -2315,7 +2306,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /baseurl ───────────────────────────────────────────────────
+        
         case "/baseurl": {
           const url = restArgs.join(" ").trim();
           if (!url) {
@@ -2351,7 +2342,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /agent ─────────────────────────────────────────────────────
+        
         case "/agent": {
           if (!arg) {
             const agents = agentManager.listAgents();
@@ -2417,7 +2408,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             return true;
           }
 
-          // Build a summary from the conversation for the agent's context
+          
           const userMessages = messages
             .filter((m) => m.role === "user")
             .slice(-8)
@@ -2438,9 +2429,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             summaryParts.push(`Tool calls made: ${toolCount}`);
           }
 
-          // Reset the C++ session so the next query starts fresh
+          
           resetMemorySession();
-          // Reset TypeScript-side context tracking so the bar reflects freed space
+          
           contextManagerRef.current.reset();
           setTokenCount(0);
           setInputTokens(0);
@@ -2618,7 +2609,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               },
             ]);
           } else if (!arg) {
-            // No argument → toggle
+            
             const next = thinkingMode === "off" ? "whale" : "off";
             setThinkingMode(next);
             setMessages((prev) => [
@@ -2648,11 +2639,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /effort ────────────────────────────────────────────────────
+        
         case "/effort": {
-          // Ported from claude-code-main/src/commands/effort/effort.tsx —
-          // same args (low|medium|high|max|auto|current|status|help), same
-          // messages and level descriptions.
+          
+          
+          
           const EFFORT_DESCRIPTIONS: Record<string, string> = {
             low: "Quick, straightforward implementation",
             medium: "Balanced approach with standard testing",
@@ -2682,9 +2673,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           }
 
           if (!arg) {
-            // The reference prints the current level; ours additionally opens
-            // the interactive EffortCallout selector (the dialog with the
-            // ◯ low · ◐ medium · ● high legend). Esc/30s dismisses.
+            
+            
+            
             setShowEffortCallout(true);
             return true;
           }
@@ -2737,7 +2728,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           try {
             saveSettings({ effort: level });
           } catch {
-            // best-effort — settings persistence must not block the command
+            
           }
           setEffortLevel(level);
           setMessages((prev) => [
@@ -2793,9 +2784,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         case "/cost":
-          // Legacy cost readout — stays on the old SettingsPanel overlay.
-          setSettingsOverlayTab("usage");
-          setShowSettingsOverlay(true);
+          
+          setSettingsTab("Usage");
+          setShowSettingsUI(true);
           return true;
 
         case "/usage":
@@ -2804,9 +2795,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
 
         case "/settings":
-          // Legacy settings overlay — unchanged.
-          setSettingsOverlayTab("settings");
-          setShowSettingsOverlay(true);
+          
+          setSettingsTab("Config");
+          setShowSettingsUI(true);
           return true;
 
         case "/status":
@@ -2820,19 +2811,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
 
         case "/stats":
-          setSettingsOverlayTab("stats");
-          setShowSettingsOverlay(true);
+          
+          
+          setSettingsTab("Stats");
+          setShowSettingsUI(true);
           return true;
 
         case "/exit":
           if (activeSessionHash) {
-            // Show resume hint before exiting — printed to stdout after Ink unmounts
+            
             process.stderr.write(`\n  Session saved: ${activeSessionHash}\n  Resume with: deepseek-code --resume ${activeSessionHash}\n\n`);
           }
           handleExit();
           return true;
 
-        // ── /sessions ───────────────────────────────────────────────────
+        
         case "/sessions": {
           const sessions = listSessions();
           if (sessions.length === 0) {
@@ -2862,7 +2855,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /resume ─────────────────────────────────────────────────────
+        
         case "/resume": {
           if (!arg) {
             setMessages((prev) => [
@@ -2906,7 +2899,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        // ── /commit ─────────────────────────────────────────────────────
+        
         case "/commit": {
           const { execSync } = require("child_process");
           let isGit = false;
@@ -2939,7 +2932,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             gitBranch = execSync("git branch --show-current", { cwd: workingDirectory }).toString();
             gitLog = execSync("git log --oneline -10", { cwd: workingDirectory }).toString();
           } catch (e) {
-            // Safe fallback
+            
           }
 
           const prompt = `## Context
@@ -2990,7 +2983,7 @@ Based on the above changes, create a git commit:
           return true;
         }
 
-        // ── /pr ─────────────────────────────────────────────────────────
+        
         case "/pr": {
           const { execSync } = require("child_process");
           let isGit = false;
@@ -3031,7 +3024,7 @@ Based on the above changes, create a git commit:
               } catch {}
             }
           } catch (e) {
-            // Safe fallback
+            
           }
 
           const prompt = `## Context
@@ -3079,7 +3072,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /copy ───────────────────────────────────────────────────────
+        
         case "/copy": {
           const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isError && m.content);
           if (assistantMsgs.length === 0) {
@@ -3141,7 +3134,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /export ─────────────────────────────────────────────────────
+        
         case "/export": {
           const formatArg = (parts[1] || "markdown").toLowerCase();
           if (formatArg !== "markdown" && formatArg !== "md" && formatArg !== "json") {
@@ -3168,14 +3161,14 @@ Based on the above changes:
             return true;
           }
 
-          // Interactive export dialog (ported ExportView): format choice +
-          // include-thinking toggle; the write happens on Enter. The dialog
-          // performs the write itself via onExport and shows the result.
+          
+          
+          
           setExportDialog({ defaultFormat: format });
           return true;
         }
 
-        // ── /search ─────────────────────────────────────────────────────
+        
         case "/search": {
           const queryStr = restArgs.join(" ");
           if (!queryStr) {
@@ -3214,8 +3207,8 @@ Based on the above changes:
             return true;
           }
 
-          // Interactive results overlay (ported SearchResultsView): ↑↓
-          // navigate, n/N next match, Enter jumps to the message, Esc closes.
+          
+          
           setSearchResults({
             query: queryStr,
             matches: result.matches.slice(0, 20),
@@ -3224,7 +3217,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /skills ─────────────────────────────────────────────────────
+        
         case "/skills": {
           const skills = listSkills();
 
@@ -3295,7 +3288,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /diff ───────────────────────────────────────────────────────
+        
         case "/diff": {
           const { execSync } = require("child_process");
           let isGit = false;
@@ -3355,7 +3348,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /history ────────────────────────────────────────────────────
+        
         case "/messages":
         case "/history": {
           const lines = messages.map((m, i) => {
@@ -3380,7 +3373,7 @@ Based on the above changes:
           return true;
         }
 
-        // ── /rewind ─────────────────────────────────────────────────────
+        
         case "/rewind": {
           if (!arg) {
             setMessages((prev) => [
@@ -3410,13 +3403,13 @@ Based on the above changes:
           const truncated = messages.slice(0, targetDepth);
           setMessages(truncated);
 
-          // Restore on-disk file snapshots captured at this transcript depth.
-          // snapshotFiles runs at each user-turn start keyed by the 1-based
-          // message index, so snapshot N holds the file state right before
-          // message N was appended. Rewinding to message N therefore reverts
-          // files to the state the transcript implies. Messages with no
-          // snapshot (assistant replies, the very first message) leave files
-          // untouched — hasSnapshot guards that.
+          
+          
+          
+          
+          
+          
+          
           void (async () => {
             const restored: string[] = [];
             if (hasSnapshot(targetDepth)) {
@@ -3425,29 +3418,29 @@ Based on the above changes:
                 for (const entry of entries) {
                   try {
                     if (entry.content === null) {
-                      await rm(entry.path, { force: true }); // deletion marker
+                      await rm(entry.path, { force: true }); 
                     } else {
                       await mkdir(dirname(entry.path), { recursive: true });
                       await writeFile(entry.path, entry.content, "utf-8");
                     }
                     restored.push(entry.path);
                   } catch {
-                    // per-file best-effort — a bad file must not abort the rewind
+                    
                   }
                 }
               } catch {
-                // snapshot unreadable — rewind proceeds without file restore
+                
               }
             }
 
-            // Drop snapshots deeper than the new depth (they describe a
-            // transcript that no longer exists) so a later /rewind cannot
-            // restore stale file state. Also GCs orphaned blobs.
+            
+            
+            
             for (let k = targetDepth + 1; k <= oldDepth; k++) {
               try {
                 await dropSnapshot(k);
               } catch {
-                // best-effort
+                
               }
             }
 
@@ -3476,15 +3469,15 @@ Based on the above changes:
           return true;
         }
 
-        // ── /doctor ─────────────────────────────────────────────────────
+        
         case "/doctor": {
           const lines: string[] = ["━━━ DeepSeek Code Diagnostic (Doctor) ━━━━━━━━━━━━", ""];
 
-          // 1. Check Bun/Node version
+          
           const isBun = typeof Bun !== "undefined";
           lines.push(`  ${isBun ? "✓" : "✓"} Runtime:      ${isBun ? `Bun v${Bun.version}` : `Node ${process.version}`}`);
 
-          // 2. Check native C++ bindings
+          
           let bindingsOk = false;
           let bindingsError = "";
           try {
@@ -3495,7 +3488,7 @@ Based on the above changes:
           }
           lines.push(`  ${bindingsOk ? "✓" : "✗"} C++ Native:   ${bindingsOk ? "Loaded successfully" : `Failed to load: ${bindingsError}`}`);
 
-          // 3. Check Git installation
+          
           let gitOk = false;
           let gitVersion = "";
           try {
@@ -3507,12 +3500,12 @@ Based on the above changes:
           }
           lines.push(`  ${gitOk ? "✓" : "✗"} Git CLI:      ${gitOk ? gitVersion : "Not found or not executable"}`);
 
-          // 4. Check Config
+          
           const keySet = !!activeApiKey;
           lines.push(`  ${keySet ? "✓" : "⚠"} API Key:      ${keySet ? `Configured (${activeApiKey.slice(0, 8)}…${activeApiKey.slice(-4)})` : "Not set (set with /setup or /apikey)"}`);
           lines.push(`  ✓ Active Model: ${activeProvider}/${activeModel}`);
 
-          // Initial render before network check
+          
           setMessages((prev) => [
             ...prev,
             {
@@ -3522,7 +3515,7 @@ Based on the above changes:
             },
           ]);
 
-          // Asynchronously test network so we don't freeze the TUI
+          
           setTimeout(async () => {
             let connOk = false;
             let timeMs = 0;
@@ -3564,13 +3557,13 @@ Based on the above changes:
           return true;
         }
 
-        // ── /plugin ─────────────────────────────────────────────────────
+        
         case "/plugin":
         case "/plugins":
           setShowPluginOverlay(true);
           return true;
 
-        // ── Claude Code command parity additions ────────────────────────
+        
         case "/init": {
           const file = resolve(workingDirectory, "CLAUDE.md");
           if (existsSync(file)) {
@@ -3636,7 +3629,7 @@ Based on the above changes:
 
         case "/theme": {
           if (!arg) {
-            // Interactive ThemePicker (reference parity — /theme opens it).
+            
             setShowThemePicker(true);
             return true;
           }
@@ -3774,18 +3767,18 @@ Based on the above changes:
         }
 
         default: {
-          // Custom slash commands (markdown files under .deepseek-code/commands/).
+          
           const custom = customCommands.find((c) => c.name === command.slice(1).toLowerCase());
           if (custom) {
             void submitUserPrompt(cmd, renderCommand(custom, restArgs));
             return true;
           }
-          const pluginCommandName = command.slice(1).trim().toLowerCase(); // strip leading "/"
+          const pluginCommandName = command.slice(1).trim().toLowerCase(); 
           try {
             const plugins = loadInstalledPlugins();
             const enabled = plugins.filter((p) => p.enabled);
             for (const p of enabled) {
-              // Claude Code plugin commands/ (marketplace retro-compat)
+              
               if (p.manifest.commands) {
                 const pcmd = p.manifest.commands.find(
                   (c) => c.name.toLowerCase() === pluginCommandName,
@@ -3835,11 +3828,11 @@ Based on the above changes:
     ],
   );
 
-  // ── Submit handler ────────────────────────────────────────────────────
+  
   const handleSubmit = useCallback(async (overrideInput?: string) => {
     const rawInput = overrideInput !== undefined ? overrideInput : input;
     if (!rawInput.trim()) return;
-    // Command picker is open — Enter selects a command, doesn't submit
+    
     if (pickerActiveRef.current && overrideInput === undefined) return;
 
     const trimmedInput = rawInput.trim();
@@ -3848,17 +3841,17 @@ Based on the above changes:
     }
     setInput("");
 
-    // Push to input history (skip duplicates)
+    
     if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== trimmedInput) {
       try {
         inputHistory.current = appendHistory(trimmedInput);
       } catch {
-        // best-effort persistence
+        
       }
     }
     historyIndex.current = -1;
 
-    // Slash commands while generating are blocked (except Esc interrupt), to keep state simple
+    
     if (isLoading && trimmedInput.startsWith("/")) {
       setMessages((prev) => [
         ...prev,
@@ -3871,10 +3864,10 @@ Based on the above changes:
       return;
     }
 
-    // Handle slash commands when idle
+    
     if (!isLoading && trimmedInput.startsWith("/")) {
       if (handleCommand(trimmedInput)) return;
-      // Unknown command
+      
       setMessages((prev) => [
         ...prev,
         {
@@ -3886,7 +3879,7 @@ Based on the above changes:
       return;
     }
 
-    // Auto-detect API key paste (starts with sk- and no key configured)
+    
     if (!activeApiKey && trimmedInput.startsWith("sk-") && trimmedInput.length >= 20 && !trimmedInput.includes(" ")) {
       setActiveApiKey(trimmedInput);
       setActiveProvider("deepseek");
@@ -3906,7 +3899,7 @@ Based on the above changes:
       return;
     }
 
-    // While generating, queue normal prompts (Claude Code style)
+    
     if (isLoading) {
       setQueuedSubmissions((prev) => [...prev, trimmedInput]);
       return;
@@ -3915,12 +3908,12 @@ Based on the above changes:
     await submitUserPrompt(trimmedInput);
   }, [input, isLoading, handleCommand, submitUserPrompt]);
 
-  // Keep handleSubmit ref in sync so command picker Enter can call it
+  
   useEffect(() => {
     handleSubmitRef.current = handleSubmit;
   }, [handleSubmit]);
 
-  // Auto-drain queued prompts once current generation is done
+  
   useEffect(() => {
     if (isLoading) return;
     if (queuedSubmissions.length === 0) return;
@@ -3930,18 +3923,18 @@ Based on the above changes:
     void submitUserPrompt(next!);
   }, [isLoading, queuedSubmissions, submitUserPrompt]);
 
-  // ── Render ────────────────────────────────────────────────────────────
-  // ThemeProvider mounts the ported design-system context (used by
-  // ExportView/SearchResultsView/PermissionPrompt) and keeps the legacy
-  // mutable `theme` module in sync with the persisted themeMode.
+  
+  
+  
+  
   return (
     <ThemeProvider
       initialState={themeMode}
       onThemeSave={(setting) => handleThemeModeChange(setting)}
     >
     {showOnboarding ? (
-      // First-time setup (Claude Code parity): full-screen step flow before
-      // the chat UI is usable.
+      
+      
       <Onboarding
         hasApiKey={!!activeApiKey}
         initialTheme={themeMode}
@@ -3949,12 +3942,12 @@ Based on the above changes:
         onDone={handleOnboardingDone}
       />
     ) : (
-    // Terminal-height ceiling (Claude Code: <AlternateScreen>'s
-    // <Box height={rows}>): chat flexGrows in the middle, the bottom slot
-    // (input + status) is flexShrink={0} so it stays pinned to the last
-    // rows no matter how many messages are on screen.
+    
+    
+    
+    
     <Box flexDirection="column" height={termRows}>
-      {/* Chat area */}
+      {}
       <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
         <ChatPanel
           messages={messages}
@@ -3971,10 +3964,15 @@ Based on the above changes:
           selectedToolCallId={selectedToolCallId}
           streamingBlocks={streamingBlocks}
           isTranscriptMode={isTranscriptMode}
+          freezeWelcome={
+            showSettingsUI || showEffortCallout || showThemePicker || showHelp ||
+            exportDialog !== null || searchResults !== null || showHistorySearch ||
+            showPluginOverlay || showSessionPicker || pendingPermission !== null
+          }
         />
       </Box>
 
-      {/* Permission prompt overlay */}
+      {}
       {pendingPermission && (
         <PermissionPrompt
           toolName={pendingPermission.toolName}
@@ -3994,9 +3992,7 @@ Based on the above changes:
         />
       )}
 
-      {/* Bottom slot — input + status bar + overlays. flexShrink={0} pins
-          it to the terminal's last rows (Claude Code: bottom slot outside
-          the ScrollBox never moves). */}
+      {}
       <Box flexShrink={0} flexDirection="column">
       {showThemePicker ? (
         <ThemePicker
@@ -4036,8 +4032,8 @@ Based on the above changes:
           totalMatches={searchResults.total}
           onClose={() => setSearchResults(null)}
           onJump={(messageIndex) => {
-            // Jump the transcript to the match's message: select its first
-            // tool block in Inspect Mode if it has one.
+            
+            
             const blocks = getFlatToolBlocks();
             const idx = blocks.findIndex((b) => b.messageIdx === messageIndex);
             if (idx >= 0) {
@@ -4063,40 +4059,13 @@ Based on the above changes:
         />
       ) : showSettingsUI ? (
         <Settings defaultTab={settingsTab} onClose={() => setShowSettingsUI(false)} />
-      ) : showSettingsOverlay ? (
-        <SettingsPanel
-          onClose={() => setShowSettingsOverlay(false)}
-          config={config}
-          workingDirectory={workingDirectory}
-          activeModel={activeModel}
-          activeProvider={activeProvider}
-          activeApiKey={activeApiKey}
-          activeBaseURL={activeBaseURL}
-          tokenCount={tokenCount}
-          cost={cost}
-          apiDurationMs={apiDurationMs}
-          sessionStartMs={sessionStartMs.current}
-          linesAdded={sessionLinesAdded}
-          linesRemoved={sessionLinesRemoved}
-          mcpCount={mcpEnabledCount}
-          sessionId={activeSessionHash || "new-session"}
-          initialTab={settingsOverlayTab}
-          themeMode={themeMode.startsWith("light") ? "light" : "dark"}
-          onChangeThemeMode={(mode) => handleThemeModeChange(mode)}
-          thinkingMode={thinkingMode}
-          onChangeThinkingMode={handleThinkingModeChange}
-          dangerouslySkipPermissions={skipPermissions}
-          onChangeSkipPermissions={handleSkipPermissionsChange}
-          settings={settingsSnapshot}
-          onUpdateSetting={handleUpdateSetting}
-        />
       ) : showPluginOverlay ? (
         <PluginPanel
           onClose={() => setShowPluginOverlay(false)}
           onRefreshPlugins={refreshPlugins}
         />
       ) : isTranscriptMode ? (
-        /* Transcript mode footer matching Claude Code */
+        
         <Box
           borderStyle="single"
           borderTop={true}
@@ -4115,9 +4084,9 @@ Based on the above changes:
           </Text>
         </Box>
       ) : (
-        /* Normal mode elements */
+        
         <>
-          {/* Shortcut/options panel */}
+          {}
           {showShortcuts && (
             <ShortcutOverlay
               thinkingMode={thinkingMode}
@@ -4126,20 +4095,20 @@ Based on the above changes:
             />
           )}
 
-          {/* Queue preview */}
+          {}
           {queuedSubmissions.length > 0 && (
             <QueuePreview queueItems={queuedSubmissions} />
           )}
 
-          {/* Live todo list (driven by the TodoWrite tool) */}
+          {}
           {tasksExpanded && <TodoList todos={todos} selectedIndex={tasksSelectedIndex} />}
 
-          {/* @-file mention dropdown */}
+          {}
           {mention && !mentionSuppressed && mentionMatches.length > 0 && (
             <FileMentions matches={mentionMatches} selectedIndex={mentionIndex} query={mention.query} />
           )}
 
-          {/* Input prompt */}
+          {}
           <TextInput
             value={input}
             onChange={handleInputChange}
@@ -4154,7 +4123,7 @@ Based on the above changes:
             isPickerActive={showCommandPicker}
           />
 
-          {/* Command picker — shown below the prompt (Claude-style) */}
+          {}
           {showCommandPicker && (
             <CommandPicker
               commands={filteredCommands}
@@ -4162,7 +4131,7 @@ Based on the above changes:
             />
           )}
 
-          {/* Status bar (footer row — Claude Code PromptInputFooter parity) */}
+          {}
           <StatusBar
             model={activeModel}
             agentName={currentAgent}
@@ -4198,7 +4167,7 @@ Based on the above changes:
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+
 
 function formatToolInput(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {

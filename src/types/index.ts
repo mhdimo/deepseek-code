@@ -1,8 +1,8 @@
-// Core types for DeepSeek Code
 
-// ─── Provider ───────────────────────────────────────────────────────────────
 
-/** Provider types — DeepSeek uses OpenAI-compatible API */
+
+
+
 export type ProviderType = "deepseek";
 
 export interface ProviderConfig {
@@ -18,7 +18,7 @@ export interface ProviderOptions {
   systemPrompt?: string;
 }
 
-// ─── Messages ───────────────────────────────────────────────────────────────
+
 
 export interface ToolUseBlock {
   toolName: string;
@@ -43,13 +43,13 @@ export interface Message {
   timestamp?: number;
   toolUse?: ToolUseBlock[];
   isError?: boolean;
-  /** Extended thinking / reasoning text (collapsed by default) */
+  
   thinking?: string;
-  /** Chronological list of text/tool blocks to prevent layout swapping */
+  
   blocks?: MessageBlock[];
 }
 
-// ─── Agent Events (streamed from agent → TUI) ──────────────────────────────
+
 
 export type AgentEvent =
   | { type: "text-delta"; text: string }
@@ -67,20 +67,20 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
-// ─── Query Events (from QueryEngine → TUI) ──────────────────────────────────
 
-/** Cost estimate for a single query step */
+
+
 export interface CostEstimate {
   inputCost: number;
   outputCost: number;
   totalCost: number;
 }
 
-/** Token budget configuration */
+
 export interface TokenBudget {
-  maxContextTokens: number;  // e.g. 64k for deepseek-chat
-  compactionThreshold: number; // 0.0–1.0, compact when usage exceeds this fraction
-  reservedForResponse: number; // tokens reserved for the model's response
+  maxContextTokens: number;  
+  compactionThreshold: number; 
+  reservedForResponse: number; 
 }
 
 export type QueryEvent =
@@ -98,7 +98,7 @@ export type QueryEvent =
   | { type: "finish"; usage: TokenUsage; cost: CostEstimate; finishReason: string }
   | { type: "error"; error: string };
 
-// ─── Tools ──────────────────────────────────────────────────────────────────
+
 
 export interface ToolResult {
   success: boolean;
@@ -106,11 +106,11 @@ export interface ToolResult {
   error?: string;
 }
 
-// ─── Agent ──────────────────────────────────────────────────────────────────
+
 
 export type AgentName = "code" | "plan" | "review";
 
-/** Thinking mode - whalethink enables extended reasoning with blue glow effect */
+
 export type ThinkingMode = "off" | "whale";
 
 export interface AgentConfig {
@@ -131,7 +131,7 @@ export interface PermissionRuleset {
   allowNetwork: boolean;
 }
 
-// ─── Session ────────────────────────────────────────────────────────────────
+
 
 export interface SessionState {
   messages: Message[];
@@ -142,9 +142,9 @@ export interface SessionState {
   cost: number;
 }
 
-// ─── Model Profiles ─────────────────────────────────────────────────────────
 
-/** A named model profile with its own provider, key, and endpoint */
+
+
 export interface ModelProfile {
   provider: ProviderType;
   model: string;
@@ -153,12 +153,9 @@ export interface ModelProfile {
   displayName?: string;
 }
 
-// ─── MCP Servers ────────────────────────────────────────────────────────────
 
-/**
- * Minimal MCP server config (compatible with common MCP JSON patterns).
- * This is used for discovery and runtime toggling in the TUI.
- */
+
+
 export interface MCPServerConfig {
   command: string;
   args?: string[];
@@ -167,7 +164,7 @@ export interface MCPServerConfig {
   enabled?: boolean;
 }
 
-// ─── Config ─────────────────────────────────────────────────────────────────
+
 
 export interface DeepSeekCodeConfig {
   provider: ProviderType;
@@ -177,16 +174,16 @@ export interface DeepSeekCodeConfig {
   maxSteps?: number;
   defaultAgent?: AgentName;
   dangerouslySkipPermissions?: boolean;
-  /** Named model profiles for quick /model switching */
+  
   profiles?: Record<string, ModelProfile>;
-  /** Optional MCP server definitions loaded from config file */
+  
   mcpServers?: Record<string, MCPServerConfig>;
 }
 
-/** @deprecated Use DeepSeekCodeConfig */
+
 export type ZCodeConfig = DeepSeekCodeConfig;
 
-// ─── Task & Todo management ─────────────────────────────────────────────────
+
 
 export interface TaskItem {
   id: string;

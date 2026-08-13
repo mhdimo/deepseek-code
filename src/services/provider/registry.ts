@@ -1,8 +1,8 @@
-// Provider registry — returns ai-sdk-cpp (native C++) Model instances.
-//
-// The engine is now the C++ SDK via the Node binding (was the Vercel AI SDK).
-// DeepSeek is OpenAI-compatible, so we use the binding's createDeepSeek, which
-// delegates to the C++ OpenAI provider with DeepSeek's base URL + API key.
+
+
+
+
+
 
 import { createDeepSeek, type Model, type ProviderInstance } from "ai-sdk-cpp";
 import type { ProviderConfig, ProviderType } from "../../types/index.js";
@@ -11,7 +11,7 @@ const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-chat";
 
 export interface ProviderAdapter {
-  /** Build a native (ai-sdk-cpp) Model from a provider config. */
+  
   createModel: (config: ProviderConfig) => Model;
   notes?: string;
 }
@@ -35,7 +35,7 @@ export function registerProviderAdapter(type: ProviderType, adapter: ProviderAda
   PROVIDER_ADAPTERS[type] = adapter;
 }
 
-/** Create a native ai-sdk-cpp Model from a provider config. */
+
 export function createModel(config: ProviderConfig): Model {
   const adapter = PROVIDER_ADAPTERS[config.type] || PROVIDER_ADAPTERS.deepseek;
   return adapter.createModel(config);

@@ -1,18 +1,18 @@
-// BriefTool — delivers a deliberate user-facing notification (a "brief")
-//
-// Distinct from casual streaming output: the brief is surfaced as a
-// highlighted card in the TUI via the onToolResult hook. The model returns
-// a formatted string (the rendered content) and the integrator/TUI can
-// inspect the input metadata (title, status, priority) to style or route it.
-//
-// Read-only and concurrency-safe: it mutates no shared agent state and only
-// invokes the optional onToolResult callback.
+
+
+
+
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
 import { DESCRIPTION, BRIEF_TOOL_NAME } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const BriefInputSchema = z.object({
   message: z
@@ -42,7 +42,7 @@ const BriefInputSchema = z.object({
 
 type BriefInput = z.infer<typeof BriefInputSchema>;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 
 const PRIORITY_ICON: Record<NonNullable<BriefInput["priority"]>, string> = {
   normal: "•",
@@ -54,12 +54,7 @@ const STATUS_TAG: Record<BriefInput["status"], string> = {
   proactive: "proactive",
 };
 
-/**
- * Render the brief into a plain-text string that is also useful as the tool
- * result returned to the model. The TUI may render its own card from the
- * input metadata passed through onToolResult; this string is the fallback /
- * transcript record.
- */
+
 function renderBrief(input: BriefInput): string {
   const priority = input.priority ?? "normal";
   const icon = PRIORITY_ICON[priority];
@@ -72,7 +67,7 @@ function renderBrief(input: BriefInput): string {
   return `${header}\n\n${input.message}`;
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const BriefTool = buildTool({
   name: BRIEF_TOOL_NAME,
@@ -88,8 +83,8 @@ export const BriefTool = buildTool({
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
 
-  // No permission prompt — sending a message to the user is always allowed
-  // and is a read-only operation with respect to the agent's environment.
+  
+  
   async checkPermissions() {
     return { approved: true };
   },
@@ -100,9 +95,9 @@ export const BriefTool = buildTool({
   ): Promise<ToolResult<string>> {
     const data = renderBrief(input);
 
-    // Surface the brief to the TUI through the existing onToolResult hook.
-    // The integrator can detect toolName === "Brief" in the handler and render
-    // a highlighted card using input.title / input.status / input.priority.
+    
+    
+    
     if (context.onToolResult) {
       context.onToolResult(BRIEF_TOOL_NAME, input, data, false);
     }

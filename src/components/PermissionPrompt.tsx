@@ -7,11 +7,11 @@ import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
 interface PermissionPromptProps {
   toolName: string;
   description: string;
-  /** Full file path for file-related tools (Write, Edit) */
+  
   filePath?: string;
   onApprove: (feedback?: string) => void;
   onDeny: (feedback?: string) => void;
-  /** When true, skip preview truncation so the full diff is visible. */
+  
   isTranscriptMode?: boolean;
 }
 
@@ -19,8 +19,8 @@ interface DiffLineProps {
   line: string;
 }
 
-// Claude Code's amend-mode placeholders (permissions/PermissionPrompt.tsx):
-// shown dimmed ("the dim feedback line") until the user types feedback.
+
+
 const DEFAULT_PLACEHOLDERS = {
   accept: "tell Claude what to do next",
   reject: "tell Claude what to do differently",
@@ -64,7 +64,7 @@ export default function PermissionPrompt({
   const isFileEdit = toolName === "Write" || toolName === "Edit";
   const isBash = toolName === "Bash";
 
-  // Build options
+  
   const options = isFileEdit
     ? [
         { label: "Yes", value: "yes" as const, hasFeedback: true },
@@ -87,7 +87,7 @@ export default function PermissionPrompt({
   const [feedbackText, setFeedbackText] = useState("");
 
   useInput((input, key) => {
-    // ── Feedback input mode ─────────────────────────────────────
+    
     if (feedbackMode) {
       if (key.escape) {
         setFeedbackMode(false);
@@ -114,7 +114,7 @@ export default function PermissionPrompt({
       return;
     }
 
-    // ── Normal picker mode ──────────────────────────────────────
+    
     if (key.upArrow) {
       setSelectedIdx((prev) => Math.max(0, prev - 1));
       return;
@@ -144,7 +144,7 @@ export default function PermissionPrompt({
     if (key.escape) {
       onDeny();
     }
-    // Quick keys
+    
     if (input === "y" || input === "Y") {
       onApprove();
       return;
@@ -154,7 +154,7 @@ export default function PermissionPrompt({
     }
   });
 
-  // Build diff/content preview
+  
   const lines = description.split("\n");
   const diffOnly = lines.filter((l) => {
     const t = l.trimStart();
@@ -176,14 +176,14 @@ export default function PermissionPrompt({
     ? filePath.split("/").pop() || filePath
     : null;
 
-  // Structured Diff support. Account for the box chrome: round border (2 cols)
-  // + paddingX={1} (2 cols) = 4 cols, so the diff fills the inner width and its
-  // background reaches the border with no gap.
+  
+  
+  
   const cols = process.stdout.columns || 80;
   const diffWidth = Math.max(20, cols - 6);
   const hunk = isFileEdit ? parseDiffTextToHunk(description) : null;
 
-  // Header: bold tool name + dim arguments, Claude Code style ("Bash(cat foo)").
+  
   const firstDescLine = description.split("\n")[0]?.trim() ?? "";
   const rawArgs = isFileEdit ? shortFile ?? "file" : firstDescLine;
   const args = rawArgs.length > 60 ? rawArgs.slice(0, 60).trimEnd() + "…" : rawArgs;
@@ -218,7 +218,7 @@ export default function PermissionPrompt({
       paddingX={1}
       marginY={0}
     >
-      {/* Header — tool name + arguments, permission colored (Claude Code style) */}
+      {}
       <Text bold color={theme.permission}>
         {toolName}
         {args ? (
@@ -228,7 +228,7 @@ export default function PermissionPrompt({
         ) : null}
       </Text>
 
-      {/* Diff/content preview */}
+      {}
       {previewLines.length > 0 && (
         <Box flexDirection="column" marginTop={0}>
           {displayHunk ? (
@@ -254,16 +254,16 @@ export default function PermissionPrompt({
         </Box>
       )}
 
-      {/* Question + options picker */}
+      {}
       <Box flexDirection="column" marginTop={1}>
         <Text dimColor>Do you want to proceed?</Text>
         <Box flexDirection="column">
           {options.map((opt, i) => {
             const isActive = i === selectedIdx;
 
-            // Inline feedback mode — placeholder renders dimmed until the user
-            // types ("the dim feedback line", ported from Claude Code's select
-            // input option: color inactive while empty, bold once typed).
+            
+            
+            
             if (isActive && feedbackMode) {
               const placeholder =
                 opt.value === "no"
@@ -300,7 +300,7 @@ export default function PermissionPrompt({
         </Box>
       </Box>
 
-      {/* Footer hints */}
+      {}
       <Box marginTop={1}>
         <Text color={theme.inactive}>
           Esc to cancel

@@ -1,10 +1,10 @@
-// LLM-facing description for the PowerShell tool.
-//
-// Adapted from Claude Code's PowerShellTool prompt. Trimmed to fit DeepSeek's
-// buildTool pattern (static description string, no async edition detection),
-// and reworded for this codebase's tool names. PowerShell edition guidance is
-// conservative (assume Windows PowerShell 5.1) since we don't do edition
-// detection at build time.
+
+
+
+
+
+
+
 
 import { POWERSHELL_TOOL_NAME } from "./toolName.js";
 

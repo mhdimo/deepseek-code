@@ -1,7 +1,7 @@
-// SessionPicker — select and resume previous sessions with keyboard navigation
-//
-// Appears when the user presses ctrl+a.
-// Navigate with ↑↓, confirm with Enter, dismiss with Esc.
+
+
+
+
 
 import React from "react";
 import { Box, Text } from "ink";
@@ -34,7 +34,7 @@ export default function SessionPicker({
     );
   }
 
-  // Show up to 10 sessions for clean layout
+  
   const maxVisible = 10;
   const startIdx = Math.max(0, Math.min(selectedIndex - Math.floor(maxVisible / 2), sessions.length - maxVisible));
   const visibleSessions = sessions.slice(startIdx, startIdx + maxVisible);
@@ -50,7 +50,7 @@ export default function SessionPicker({
         const active = actualIdx === selectedIndex;
         const isLocal = session.workingDirectory === currentDirectory;
         
-        // Format paths to show home dir symbol ~
+        
         let dirDisplay = session.workingDirectory;
         const home = process.env.HOME;
         if (home && dirDisplay.startsWith(home)) {
@@ -63,17 +63,17 @@ export default function SessionPicker({
           <Box key={session.hash} flexDirection="row" alignItems="center">
             <Text color={theme.assistant}>{active ? "▸ " : "  "}</Text>
             
-            {/* Hash */}
+            {}
             <Text color={active ? theme.assistant : "cyan"} bold={active}>
               {session.hash.padEnd(12)}
             </Text>
 
-            {/* Date */}
+            {}
             <Text color="gray" dimColor={!active}>
               {formatDate(session.updatedAt || session.createdAt).padEnd(18)}
             </Text>
 
-            {/* Msg count & Model */}
+            {}
             <Text color="yellow" dimColor={!active}>
               {`${msgCount} msg${msgCount !== 1 ? "s" : ""}`.padEnd(8)}
             </Text>
@@ -81,7 +81,7 @@ export default function SessionPicker({
               {`(${session.agent})`.padEnd(10)}
             </Text>
 
-            {/* Directory (highlight local vs remote) */}
+            {}
             <Box flexGrow={1} marginLeft={1}>
               <Text color={isLocal ? "green" : "gray"} bold={isLocal && active}>
                 {isLocal ? "[local] " : "[remote] "}

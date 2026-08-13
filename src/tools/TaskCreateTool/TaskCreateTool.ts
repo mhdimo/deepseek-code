@@ -1,7 +1,7 @@
-// TaskCreateTool — creates a new task in the task store
-//
-// Always allowed (no user approval needed). Tasks are lightweight tracking
-// items with subject, description, and optional activeForm.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -28,7 +28,7 @@ export const TaskCreateTool = buildTool({
     const tasks = context.getTasks();
     const now = Date.now();
 
-    // Auto-increment ID
+    
     const maxId = tasks.reduce(
       (max, t) => Math.max(max, parseInt(t.id, 10) || 0),
       0,
@@ -57,7 +57,7 @@ export const TaskCreateTool = buildTool({
   isReadOnly: () => false,
   isConcurrencySafe: () => true,
 
-  // Always allowed — no permission prompt
+  
   async checkPermissions() {
     return { approved: true };
   },

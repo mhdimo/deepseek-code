@@ -1,7 +1,7 @@
-// EnterPlanModeTool — switches the agent into plan mode
-//
-// Plan mode is read-only — the agent can analyze and plan but not modify files.
-// This tool signals the intent to switch modes.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";

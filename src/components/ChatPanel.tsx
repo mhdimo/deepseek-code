@@ -1,11 +1,11 @@
-// Chat panel — renders welcome screen + scrolling messages + streaming state.
-//
-// Layout ported from Claude Code's Messages.tsx: assistant text streams under
-// a ⏺ dot, thinking blocks collapse to '∴ Thinking…', tool calls render with
-// their status dot; consecutive blocks stack without extra margins.
+
+
+
+
+
 
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
 import { basename } from "node:path";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import { theme, resolveColor } from "../utils/theme.js";
@@ -33,16 +33,15 @@ interface ChatPanelProps {
   selectedToolCallId?: string | null;
   streamingBlocks?: MessageBlock[];
   isTranscriptMode?: boolean;
+  
+  freezeWelcome?: boolean;
 }
 
-// Old messages render via <Static> (written once to scrollback). Only the last
-// RECENT_RENDERED messages live in a re-rendering Box so tool blocks there can
-// expand/collapse. Bounding the live region keeps streaming re-renders cheap
-// and prevents Ink from choking when the transcript is taller than the terminal.
-const RECENT_RENDERED = 12;
 
-/** Live streaming text: ⏺ + markdown + teal cursor block (Claude Code's
- *  streamingText layout with DeepSeek's ▊ typing cursor). */
+
+
+
+
 function StreamingText({ text }: { text: string }): React.ReactElement {
   return (
     <Box alignItems="flex-start" flexDirection="row" marginTop={1}>
@@ -73,9 +72,10 @@ export default React.memo(function ChatPanel({
   hasApiKey = true,
   selectedToolCallId = null,
   streamingBlocks = [],
+  freezeWelcome = false,
   isTranscriptMode = false,
 }: ChatPanelProps) {
-  // Sentiment detection based on last user message
+  
   const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
   const hasBadWord = lastUserMessage
     ? /\b(fuck|shit|bitch|asshole|bastard|damn|crap|cunt|dick|piss|bollocks|bugger|ass)\b/i.test(lastUserMessage.content)
@@ -84,7 +84,7 @@ export default React.memo(function ChatPanel({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {/* Welcome screen (only show when no messages) */}
+      {}
       {messages.length === 0 && (
         <Box marginBottom={1}>
           <WelcomeScreen
@@ -95,45 +95,25 @@ export default React.memo(function ChatPanel({
             providerType={providerType}
             baseURL={baseURL}
             hasApiKey={hasApiKey}
+            frozen={freezeWelcome}
           />
         </Box>
       )}
 
-      {/* Old messages → <Static> (rendered once into scrollback). Recent ones →
-          a re-rendering Box so their tool blocks can expand/collapse. */}
-      {(() => {
-        const splitAt = Math.max(0, messages.length - RECENT_RENDERED);
-        const oldItems = messages.slice(0, splitAt).map((m, i) => ({
-          key: `msg-${m.timestamp}-${i}`,
-          message: m,
-        }));
-        return (
-          <>
-            <Static items={oldItems}>
-              {(item) => (
-                <MessageView
-                  key={item.key}
-                  message={item.message}
-                  selectedToolCallId={selectedToolCallId}
-                  isTranscriptMode={isTranscriptMode}
-                />
-              )}
-            </Static>
-            <Box flexDirection="column">
-              {messages.slice(splitAt).map((m, idx) => (
-                <MessageView
-                  key={`msg-${m.timestamp}-${splitAt + idx}`}
-                  message={m}
-                  selectedToolCallId={selectedToolCallId}
-                  isTranscriptMode={isTranscriptMode}
-                />
-              ))}
-            </Box>
-          </>
-        );
-      })()}
+      {}
+      {}
+      <Box flexDirection="column">
+        {messages.map((m, idx) => (
+          <MessageView
+            key={`msg-${m.timestamp}-${idx}`}
+            message={m}
+            selectedToolCallId={selectedToolCallId}
+            isTranscriptMode={isTranscriptMode}
+          />
+        ))}
+      </Box>
 
-      {/* Live streaming output (not yet finalized) */}
+      {}
       {isLoading && (
         <Box flexDirection="column">
           {streamingBlocks && streamingBlocks.length > 0 ? (
@@ -164,14 +144,14 @@ export default React.memo(function ChatPanel({
             })
           ) : (
             <>
-              {/* Streaming tool blocks */}
+              {}
               {streamingToolUse.map((tool, i) => (
                 <Box key={tool.toolCallId || i} marginTop={1}>
                   <ToolBlock block={tool} isTranscriptMode={isTranscriptMode} />
                 </Box>
               ))}
 
-              {/* Streaming text */}
+              {}
               {streamingText ? (
                 <StreamingText text={streamingText} />
               ) : (

@@ -30,9 +30,9 @@ interface SettingsPanelProps {
   onChangeThinkingMode: (mode: any) => void;
   dangerouslySkipPermissions: boolean;
   onChangeSkipPermissions: (val: boolean) => void;
-  /** Snapshot of all persisted settings (for reading field values). */
+  
   settings: Record<string, unknown>;
-  /** Generic setter for any persisted setting key. */
+  
   onUpdateSetting: (key: string, value: unknown) => void;
 }
 
@@ -76,7 +76,7 @@ export default function SettingsPanel({
   const [statsView, setStatsView] = useState<"overview" | "models">("overview");
   const [settingsCursor, setSettingsCursor] = useState(0);
 
-  // Data-driven settings editor. Each row reads its value and applies changes.
+  
   const CLEANUP_OPTS = [7, 14, 30, 90];
   const OUTPUT_OPTS = ["default", "explanatory", "learning"];
   const settingRows = useMemo(
@@ -93,7 +93,7 @@ export default function SettingsPanel({
     [themeMode, thinkingMode, dangerouslySkipPermissions, settings, onChangeThemeMode, onChangeThinkingMode, onChangeSkipPermissions, onUpdateSetting],
   );
 
-  // Load global historical stats from disk
+  
   const globalStats = useMemo(() => {
     try {
       const { loadGlobalStats } = require("../state/stats.js");
@@ -103,7 +103,7 @@ export default function SettingsPanel({
     }
   }, []);
 
-  // Compute accumulated totals
+  
   const totals = useMemo(() => {
     const sessionWallMs = Date.now() - sessionStartMs;
 
@@ -112,20 +112,20 @@ export default function SettingsPanel({
     let totalWallMs = sessionWallMs;
     let totalLinesAdded = sessionLinesAdded;
     let totalLinesRemoved = sessionLinesRemoved;
-    let totalSessionsCount = globalStats.sessions.length + 1; // including current
+    let totalSessionsCount = globalStats.sessions.length + 1; 
 
-    // Model token tracking
+    
     const modelTotals: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }> = {};
     modelTotals[activeModel] = {
       input: tokenCount,
-      output: 0, // estimate or actual if available
+      output: 0, 
       cacheRead: 0,
       cacheWrite: 0,
       cost: sessionCost,
     };
 
     globalStats.sessions.forEach((s) => {
-      // Exclude current session from double counting if it's already saved
+      
       if (s.id === sessionId) return;
 
       totalCost += s.cost;
@@ -156,14 +156,14 @@ export default function SettingsPanel({
     };
   }, [globalStats, sessionCost, tokenCount, sessionApiDurationMs, sessionStartMs, sessionLinesAdded, sessionLinesRemoved, activeModel, sessionId]);
 
-  // Handle key navigation
+  
   useInput((input, key) => {
     if (key.escape || input === "q") {
       onClose();
       return;
     }
 
-    // Tab / Shift+Tab to switch tabs
+    
     if (key.tab) {
       const idx = TABS.findIndex((t) => t.id === activeTab);
       const nextIdx = key.shift
@@ -183,7 +183,7 @@ export default function SettingsPanel({
         return;
       }
       if (key.leftArrow || key.rightArrow || key.return) {
-        // Cycle the selected row through its options.
+        
         const row = settingRows[settingsCursor];
         if (row) {
           const idx = row.opts.indexOf(String(row.value));
@@ -234,20 +234,20 @@ export default function SettingsPanel({
     return parts.join(" ");
   };
 
-  // Generate heatmap grid
+  
   const heatmapGrid = useMemo(() => {
     const rows = 7;
     const cols = 52;
     const grid: string[][] = Array.from({ length: rows }, () => Array(cols).fill("·"));
 
-    // Find the Sunday of the week 52 weeks ago
+    
     const today = new Date();
     const startDate = new Date(today);
     startDate.setDate(today.getDate() - 364);
     const startDay = startDate.getDay();
-    startDate.setDate(startDate.getDate() - startDay); // align to Sunday
+    startDate.setDate(startDate.getDate() - startDay); 
 
-    // Fill grid values
+    
     for (let c = 0; c < cols; c++) {
       for (let r = 0; r < rows; r++) {
         const d = new Date(startDate);
@@ -255,7 +255,7 @@ export default function SettingsPanel({
         const dateStr = d.toISOString().split("T")[0]!;
         let tokens = globalStats.dailyUsage[dateStr] || 0;
 
-        // Include current session usage if it is today
+        
         const todayStr = today.toISOString().split("T")[0]!;
         if (dateStr === todayStr) {
           tokens += tokenCount;
@@ -275,7 +275,7 @@ export default function SettingsPanel({
       }
     }
 
-    // Generate Month Labels at correct column alignments
+    
     const monthLabels = Array(cols).fill(" ");
     let lastMonth = -1;
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -292,7 +292,7 @@ export default function SettingsPanel({
     return { grid, monthLabels };
   }, [globalStats.dailyUsage, tokenCount]);
 
-  // Compute streaks
+  
   const streakInfo = useMemo(() => {
     const dates = Object.keys(globalStats.dailyUsage).sort();
     if (dates.length === 0) {
@@ -325,7 +325,7 @@ export default function SettingsPanel({
       iterDate.setDate(iterDate.getDate() + 1);
     }
 
-    // Current streak ending today or yesterday
+    
     let currentStreak = 0;
     const checkDate = new Date();
     let checkDateStr = checkDate.toISOString().split("T")[0]!;
@@ -336,7 +336,7 @@ export default function SettingsPanel({
         checkDateStr = checkDate.toISOString().split("T")[0]!;
       }
     } else {
-      checkDate.setDate(checkDate.getDate() - 1); // yesterday
+      checkDate.setDate(checkDate.getDate() - 1); 
       checkDateStr = checkDate.toISOString().split("T")[0]!;
       while (usageDatesSet.has(checkDateStr)) {
         currentStreak++;
@@ -367,7 +367,7 @@ export default function SettingsPanel({
   const termWidth = process.stdout.columns || 80;
   const dividerLine = "─".repeat(termWidth);
 
-  // Mask sensitive key details
+  
   const displayKey = activeApiKey
     ? activeApiKey.startsWith("sk-")
       ? `${activeApiKey.slice(0, 10)}…${activeApiKey.slice(-4)}`
@@ -377,7 +377,7 @@ export default function SettingsPanel({
   return (
     <Box flexDirection="column" width="100%" marginY={0}>
       <Box flexDirection="column" borderStyle="single" borderColor="yellow" paddingX={1}>
-        {/* Tab bar header */}
+        {}
         <Box flexDirection="row" paddingBottom={0} marginTop={0}>
           {TABS.map((t) => {
             const active = activeTab === t.id;
@@ -392,7 +392,7 @@ export default function SettingsPanel({
           })}
         </Box>
 
-      {/* Settings Tab */}
+      {}
       {activeTab === "settings" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
           <Text bold color="white">Settings</Text>
@@ -422,7 +422,7 @@ export default function SettingsPanel({
         </Box>
       )}
 
-      {/* Status Tab */}
+      {}
       {activeTab === "status" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
           <Box flexDirection="column">
@@ -442,7 +442,7 @@ export default function SettingsPanel({
         </Box>
       )}
 
-      {/* Config Tab */}
+      {}
       {activeTab === "config" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
           <Text bold color="white">Configuration Sources</Text>
@@ -458,7 +458,7 @@ export default function SettingsPanel({
         </Box>
       )}
 
-      {/* Usage Tab */}
+      {}
       {activeTab === "usage" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
           <Text bold color="white">Session Usage</Text>
@@ -471,10 +471,10 @@ export default function SettingsPanel({
         </Box>
       )}
 
-      {/* Stats Tab */}
+      {}
       {activeTab === "stats" && (
         <Box flexDirection="column" paddingLeft={2} paddingBottom={1}>
-          {/* Sub-header tabs for stats overview/models */}
+          {}
           <Box flexDirection="row" marginBottom={1}>
             <Box marginRight={3}>
               <Text bold={statsView === "overview"} color={statsView === "overview" ? "white" : "gray"}>
@@ -490,7 +490,7 @@ export default function SettingsPanel({
 
           {statsView === "overview" ? (
             <Box flexDirection="column">
-              {/* Heatmap header: Months */}
+              {}
               <Box paddingLeft={6} height={1}>
                 <Text color="gray">
                   {heatmapGrid.monthLabels.map((lbl, idx) => (
@@ -501,7 +501,7 @@ export default function SettingsPanel({
                 </Text>
               </Box>
 
-              {/* Heatmap rows */}
+              {}
               {heatmapGrid.grid.map((row, rIdx) => {
                 let dayLabel = "   ";
                 if (rIdx === 1) dayLabel = "Mon";
@@ -531,7 +531,7 @@ export default function SettingsPanel({
                 );
               })}
 
-              {/* Heatmap Legend */}
+              {}
               <Box paddingLeft={6} marginTop={1}>
                 <Text dimColor>Less </Text>
                 <Text color="gray">· </Text>
@@ -542,7 +542,7 @@ export default function SettingsPanel({
                 <Text dimColor>More</Text>
               </Box>
 
-              {/* Stats indicators */}
+              {}
               <Box flexDirection="column" marginTop={1}>
                 <Text><Text color="gray">  Favorite model: </Text><Text bold color="cyan">{activeModel}</Text><Text color="gray">         Total tokens: </Text><Text bold color="white">{(totalTokensVal / 1000000).toFixed(1)}m</Text></Text>
                 <Text><Text color="gray">  Sessions:       </Text><Text bold>{totals.totalSessionsCount}</Text><Text color="gray">                    Longest session: </Text><Text bold>{formatDuration(totals.totalWallMs)}</Text></Text>
@@ -557,7 +557,7 @@ export default function SettingsPanel({
               </Box>
             </Box>
           ) : (
-            /* Models breakdown view */
+            
             <Box flexDirection="column">
               <Text bold color="white">Models Token Usage Breakdown</Text>
               <Box flexDirection="column" marginTop={1}>
@@ -580,7 +580,7 @@ export default function SettingsPanel({
         </Box>
       )}
 
-        {/* Footer controls instruction */}
+        {}
         <Box paddingLeft={1} marginTop={1} marginBottom={0}>
           <Text dimColor>Esc cancel · Tab switch tabs · ←→ navigate settings</Text>
         </Box>

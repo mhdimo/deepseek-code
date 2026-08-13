@@ -1,28 +1,28 @@
-// Plugin Service — Manage local plugins and decentralized marketplaces
-// Compatible with Claude Code's plugin manifest specifications.
-//
-// MARKETPLACE MODEL (ported from Claude Code's ecosystem — utils/plugins/*):
-// A marketplace is now [name, source ('github'), repo ('owner/repo' OR
-// 'owner/repo/path'), description?] instead of a bare URL list. Marketplaces
-// are git repositories whose plugins live in directories:
-//
-//   <repo>/
-//     .claude-plugin/marketplace.json      # marketplace index (name, owner, plugins[])
-//     plugins/<name>/.claude-plugin/plugin.json
-//     external_plugins/<name>/...          # in-repo plugin dirs
-//
-// fetchMarketplacePlugins() enumerates plugin dirs via the GitHub git-trees
-// API and reads each .claude-plugin/plugin.json via raw.githubusercontent.com;
-// installPlugin() clones (or tarball-downloads) the full plugin — commands/,
-// agents/, skills/, .claude-plugin/ — not just a manifest.
-//
-// RETRO-COMPAT with the Claude Code plugin ecosystem: besides
-// ~/.deepseek-code/plugins/<name>/manifest.json, the loader also discovers
-// plugins installed by Claude Code at ~/.claude/plugins/cache/**/.claude-plugin/plugin.json
-// and translates their layout (commands/, agents/, skills/ markdown files with
-// frontmatter) into this app's plugin shape, so marketplace plugins work as-is.
-// Installed plugins keep the claude-code layout (<plugin>/.claude-plugin/plugin.json)
-// so both loaders agree.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import {
   existsSync,
@@ -37,11 +37,11 @@ import {
 import { join, basename, dirname, relative, sep } from "path";
 import { homedir } from "os";
 
-// ─── Paths ──────────────────────────────────────────────────────────────────
-//
-// DEEPSEEK_CODE_DATA_DIR overrides the data directory (like Claude Code's
-// CLAUDE_CODE_PLUGIN_CACHE_DIR) — used by tests/probes to run against a
-// temporary directory instead of the real ~/.deepseek-code.
+
+
+
+
+
 
 const DATA_DIR = (() => {
   const override = process.env.DEEPSEEK_CODE_DATA_DIR;
@@ -50,12 +50,12 @@ const DATA_DIR = (() => {
 const PLUGINS_DIR = join(DATA_DIR, "plugins");
 const MARKETPLACES_FILE = join(DATA_DIR, "marketplaces.json");
 const SETTINGS_FILE = join(DATA_DIR, "settings.json");
-/** Claude Code's plugin install location (marketplace cache). */
+
 const CC_PLUGINS_DIR = process.env.DEEPSEEK_CODE_DATA_DIR
   ? join(DATA_DIR, "..", ".claude", "plugins")
   : join(homedir(), ".claude", "plugins");
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+
 
 export interface PluginSkill {
   name: string;
@@ -65,10 +65,10 @@ export interface PluginSkill {
 }
 
 export interface PluginCommand {
-  /** Command name (markdown filename without extension). */
+  
   name: string;
   description?: string;
-  /** Body of the markdown file — sent to the model as the command. */
+  
   prompt: string;
   argumentHint?: string;
 }
@@ -87,9 +87,9 @@ export interface PluginManifest {
   version: string;
   mcpServers?: Record<string, any>;
   skills?: PluginSkill[];
-  /** Claude Code plugin commands/ directory — translated at load. */
+  
   commands?: PluginCommand[];
-  /** Claude Code plugin agents/ directory — translated at load. */
+  
   agents?: PluginAgent[];
 }
 
@@ -97,14 +97,11 @@ export interface InstalledPlugin {
   name: string;
   manifest: PluginManifest;
   enabled: boolean;
-  /** Set when the plugin was discovered from Claude Code's plugin dir. */
+  
   fromClaudeCode?: boolean;
 }
 
-/** A configured marketplace, persisted in ~/.deepseek-code/marketplaces.json.
- *  For source 'github', `repo` is 'owner/repo' or 'owner/repo/path' (a
- *  subdirectory of the repository that holds the marketplace). For the legacy
- *  source 'url', `repo` holds the marketplace manifest URL. */
+
 export interface MarketplaceConfig {
   name: string;
   source: "github" | "url";
@@ -112,28 +109,28 @@ export interface MarketplaceConfig {
   description?: string;
 }
 
-/** A plugin available from a marketplace (the Browse list in PluginPanel). */
+
 export interface MarketplaceEntry {
   name: string;
   description: string;
   version: string;
-  /** Repository to install from: 'owner/repo', 'owner/repo/path', or a git URL. */
+  
   repository: string;
-  /** Marketplace this entry came from. */
+  
   marketplace?: string;
-  /** GitHub owner of the marketplace repository. */
+  
   owner?: string;
-  /** Marketplace repository ('owner/repo'). */
+  
   repo?: string;
-  /** Subdirectory of the repository containing the plugin (git-subdir sources). */
+  
   path?: string;
 }
 
-// ─── Default Config ─────────────────────────────────────────────────────────
-//
-// The official Anthropic marketplace (anthropics/claude-plugins-official) is
-// registered by default alongside the existing deepseek-code marketplace
-// (mhdimo/deepseek-code-plugins — ported from its old raw-URL form).
+
+
+
+
+
 
 const OFFICIAL_MARKETPLACE_SOURCE = {
   source: "github",
@@ -154,17 +151,14 @@ function ensureDirs(): void {
   if (!existsSync(PLUGINS_DIR)) mkdirSync(PLUGINS_DIR, { recursive: true });
 }
 
-// ─── Local Plugin API ───────────────────────────────────────────────────────
 
-/** Load all installed plugins: ours (~/.deepseek-code/plugins/) plus any
- *  Claude Code marketplace plugins (~/.claude/plugins/cache/…). Ours win on
- *  name collisions. Both legacy root manifest.json plugins and claude-code
- *  layout plugins (<plugin>/.claude-plugin/plugin.json) are translated. */
+
+
 export function loadInstalledPlugins(): InstalledPlugin[] {
   ensureDirs();
   const plugins: InstalledPlugin[] = [];
 
-  // Load user enabled/disabled preferences from settings.json
+  
   let enabledMap: Record<string, boolean> = {};
   try {
     if (existsSync(SETTINGS_FILE)) {
@@ -181,19 +175,19 @@ export function loadInstalledPlugins(): InstalledPlugin[] {
 
     for (const name of dirs) {
       const pluginDir = join(PLUGINS_DIR, name);
-      // Legacy layout: manifest.json at the plugin root.
+      
       const manifestPath = join(pluginDir, "manifest.json");
       if (existsSync(manifestPath)) {
         try {
           const raw = readFileSync(manifestPath, "utf-8");
           const manifest = JSON.parse(raw) as PluginManifest;
-          const enabled = enabledMap[name] !== false; // defaults to true if not specified
+          const enabled = enabledMap[name] !== false; 
           plugins.push({ name, manifest, enabled });
           continue;
         } catch {}
       }
-      // Claude Code layout: .claude-plugin/plugin.json — translated by the
-      // same helper that reads Claude Code's own plugin cache.
+      
+      
       const ccManifestDir = join(pluginDir, ".claude-plugin");
       if (existsSync(join(ccManifestDir, "plugin.json"))) {
         const translated = translateClaudeCodePluginDir(ccManifestDir);
@@ -208,7 +202,7 @@ export function loadInstalledPlugins(): InstalledPlugin[] {
     }
   } catch {}
 
-  // Claude Code marketplace plugins (retro-compat)
+  
   const seen = new Set(plugins.map((p) => p.name));
   for (const cc of loadClaudeCodePlugins()) {
     if (seen.has(cc.name)) continue;
@@ -219,10 +213,9 @@ export function loadInstalledPlugins(): InstalledPlugin[] {
   return plugins;
 }
 
-// ─── Claude Code plugin retro-compat ────────────────────────────────────────
 
-/** Minimal frontmatter parser for claude-code command/agent/skill files:
- *  `key: value` lines between --- fences (rich YAML values pass through). */
+
+
 function parseFrontmatter(
   body: string,
 ): { frontmatter: Record<string, string>; content: string } {
@@ -249,10 +242,7 @@ function readMarkdownFrontmatter(
   }
 }
 
-/** Translate a claude-code-layout plugin dir — the directory containing
- *  `.claude-plugin/plugin.json` — into our InstalledPlugin shape. Reads the
- *  manifest plus commands/, agents/ and skills/ markdown files. Returns null
- *  when the dir has no readable plugin.json. */
+
 function translateClaudeCodePluginDir(
   manifestDir: string,
   opts: { fromClaudeCode?: boolean } = {},
@@ -272,7 +262,7 @@ function translateClaudeCodePluginDir(
     const name = cc.name || basename(rootDir);
     if (!name) return null;
 
-    // commands/ and agents/ standard dirs + explicitly listed files
+    
     const commandFiles: Array<{ file: string; desc?: string }> = [];
     const agentFiles: Array<{ file: string; desc?: string }> = [];
     const skillDirs: Array<{ dir: string; desc?: string }> = [];
@@ -360,14 +350,12 @@ function translateClaudeCodePluginDir(
       fromClaudeCode: opts.fromClaudeCode,
     };
   } catch {
-    // skip unreadable plugin entries
+    
     return null;
   }
 }
 
-/** Walk ~/.claude/plugins/ for `.claude-plugin/plugin.json` files (cache
- *  layout: plugins/cache/<marketplace>/<plugin>/<version>/ — scan up to 5
- *  levels deep) and translate each into our InstalledPlugin shape. */
+
 function loadClaudeCodePlugins(): InstalledPlugin[] {
   const found: InstalledPlugin[] = [];
   if (!existsSync(CC_PLUGINS_DIR)) return found;
@@ -401,7 +389,7 @@ function loadClaudeCodePlugins(): InstalledPlugin[] {
   return found;
 }
 
-/** Enable or disable an installed plugin */
+
 export function togglePlugin(name: string, enabled: boolean): void {
   ensureDirs();
   try {
@@ -415,7 +403,7 @@ export function togglePlugin(name: string, enabled: boolean): void {
   } catch {}
 }
 
-/** Uninstall an installed plugin */
+
 export function uninstallPlugin(name: string): void {
   ensureDirs();
   const dirPath = join(PLUGINS_DIR, name);
@@ -426,12 +414,9 @@ export function uninstallPlugin(name: string): void {
   }
 }
 
-// ─── Marketplace API ────────────────────────────────────────────────────────
 
-/** Extract 'owner/repo' from a github URL (https, raw.githubusercontent,
- *  git@ssh) or pass through an existing 'owner/repo' shorthand. A shorthand
- *  with a deeper path ('owner/repo/path') is left untouched (returns null —
- *  callers keep it whole). Returns null when the input is not github-shaped. */
+
+
 function repoFromGithubUrl(input: string): string | null {
   const trimmed = input.trim().replace(/\/+$/, "");
   let m = trimmed.match(
@@ -445,9 +430,7 @@ function repoFromGithubUrl(input: string): string | null {
   return null;
 }
 
-/** Translate a legacy marketplaces.json entry ({ name, url }) into the new
- *  marketplace shape. GitHub URLs become source 'github' with an
- *  'owner/repo' repo; any other URL keeps working as source 'url'. */
+
 function migrateMarketplaceEntry(
   entry: Record<string, unknown>,
 ): MarketplaceConfig | null {
@@ -455,7 +438,7 @@ function migrateMarketplaceEntry(
   const name = typeof entry.name === "string" ? entry.name : "";
   if (!name) return null;
   if (typeof entry.source === "string" && typeof entry.repo === "string") {
-    // Already the new shape.
+    
     return {
       name,
       source: entry.source === "url" ? "url" : "github",
@@ -474,8 +457,7 @@ function migrateMarketplaceEntry(
   };
 }
 
-/** Load configured marketplaces (new shape: name/source/repo). Legacy
- *  entries with `url` fields are migrated in place and persisted back. */
+
 export function loadMarketplaces(): MarketplaceConfig[] {
   ensureDirs();
   try {
@@ -494,7 +476,7 @@ export function loadMarketplaces(): MarketplaceConfig[] {
             changed = true;
           }
         }
-        // Persist the migration so the file converges on the new shape.
+        
         if (changed) {
           try {
             writeFileSync(MARKETPLACES_FILE, JSON.stringify(migrated, null, 2), "utf-8");
@@ -505,7 +487,7 @@ export function loadMarketplaces(): MarketplaceConfig[] {
     }
   } catch {}
 
-  // Write defaults if not exist
+  
   try {
     if (!existsSync(MARKETPLACES_FILE)) {
       writeFileSync(MARKETPLACES_FILE, JSON.stringify(DEFAULT_MARKETPLACES, null, 2), "utf-8");
@@ -514,9 +496,7 @@ export function loadMarketplaces(): MarketplaceConfig[] {
   return DEFAULT_MARKETPLACES;
 }
 
-/** Add a marketplace: name + repository ('owner/repo', 'owner/repo/path', a
- *  github URL, or a full marketplace manifest URL). Replaces an existing
- *  marketplace with the same name. */
+
 export function addMarketplace(name: string, repo: string): void {
   ensureDirs();
   const cleanName = name.trim();
@@ -552,7 +532,7 @@ export function addMarketplace(name: string, repo: string): void {
   } catch {}
 }
 
-/** Remove a marketplace by name. No-op when it is not configured. */
+
 export function removeMarketplace(name: string): void {
   ensureDirs();
   try {
@@ -566,8 +546,7 @@ export function removeMarketplace(name: string): void {
   } catch {}
 }
 
-/** Split a 'owner/repo/path' reference into the repo part and the optional
- *  in-repo path. */
+
 function splitRepoPath(repo: string): { repoPath: string; subdir: string } {
   const idx = repo.indexOf("/");
   if (idx === -1) return { repoPath: repo, subdir: "" };
@@ -590,12 +569,7 @@ async function fetchWithTimeout(url: string): Promise<Response | null> {
   }
 }
 
-/** Fetch all plugins from a github marketplace: read the marketplace index
- *  (.claude-plugin/marketplace.json, falling back to a root marketplace.json),
- *  enumerate in-repo plugin dirs via the git-trees API, and merge each
- *  .claude-plugin/plugin.json (name/description/version) with its
- *  marketplace.json entry (source → repository). Failures are swallowed per
- *  marketplace. */
+
 async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<MarketplaceEntry[]> {
   const { repoPath, subdir } = splitRepoPath(m.repo);
   const parts = repoPath.split("/");
@@ -604,7 +578,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
   if (!owner || !repo) return [];
   const rel = (p: string): string => (subdir ? `${subdir}/${p}` : p);
 
-  // 1. Marketplace index — the authoritative plugin list.
+  
   let manifestData: any = null;
   for (const manifestRel of [rel(".claude-plugin/marketplace.json"), rel("marketplace.json")]) {
     const res = await fetchWithTimeout(
@@ -618,7 +592,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     }
   }
 
-  // 2. Enumerate plugin dirs: every `.claude-plugin/plugin.json` blob.
+  
   let treePaths: string[] = [];
   try {
     const treeRes = await fetchWithTimeout(
@@ -635,8 +609,8 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     }
   } catch {}
 
-  // Legacy array-format marketplace.json (old deepseek-code layout): entries
-  // are MarketplaceEntry-shaped already.
+  
+  
   if (Array.isArray(manifestData)) {
     return (manifestData as Array<Record<string, unknown>>)
       .filter((p) => p && typeof p.name === "string")
@@ -657,7 +631,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     if (p && typeof p.name === "string") byName.set(p.name, p);
   }
 
-  // 3. Fetch each in-repo plugin.json (bounded parallelism).
+  
   const pluginJsonByDir = new Map<string, Record<string, unknown>>();
   const CHUNK = 10;
   for (let i = 0; i < treePaths.length; i += CHUNK) {
@@ -670,8 +644,8 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
         if (!res || !res.ok) return null;
         try {
           const json = (await res.json()) as Record<string, unknown>;
-          // Tree path is <plugin>/.claude-plugin/plugin.json — the plugin
-          // root dir is two levels up.
+          
+          
           return typeof json.name === "string"
             ? { dir: dirname(dirname(path)), json }
             : null;
@@ -685,8 +659,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     }
   }
 
-  /** Find the marketplace entry whose local source ('./plugins/x') matches a
-   *  plugin dir, falling back to an entry named after the dir. */
+  
   const entryForDir = (dir: string): Record<string, unknown> | null => {
     for (const e of byName.values()) {
       const s = e.source;
@@ -695,9 +668,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     return byName.get(basename(dir)) ?? null;
   };
 
-  /** Repository reference for an entry: in-repo local sources become
-   *  'owner/repo/path' (installPlugin clones the repo and copies the dir);
-   *  remote sources keep their git URL / repo shorthand. */
+  
   const repositoryFor = (
     entry: Record<string, unknown> | null,
     dir: string | null,
@@ -718,7 +689,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
   const entries: MarketplaceEntry[] = [];
   const seen = new Set<string>();
 
-  // 4a. In-repo plugins (have a plugin.json in the marketplace repo).
+  
   for (const [dir, pj] of pluginJsonByDir) {
     const entry = entryForDir(dir);
     const name = typeof pj.name === "string" ? pj.name : entry?.name;
@@ -739,8 +710,8 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
     });
   }
 
-  // 4b. Remaining marketplace.json entries (external plugins) — no in-repo
-  // plugin.json, so name/description come from the index alone.
+  
+  
   for (const p of manifestPlugins) {
     const pname = p.name;
     if (!pname || seen.has(pname)) continue;
@@ -761,8 +732,7 @@ async function fetchGithubMarketplacePlugins(m: MarketplaceConfig): Promise<Mark
   return entries;
 }
 
-/** Legacy url-source marketplace: fetch the manifest JSON directly. Accepts
- *  both the old array format and the claude-code object format. */
+
 async function fetchUrlMarketplacePlugins(m: MarketplaceConfig): Promise<MarketplaceEntry[]> {
   const res = await fetchWithTimeout(m.repo);
   if (!res || !res.ok) return [];
@@ -786,9 +756,7 @@ async function fetchUrlMarketplacePlugins(m: MarketplaceConfig): Promise<Marketp
   }
 }
 
-/** Fetch list of plugins available in all marketplaces. Individual
- *  marketplace failures are swallowed (returns [] for that marketplace) so a
- *  dead or offline source never breaks browsing. */
+
 export async function fetchMarketplacePlugins(): Promise<MarketplaceEntry[]> {
   const marketplaces = loadMarketplaces();
   const allEntries: MarketplaceEntry[] = [];
@@ -806,18 +774,16 @@ export async function fetchMarketplacePlugins(): Promise<MarketplaceEntry[]> {
         allEntries.push(e);
       }
     } catch {
-      // per-marketplace failures never break the aggregate
+      
     }
   }
 
   return allEntries;
 }
 
-// ─── Plugin installation ────────────────────────────────────────────────────
 
-/** Parse an install repository reference into a clone URL plus the optional
- *  subdirectory of the repository that holds the plugin. Accepts github
- *  URLs, git@ssh URLs, other git URLs, and the 'owner/repo[/path]' form. */
+
+
 function parsePluginRepository(
   repo: string,
 ): { cloneUrl: string; subdir?: string } | null {
@@ -829,7 +795,7 @@ function parsePluginRepository(
   m = trimmed.match(/^(git@github\.com:[^/]+\/[^/]+?)(?:\.git)?(?:\/(.*))?$/);
   if (m?.[1]) return { cloneUrl: m[1], subdir: m[2] };
   if (/^(https?:\/\/|ssh:\/\/|git@)/.test(trimmed)) {
-    // Any other git URL — clone as-is (tarball fallback is github-only).
+    
     return { cloneUrl: trimmed };
   }
   m = trimmed.match(/^([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)(?:\/(.*))?$/);
@@ -837,7 +803,7 @@ function parsePluginRepository(
   return null;
 }
 
-/** codeload tarball URL for a github clone URL (used when git is missing). */
+
 function tarballUrlFor(cloneUrl: string): string | null {
   const m = cloneUrl.match(
     /^(?:https?:\/\/|git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/,
@@ -846,8 +812,7 @@ function tarballUrlFor(cloneUrl: string): string | null {
   return `https://codeload.github.com/${m[1]}/tar.gz/refs/heads/main`;
 }
 
-/** Clone a repository into target (git clone --depth 1 when git is
- *  available, else download + extract the codeload tarball with tar -xzf). */
+
 async function acquireRepository(cloneUrl: string, target: string): Promise<boolean> {
   const gitCheck = Bun.spawnSync(["git", "--version"], { stdio: ["ignore", "pipe", "pipe"] });
   if (gitCheck.exitCode === 0) {
@@ -855,7 +820,7 @@ async function acquireRepository(cloneUrl: string, target: string): Promise<bool
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (result.exitCode === 0) return true;
-    // git failed (network/auth) — fall through to the tarball path.
+    
     try {
       rmSync(target, { recursive: true, force: true });
     } catch {}
@@ -875,8 +840,8 @@ async function acquireRepository(cloneUrl: string, target: string): Promise<bool
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (extract.exitCode !== 0) return false;
-    // The tarball extracts as <repo>-<branch>/ — move the single top-level
-    // directory into place.
+    
+    
     const entries = readdirSync(parent).filter((e) => e !== "bundle.tar.gz");
     if (entries.length !== 1) return false;
     const extracted = entries[0];
@@ -893,7 +858,7 @@ async function acquireRepository(cloneUrl: string, target: string): Promise<bool
   }
 }
 
-/** Locate the plugin's directory inside a cloned marketplace repo. */
+
 function locatePluginDir(
   repoRoot: string,
   subdir: string | undefined,
@@ -905,14 +870,13 @@ function locatePluginDir(
   for (const c of candidates) {
     const p = join(repoRoot, c);
     const rel = relative(repoRoot, p);
-    if (rel === ".." || rel.startsWith(`..${sep}`)) continue; // escape guard
+    if (rel === ".." || rel.startsWith(`..${sep}`)) continue; 
     if (existsSync(p) && statSync(p).isDirectory()) return p;
   }
   return null;
 }
 
-/** A valid plugin dir carries either the claude-code layout
- *  (.claude-plugin/plugin.json) or the legacy root manifest.json. */
+
 function isPluginDir(dir: string): boolean {
   return (
     existsSync(join(dir, ".claude-plugin", "plugin.json")) ||
@@ -920,7 +884,7 @@ function isPluginDir(dir: string): boolean {
   );
 }
 
-/** Read the canonical plugin name from its manifest, if present. */
+
 function readPluginName(dir: string): string | null {
   for (const p of [join(dir, ".claude-plugin", "plugin.json"), join(dir, "manifest.json")]) {
     try {
@@ -933,14 +897,12 @@ function readPluginName(dir: string): string | null {
   return null;
 }
 
-/** Legacy install path: fetch a single manifest.json from a URL (the old
- *  URL-list marketplace model). Kept for backward compatibility with
- *  previously-installed plugins and persisted entries. */
+
 async function installPluginFromManifestUrl(name: string, url: string): Promise<boolean> {
   let cleanUrl = url.trim().replace(/\.git$/, "");
   if (cleanUrl.startsWith("https://github.com/")) {
     cleanUrl = cleanUrl.replace("https://github.com/", "https://raw.githubusercontent.com/");
-    // Assume default branch is main
+    
     cleanUrl = `${cleanUrl}/main/manifest.json`;
   } else if (!cleanUrl.endsWith("manifest.json")) {
     cleanUrl = `${cleanUrl}/manifest.json`;
@@ -951,7 +913,7 @@ async function installPluginFromManifestUrl(name: string, url: string): Promise<
     if (!res || !res.ok) return false;
     const manifest = (await res.json()) as PluginManifest;
 
-    // Verify manifest name matches or assign it
+    
     const pluginName = manifest.name || name;
     const destDir = join(PLUGINS_DIR, pluginName);
     if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
@@ -963,21 +925,13 @@ async function installPluginFromManifestUrl(name: string, url: string): Promise<
   }
 }
 
-/** Install a plugin from a marketplace repository reference. Clones or
- *  downloads the FULL plugin (commands/, agents/, skills/, .claude-plugin/)
- *  into ~/.deepseek-code/plugins/<name>/ — not just a manifest. The plugin
- *  keeps the claude-code layout (<plugin>/.claude-plugin/plugin.json) so both
- *  loaders (ours and Claude Code's) agree.
- *
- *  `repository` may be 'owner/repo', 'owner/repo/path' (the subdirectory of
- *  the repo holding the plugin), or a git URL. Legacy raw-manifest URLs still
- *  install via the old manifest-fetch path. */
+
 export async function installPlugin(name: string, repository: string): Promise<boolean> {
   ensureDirs();
   const repo = (repository ?? "").trim();
   if (!repo) return false;
 
-  // Legacy: a direct manifest URL (old URL-list marketplace model).
+  
   if (
     (repo.startsWith("https://raw.githubusercontent.com/") &&
       (repo.endsWith("manifest.json") || repo.endsWith("marketplace.json"))) ||
@@ -989,8 +943,8 @@ export async function installPlugin(name: string, repository: string): Promise<b
   const parsed = parsePluginRepository(repo);
   if (!parsed) return false;
   const { cloneUrl, subdir } = parsed;
-  // A subdir pointing at the .claude-plugin dir itself means the plugin root
-  // is its parent (legacy entries may carry the suffix).
+  
+  
   const pluginSubdir =
     subdir && subdir.endsWith("/.claude-plugin") ? subdir.slice(0, -"/.claude-plugin".length) : subdir;
 
@@ -1000,7 +954,7 @@ export async function installPlugin(name: string, repository: string): Promise<b
     mkdirSync(tmpRoot, { recursive: true });
     if (!(await acquireRepository(cloneUrl, tmpRepo))) return false;
 
-    // The repo root itself can be the plugin (single-plugin repos).
+    
     const pluginDir =
       locatePluginDir(tmpRepo, pluginSubdir, name) ??
       (isPluginDir(tmpRepo) ? tmpRepo : null);

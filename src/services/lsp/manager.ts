@@ -1,34 +1,34 @@
-// LSP (Language Server Protocol) integration manager — ported from Claude Code's
-// src/services/lsp/manager.ts + LSPServerManager.ts + LSPServerInstance.ts +
-// LSPClient.ts + config.ts, consolidated into a single module.
-//
-// Differences from the reference:
-//  - No vscode-jsonrpc / vscode-languageserver-protocol dependencies: JSON-RPC
-//    2.0 is implemented by hand with Content-Length framing over the server's
-//    stdio (see encodeJsonRpcMessage / JsonRpcFrameParser).
-//  - The server process is spawned with Bun.spawn (pipes for stdin/stdout/stderr)
-//    instead of node child_process.
-//  - Server configuration comes from the [lsp] section of settings.json
-//    (loadSettings() in src/state/storage.ts) instead of plugin configs:
-//      {
-//        "lsp": {
-//          "servers": { "typescript": ["typescript-language-server", ["--stdio"]] },
-//          "roots":   { "typescript": "/path/to/workspace" }   // optional
-//        }
-//      }
-//    Each entry is either a [command, args?] tuple or an object form
-//    { command, args?, extensions?, rootUri?, rootPath?, env?,
-//      initializationOptions?, startupTimeout? }.
-//
-// Degradation: if no server is configured, or a server fails to spawn or
-// initialize, the manager reports a clear message to the tool instead of
-// crashing. Servers start lazily on first use (ensureServerStarted).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { basename, extname, resolve } from "path";
 import { pathToFileURL } from "url";
 import { loadSettings, type LspSettings } from "../../state/storage.js";
 
-// ─── Logging ──────────────────────────────────────────────────────────────────
+
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -48,10 +48,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolveFn) => setTimeout(resolveFn, ms));
 }
 
-/**
- * Race a promise against a timeout. Cleans up the timer regardless of outcome
- * to avoid unhandled rejections from orphaned setTimeout callbacks.
- */
+
 function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
@@ -66,7 +63,7 @@ function withTimeout<T>(
   );
 }
 
-// ─── Server configuration ─────────────────────────────────────────────────────
+
 
 export type LspServerState =
   | "stopped"
@@ -75,35 +72,31 @@ export type LspServerState =
   | "stopping"
   | "error";
 
-/** Normalized configuration for a single language server. */
+
 export interface LspServerConfig {
-  /** Unique server identifier (the settings.json key). */
+  
   name: string;
-  /** Executable to spawn. */
+  
   command: string;
-  /** Command-line arguments. */
+  
   args: string[];
-  /** File extensions this server handles (lowercase, leading dot). */
+  
   extensions: string[];
-  /** Language id sent in textDocument/didOpen. */
+  
   languageId: string;
-  /** Workspace root as a filesystem path. */
+  
   rootPath: string;
-  /** Workspace root as a file:// URI. */
+  
   rootUri: string;
-  /** Extra environment variables for the server process. */
+  
   env?: Record<string, string>;
-  /** Initialization options passed in the LSP initialize request. */
+  
   initializationOptions?: Record<string, unknown>;
-  /** Milliseconds to wait for initialize before failing (default: no timeout). */
+  
   startupTimeout?: number;
 }
 
-/**
- * Built-in language → file-extension mapping. Used to route files to servers
- * configured under [lsp].servers. Per-server "extensions" in the object form
- * override this table.
- */
+
 const DEFAULT_LANGUAGE_EXTENSIONS: Record<string, string[]> = {
   typescript: [".ts", ".tsx", ".mts", ".cts"],
   javascript: [".js", ".jsx", ".mjs", ".cjs"],
@@ -135,11 +128,7 @@ const DEFAULT_LANGUAGE_EXTENSIONS: Record<string, string[]> = {
   svelte: [".svelte"],
 };
 
-/**
- * Reads the [lsp] section from settings.json (loadSettings) and normalizes it
- * into per-server configs. Returns an empty record when nothing is configured
- * (the manager then degrades gracefully — no servers, no crash).
- */
+
 export function loadLspServerConfigs(): Record<string, LspServerConfig> {
   const settings = loadSettings();
   const lsp: LspSettings | undefined = settings.lsp;
@@ -161,11 +150,11 @@ export function loadLspServerConfigs(): Record<string, LspServerConfig> {
     let startupTimeout: number | undefined;
 
     if (Array.isArray(entry)) {
-      // Tuple form: [command, args?]
+      
       command = entry[0];
       args = entry[1] ?? [];
     } else if (entry && typeof entry === "object") {
-      // Object form
+      
       command = entry.command;
       args = entry.args ?? [];
       extensions = entry.extensions;
@@ -184,8 +173,8 @@ export function loadLspServerConfigs(): Record<string, LspServerConfig> {
     const languageId = language.toLowerCase();
     const extList = extensions ?? DEFAULT_LANGUAGE_EXTENSIONS[languageId] ?? [];
 
-    // Workspace root resolution: explicit rootPath > explicit rootUri (as a
-    // plain path or file:// URI) > roots[language] > process cwd.
+    
+    
     const root = rootPath
       ?? (rootUri && !rootUri.startsWith("file://") ? rootUri : undefined)
       ?? roots[language]
@@ -213,7 +202,7 @@ export function loadLspServerConfigs(): Record<string, LspServerConfig> {
   return out;
 }
 
-// ─── JSON-RPC 2.0 framing (Content-Length) ────────────────────────────────────
+
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -234,32 +223,23 @@ export interface JsonRpcResponse {
 }
 export type JsonRpcMessage = JsonRpcRequest | JsonRpcNotification | JsonRpcResponse;
 
-/** A JSON-RPC error with a protocol error code attached (duck-typed, like the reference). */
+
 export type JsonRpcProtocolError = Error & { code?: number };
 
-/**
- * Encodes a JSON-RPC message into its wire representation:
- * "Content-Length: <bytes>\r\n\r\n<body>"
- */
+
 export function encodeJsonRpcMessage(message: JsonRpcMessage): Buffer {
   const body = JSON.stringify(message);
   const contentLength = Buffer.byteLength(body, "utf-8");
   return Buffer.from(`Content-Length: ${contentLength}\r\n\r\n${body}`, "utf-8");
 }
 
-/**
- * Incremental parser for the LSP wire format. Feed raw bytes (in any chunk
- * sizes); complete JSON-RPC messages come out the other side.
- */
+
 export class JsonRpcFrameParser {
   private buffer: Buffer = Buffer.alloc(0);
-  /** Hard sanity cap — a header claiming more than this is treated as garbage. */
+  
   private static readonly MAX_CONTENT_LENGTH = 512 * 1024 * 1024;
 
-  /**
-   * Feed raw bytes; returns every complete JSON-RPC message decoded so far.
-   * Malformed input is dropped (buffer resync) rather than thrown.
-   */
+  
   feed(chunk: Uint8Array): JsonRpcMessage[] {
     this.buffer =
       this.buffer.length === 0
@@ -274,7 +254,7 @@ export class JsonRpcFrameParser {
       const header = this.buffer.subarray(0, boundary.index).toString("utf-8");
       const contentLength = parseContentLength(header);
       if (contentLength === null || contentLength > JsonRpcFrameParser.MAX_CONTENT_LENGTH) {
-        // Malformed header — drop everything to resync.
+        
         debugLog("JsonRpcFrameParser: malformed header, resyncing buffer");
         this.buffer = Buffer.alloc(0);
         return messages;
@@ -282,7 +262,7 @@ export class JsonRpcFrameParser {
 
       const bodyStart = boundary.index + boundary.length;
       if (this.buffer.length < bodyStart + contentLength) {
-        // Incomplete body — wait for more bytes.
+        
         return messages;
       }
 
@@ -301,10 +281,7 @@ export class JsonRpcFrameParser {
   }
 }
 
-/**
- * Finds the end of the header block. LSP servers may use \r\n\r\n or \n\n
- * (both appear in the wild). Returns the separator index and its length.
- */
+
 function findHeaderBoundary(buffer: Buffer): { index: number; length: number } | null {
   const crlf = buffer.indexOf("\r\n\r\n");
   if (crlf >= 0) return { index: crlf, length: 4 };
@@ -313,7 +290,7 @@ function findHeaderBoundary(buffer: Buffer): { index: number; length: number } |
   return null;
 }
 
-/** Extracts Content-Length from a header block. Returns null when missing. */
+
 function parseContentLength(header: string): number | null {
   const match = /Content-Length:\s*(\d+)/i.exec(header);
   if (!match || match[1] === undefined) return null;
@@ -321,7 +298,7 @@ function parseContentLength(header: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-// ─── LSP client (one per server process) ──────────────────────────────────────
+
 
 export interface LSPClient {
   readonly isInitialized: boolean;
@@ -341,15 +318,7 @@ export interface LSPClient {
   stop(): Promise<void>;
 }
 
-/**
- * Creates an LSP client wrapper speaking JSON-RPC 2.0 over the server process's
- * stdio (Content-Length framing). Equivalent to the reference's
- * createLSPClient (which used vscode-jsonrpc).
- *
- * @param serverName - Name of the server, used in logs.
- * @param onCrash - Called when the server process exits unexpectedly, so the
- *   owner can mark it failed and restart on next use.
- */
+
 export function createLSPClient(
   serverName: string,
   onCrash?: (error: Error) => void,
@@ -384,7 +353,7 @@ export function createLSPClient(
       proc.stdin.write(encodeJsonRpcMessage(message));
       proc.stdin.flush();
     } catch (error) {
-      // Process may have exited — fail all pending requests so callers don't hang.
+      
       if (!isStopping) {
         debugLog(`LSP server ${serverName} stdin write failed: ${errorMessage(error)}`);
       }
@@ -400,7 +369,7 @@ export function createLSPClient(
   }
 
   async function dispatchIncoming(message: JsonRpcMessage): Promise<void> {
-    // Server-to-client request (e.g. workspace/configuration) — must answer.
+    
     if ("method" in message && "id" in message && typeof message.id === "number") {
       const handler = requestHandlers.get(message.method);
       let result: unknown = null;
@@ -418,7 +387,7 @@ export function createLSPClient(
       return;
     }
 
-    // Response to one of our requests.
+    
     if ("id" in message && typeof message.id === "number") {
       const entry = pending.get(message.id);
       if (!entry) return;
@@ -436,7 +405,7 @@ export function createLSPClient(
       return;
     }
 
-    // Plain notification (window/logMessage, textDocument/publishDiagnostics, …)
+    
     const notification = message as JsonRpcNotification;
     notificationHandlers.get(notification.method)?.(notification.params);
   }
@@ -454,7 +423,7 @@ export function createLSPClient(
           }
         }
       } catch {
-        // Stream error — connection is dead.
+        
       }
       if (!isStopping) {
         failPending(new Error(`LSP server ${serverName} connection closed`));
@@ -485,8 +454,8 @@ export function createLSPClient(
       options?: { env?: Record<string, string>; cwd?: string },
     ): Promise<void> {
       try {
-        // Bun.spawn throws synchronously for ENOENT (command not found);
-        // everything else (crash after spawn) is handled below.
+        
+        
         const subprocess = Bun.spawn({
           cmd: [command, ...args],
           stdin: "pipe",
@@ -497,7 +466,7 @@ export function createLSPClient(
         });
         proc = subprocess;
 
-        // Capture stderr for server diagnostics and errors.
+        
         void (async () => {
           try {
             const reader = subprocess.stderr.getReader();
@@ -508,11 +477,11 @@ export function createLSPClient(
               if (output) debugLog(`[LSP SERVER ${serverName}] ${output}`);
             }
           } catch {
-            // stderr stream closed — fine
+            
           }
         })();
 
-        // Crash detection: unexpected non-zero exit (not during intentional stop).
+        
         void subprocess
           .exited.then((code) => {
             if (code !== 0 && !isStopping) {
@@ -533,7 +502,7 @@ export function createLSPClient(
             }
           });
 
-        // Read stdout (the JSON-RPC stream).
+        
         consumeStream(subprocess.stdout);
         debugLog(`LSP client started for ${serverName}`);
       } catch (error) {
@@ -548,11 +517,11 @@ export function createLSPClient(
       try {
         const result = await sendRequestInternal("initialize", params);
         capabilities = result;
-        // Send initialized notification (fire-and-forget; failures are logged only)
+        
         try {
           await sendNotificationInternal("initialized", {});
         } catch {
-          // ignore — server may already be gone
+          
         }
         isInitialized = true;
         debugLog(`LSP server ${serverName} initialized`);
@@ -587,7 +556,7 @@ export function createLSPClient(
       try {
         await sendNotificationInternal(method, params);
       } catch (error) {
-        // Notifications are fire-and-forget: log and continue.
+        
         debugLog(
           `LSP server ${serverName} notification ${method} failed: ${errorMessage(error)}`,
         );
@@ -613,8 +582,8 @@ export function createLSPClient(
 
       try {
         if (proc) {
-          // Graceful shutdown: send shutdown request + exit notification.
-          // Bounded by a timeout so a hung server can't block app exit.
+          
+          
           if (isInitialized) {
             try {
               await withTimeout(
@@ -623,13 +592,13 @@ export function createLSPClient(
                 `LSP server ${serverName} shutdown timed out`,
               );
             } catch {
-              // continue to cleanup regardless
+              
             }
           }
           try {
             writeMessage({ jsonrpc: "2.0", method: "exit" });
           } catch {
-            // ignore
+            
           }
         }
       } catch (error) {
@@ -639,7 +608,7 @@ export function createLSPClient(
           try {
             proc.kill();
           } catch {
-            // Process might already be dead, which is fine
+            
           }
           proc = undefined;
         }
@@ -665,24 +634,15 @@ export function createLSPClient(
   }
 }
 
-// ─── LSP server instance (one per configured server) ──────────────────────────
 
-/**
- * LSP error code for "content modified" — indicates the server's state changed
- * during request processing (e.g. rust-analyzer still indexing the project).
- * This is a transient error that can be retried.
- */
+
+
 const LSP_ERROR_CONTENT_MODIFIED = -32801;
 
-/**
- * Maximum number of retries for transient LSP errors like "content modified".
- */
+
 const MAX_RETRIES_FOR_TRANSIENT_ERRORS = 3;
 
-/**
- * Base delay in milliseconds for exponential backoff on transient errors.
- * Actual delays: 500ms, 1000ms, 2000ms
- */
+
 const RETRY_BASE_DELAY_MS = 500;
 
 export interface LSPServerInstance {
@@ -704,17 +664,7 @@ export interface LSPServerInstance {
   ): void;
 }
 
-/**
- * Creates and manages a single LSP server instance (spawn, initialize, request
- * routing, retry on transient errors, crash recovery caps). Equivalent to the
- * reference's createLSPServerInstance.
- *
- * State machine transitions:
- * - stopped → starting → running
- * - running → stopping → stopped
- * - any → error (on failure)
- * - error → starting (on retry)
- */
+
 export function createLSPServerInstance(
   name: string,
   config: LspServerConfig,
@@ -725,9 +675,9 @@ export function createLSPServerInstance(
   let restartCount = 0;
   let crashRecoveryCount = 0;
 
-  // Propagate crash state so ensureServerStarted can restart on next use.
-  // Without this, state stays 'running' after crash and the server is never
-  // restarted (zombie state).
+  
+  
+  
   const client = createLSPClient(name, (error) => {
     state = "error";
     lastError = error;
@@ -739,8 +689,8 @@ export function createLSPServerInstance(
       return;
     }
 
-    // Cap crash-recovery attempts so a persistently crashing server doesn't
-    // spawn unbounded child processes on every incoming request.
+    
+    
     const maxRestarts = 3;
     if (state === "error" && crashRecoveryCount > maxRestarts) {
       const error = new Error(
@@ -761,28 +711,28 @@ export function createLSPServerInstance(
         cwd: config.rootPath,
       });
 
-      // Initialize with workspace info (mirrors the reference's InitializeParams).
+      
       const initParams = {
         processId: process.pid,
-        // Pass server-specific initialization options; empty object by default
-        // since some servers expect this field to exist.
+        
+        
         initializationOptions: config.initializationOptions ?? {},
-        // Modern approach (LSP 3.16+) — required for Pyright, gopls
+        
         workspaceFolders: [
           {
             uri: config.rootUri,
             name: basename(config.rootPath),
           },
         ],
-        // Deprecated fields — some servers still need these for proper URI resolution
-        rootPath: config.rootPath, // Deprecated in LSP 3.8 but needed by some servers
-        rootUri: config.rootUri, // Deprecated in LSP 3.16 but needed by typescript-language-server for goToDefinition
+        
+        rootPath: config.rootPath, 
+        rootUri: config.rootUri, 
 
-        // Client capabilities — declare what features we support
+        
         capabilities: {
           workspace: {
-            // Don't claim to support workspace/configuration since we don't
-            // implement it — prevents servers from requesting config we can't provide.
+            
+            
             configuration: false,
             workspaceFolders: false,
           },
@@ -796,7 +746,7 @@ export function createLSPServerInstance(
             publishDiagnostics: {
               relatedInformation: true,
               tagSupport: {
-                valueSet: [1, 2], // Unnecessary (1), Deprecated (2)
+                valueSet: [1, 2], 
               },
               versionSupport: false,
               codeDescriptionSupport: true,
@@ -843,7 +793,7 @@ export function createLSPServerInstance(
       crashRecoveryCount = 0;
       debugLog(`LSP server instance started: ${name}`);
     } catch (error) {
-      // Clean up the spawned child process on timeout/error
+      
       client.stop().catch(() => {});
       initPromise?.catch(() => {});
       const err = error instanceof Error ? error : new Error(String(error));
@@ -924,10 +874,10 @@ export function createLSPServerInstance(
       } catch (error) {
         lastAttemptError = error instanceof Error ? error : new Error(String(error));
 
-        // Check if this is a transient "content modified" error that we should
-        // retry. This commonly happens with rust-analyzer during initial
-        // project indexing. We use duck typing instead of instanceof because
-        // the error is constructed locally (see createLSPClient).
+        
+        
+        
+        
         const errorCode = (error as { code?: number }).code;
         const isContentModifiedError =
           typeof errorCode === "number" && errorCode === LSP_ERROR_CONTENT_MODIFIED;
@@ -942,12 +892,12 @@ export function createLSPServerInstance(
           continue;
         }
 
-        // Non-retryable error or max retries exceeded
+        
         break;
       }
     }
 
-    // All retries failed or non-retryable error
+    
     const requestError = new Error(
       `LSP request '${method}' failed for server '${name}': ${lastAttemptError?.message ?? "unknown error"}`,
     );
@@ -1000,52 +950,45 @@ export function createLSPServerInstance(
   };
 }
 
-// ─── LSP server manager (routes requests per file extension) ──────────────────
+
 
 export type LSPServerManager = {
-  /** Initialize the manager by loading all configured LSP servers. */
+  
   initialize(): Promise<void>;
-  /** Shutdown all running servers and clear state. */
+  
   shutdown(): Promise<void>;
-  /** Get the LSP server instance for a given file path. */
+  
   getServerForFile(filePath: string): LSPServerInstance | undefined;
-  /** Ensure the appropriate LSP server is started for the given file. */
+  
   ensureServerStarted(filePath: string): Promise<LSPServerInstance | undefined>;
-  /** Send a request to the appropriate LSP server for the given file. */
+  
   sendRequest<T>(filePath: string, method: string, params: unknown): Promise<T | undefined>;
-  /** Get all running server instances. */
+  
   getAllServers(): Map<string, LSPServerInstance>;
-  /** Synchronize file open to LSP server (sends didOpen notification). */
+  
   openFile(filePath: string, content: string): Promise<void>;
-  /** Synchronize file change to LSP server (sends didChange notification). */
+  
   changeFile(filePath: string, content: string): Promise<void>;
-  /** Synchronize file save to LSP server (sends didSave notification). */
+  
   saveFile(filePath: string): Promise<void>;
-  /** Synchronize file close to LSP server (sends didClose notification). */
+  
   closeFile(filePath: string): Promise<void>;
-  /** Check if a file is already open on a compatible LSP server. */
+  
   isFileOpen(filePath: string): boolean;
 };
 
-/**
- * Creates an LSP server manager instance. Manages multiple LSP server instances
- * and routes requests based on file extensions. Uses the factory-function
- * pattern with closures for state encapsulation (like the reference).
- */
+
 export function createLSPServerManager(): LSPServerManager {
   const servers: Map<string, LSPServerInstance> = new Map();
   const extensionMap: Map<string, string[]> = new Map();
-  // Track which files have been opened on which servers (file:// URI → server name)
+  
   const openedFiles: Map<string, string> = new Map();
 
   function fileUriFor(filePath: string): string {
     return pathToFileURL(resolve(filePath)).href;
   }
 
-  /**
-   * Initialize the manager by loading all configured LSP servers.
-   * Config comes from settings.json [lsp] — see loadLspServerConfigs().
-   */
+  
   async function initialize(): Promise<void> {
     const serverConfigs = loadLspServerConfigs();
     debugLog(`[LSP SERVER MANAGER] loaded ${Object.keys(serverConfigs).length} server(s)`);
@@ -1056,7 +999,7 @@ export function createLSPServerManager(): LSPServerManager {
           throw new Error(`Server ${serverName} missing required 'command' field`);
         }
 
-        // Map file extensions to this server.
+        
         for (const ext of config.extensions) {
           const normalized = ext.toLowerCase();
           const serverList = extensionMap.get(normalized);
@@ -1067,16 +1010,16 @@ export function createLSPServerManager(): LSPServerManager {
           }
         }
 
-        // Create server instance (lazy: nothing is spawned until first use).
+        
         const instance = createLSPServerInstance(serverName, config);
         servers.set(serverName, instance);
 
-        // Register handler for workspace/configuration requests from the server.
-        // Some servers (like TypeScript) send these even when we say we don't
-        // support them.
+        
+        
+        
         instance.onRequest("workspace/configuration", (params: unknown) => {
           debugLog(`LSP: Received workspace/configuration request from ${serverName}`);
-          // Return empty/null config for each requested item.
+          
           const items = (params as { items?: Array<{ section?: string }> })?.items;
           return Array.isArray(items) ? items.map(() => null) : [];
         });
@@ -1084,18 +1027,14 @@ export function createLSPServerManager(): LSPServerManager {
         logError(
           new Error(`Failed to initialize LSP server ${serverName}: ${errorMessage(error)}`),
         );
-        // Continue with other servers — don't fail entire initialization.
+        
       }
     }
 
     debugLog(`LSP manager initialized with ${servers.size} servers`);
   }
 
-  /**
-   * Shutdown all running servers and clear state.
-   * Only servers in 'running' or 'error' state are explicitly stopped;
-   * servers in other states are cleared without shutdown.
-   */
+  
   async function shutdown(): Promise<void> {
     const toStop = Array.from(servers.entries()).filter(
       ([, s]) => s.state === "running" || s.state === "error",
@@ -1122,11 +1061,7 @@ export function createLSPServerManager(): LSPServerManager {
     }
   }
 
-  /**
-   * Get the LSP server instance for a given file path.
-   * If multiple servers handle the same extension, returns the first registered
-   * server. Returns undefined if no server handles this file type.
-   */
+  
   function getServerForFile(filePath: string): LSPServerInstance | undefined {
     const ext = extname(filePath).toLowerCase();
     const serverNames = extensionMap.get(ext);
@@ -1135,7 +1070,7 @@ export function createLSPServerManager(): LSPServerManager {
       return undefined;
     }
 
-    // Use first server (can add priority later)
+    
     const serverName = serverNames[0];
     if (!serverName) {
       return undefined;
@@ -1144,12 +1079,7 @@ export function createLSPServerManager(): LSPServerManager {
     return servers.get(serverName);
   }
 
-  /**
-   * Ensure the appropriate LSP server is started for the given file.
-   * Returns undefined if no server handles this file type.
-   *
-   * @throws {Error} If server fails to start
-   */
+  
   async function ensureServerStarted(
     filePath: string,
   ): Promise<LSPServerInstance | undefined> {
@@ -1169,12 +1099,7 @@ export function createLSPServerManager(): LSPServerManager {
     return server;
   }
 
-  /**
-   * Send a request to the appropriate LSP server for the given file.
-   * Returns undefined if no server handles this file type.
-   *
-   * @throws {Error} If server fails to start or request fails
-   */
+  
   async function sendRequest<T>(
     filePath: string,
     method: string,
@@ -1202,13 +1127,13 @@ export function createLSPServerManager(): LSPServerManager {
 
     const fileUri = fileUriFor(filePath);
 
-    // Skip if already opened on this server
+    
     if (openedFiles.get(fileUri) === server.name) {
       debugLog(`LSP: File already open, skipping didOpen for ${filePath}`);
       return;
     }
 
-    // Language id comes from the server's language key
+    
     const languageId = server.config.languageId || "plaintext";
 
     try {
@@ -1220,7 +1145,7 @@ export function createLSPServerManager(): LSPServerManager {
           text: content,
         },
       });
-      // Track that this file is now open on this server
+      
       openedFiles.set(fileUri, server.name);
       debugLog(`LSP: Sent didOpen for ${filePath} (languageId: ${languageId})`);
     } catch (error) {
@@ -1236,8 +1161,8 @@ export function createLSPServerManager(): LSPServerManager {
 
     const fileUri = fileUriFor(filePath);
 
-    // If file hasn't been opened on this server yet, open it first.
-    // LSP servers require didOpen before didChange.
+    
+    
     if (openedFiles.get(fileUri) !== server.name) {
       return openFile(filePath, content);
     }
@@ -1256,10 +1181,7 @@ export function createLSPServerManager(): LSPServerManager {
     }
   }
 
-  /**
-   * Save a file in LSP servers (sends didSave notification).
-   * Called after a file is written to disk to trigger diagnostics.
-   */
+  
   async function saveFile(filePath: string): Promise<void> {
     const server = getServerForFile(filePath);
     if (!server || server.state !== "running") return;
@@ -1276,11 +1198,7 @@ export function createLSPServerManager(): LSPServerManager {
     }
   }
 
-  /**
-   * Close a file in LSP servers (sends didClose notification).
-   * Not currently wired into the app's compact flow; available for callers
-   * that remove files from active context.
-   */
+  
   async function closeFile(filePath: string): Promise<void> {
     const server = getServerForFile(filePath);
     if (!server || server.state !== "running") return;
@@ -1293,7 +1211,7 @@ export function createLSPServerManager(): LSPServerManager {
           uri: fileUri,
         },
       });
-      // Remove from tracking so the file can be reopened later
+      
       openedFiles.delete(fileUri);
       debugLog(`LSP: Sent didClose for ${filePath}`);
     } catch (error) {
@@ -1321,7 +1239,7 @@ export function createLSPServerManager(): LSPServerManager {
   };
 }
 
-// ─── Manager singleton ────────────────────────────────────────────────────────
+
 
 type InitializationState = "not-started" | "pending" | "success" | "failed";
 
@@ -1331,10 +1249,7 @@ let initializationError: Error | undefined;
 let initializationGeneration = 0;
 let initializationPromise: Promise<void> | undefined;
 
-/**
- * Test-only sync reset: clears the module-scope singleton state so
- * initializeLspServerManager() can be re-run.
- */
+
 export function _resetLspManagerForTesting(): void {
   initializationState = "not-started";
   initializationError = undefined;
@@ -1342,25 +1257,16 @@ export function _resetLspManagerForTesting(): void {
   initializationGeneration++;
 }
 
-/**
- * Get the singleton LSP server manager instance.
- * Returns undefined if not yet initialized, initialization failed, or still pending.
- *
- * Callers should check for undefined and handle gracefully — initialization
- * happens asynchronously during startup. Use getInitializationStatus() to
- * distinguish between pending, failed, and not-started states.
- */
+
 export function getLspServerManager(): LSPServerManager | undefined {
-  // Don't return a broken instance if initialization failed
+  
   if (initializationState === "failed") {
     return undefined;
   }
   return lspManagerInstance;
 }
 
-/**
- * Get the current initialization status of the LSP server manager.
- */
+
 export function getInitializationStatus():
   | { status: "not-started" }
   | { status: "pending" }
@@ -1381,12 +1287,7 @@ export function getInitializationStatus():
   return { status: "success" };
 }
 
-/**
- * Check whether at least one language server is connected and healthy.
- * Backs LSPTool.isEnabled() in the reference; here it is informational —
- * the tool is always registered so it can report a clear message when no
- * server is available.
- */
+
 export function isLspConnected(): boolean {
   if (initializationState === "failed") return false;
   const manager = getLspServerManager();
@@ -1399,11 +1300,7 @@ export function isLspConnected(): boolean {
   return false;
 }
 
-/**
- * Wait for LSP server manager initialization to complete.
- * Returns immediately if initialization has already completed (success or
- * failure), is pending (waits for it), or hasn't started (nothing to wait for).
- */
+
 export async function waitForInitialization(): Promise<void> {
   if (initializationState === "success" || initializationState === "failed") {
     return;
@@ -1414,68 +1311,54 @@ export async function waitForInitialization(): Promise<void> {
   }
 }
 
-/**
- * Initialize the LSP server manager singleton.
- *
- * Call this during app startup. It synchronously creates the manager instance,
- * then starts async initialization (loading LSP configs) in the background
- * without blocking startup. Safe to call multiple times (idempotent); if
- * initialization previously failed, calling again retries.
- */
+
 export function initializeLspServerManager(): void {
   debugLog("[LSP MANAGER] initializeLspServerManager() called");
 
-  // Skip if already initialized or currently initializing
+  
   if (lspManagerInstance !== undefined && initializationState !== "failed") {
     debugLog("[LSP MANAGER] Already initialized or initializing, skipping");
     return;
   }
 
-  // Reset state for retry if previous initialization failed
+  
   if (initializationState === "failed") {
     lspManagerInstance = undefined;
     initializationError = undefined;
   }
 
-  // Create the manager instance and mark as pending
+  
   lspManagerInstance = createLSPServerManager();
   initializationState = "pending";
   debugLog("[LSP MANAGER] Created manager instance, state=pending");
 
-  // Increment generation to invalidate any pending initializations
+  
   const currentGeneration = ++initializationGeneration;
 
-  // Start initialization asynchronously without blocking.
-  // Store the promise so callers can await it via waitForInitialization().
+  
+  
   initializationPromise = lspManagerInstance
     .initialize()
     .then(() => {
-      // Only update state if this is still the current initialization
+      
       if (currentGeneration === initializationGeneration) {
         initializationState = "success";
         debugLog("LSP server manager initialized successfully");
       }
     })
     .catch((error: unknown) => {
-      // Only update state if this is still the current initialization
+      
       if (currentGeneration === initializationGeneration) {
         initializationState = "failed";
         initializationError = error instanceof Error ? error : new Error(String(error));
-        // Clear the instance since it's not usable
+        
         lspManagerInstance = undefined;
         logError(error);
       }
     });
 }
 
-/**
- * Shutdown the LSP server manager and clean up resources.
- * Call during app shutdown. Stops all running LSP servers and clears internal
- * state. Safe to call when not initialized (no-op).
- *
- * Errors during shutdown are logged but NOT propagated to the caller; state is
- * always cleared even if shutdown fails, to prevent resource accumulation.
- */
+
 export async function shutdownLspServerManager(): Promise<void> {
   if (lspManagerInstance === undefined) {
     return;
@@ -1488,12 +1371,12 @@ export async function shutdownLspServerManager(): Promise<void> {
     logError(error);
     debugLog(`Failed to shutdown LSP server manager: ${errorMessage(error)}`);
   } finally {
-    // Always clear state even if shutdown failed
+    
     lspManagerInstance = undefined;
     initializationState = "not-started";
     initializationError = undefined;
     initializationPromise = undefined;
-    // Increment generation to invalidate any pending initializations
+    
     initializationGeneration++;
   }
 }

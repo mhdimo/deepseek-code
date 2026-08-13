@@ -1,20 +1,20 @@
-// Custom multiline text input using Ink's useInput
-// Replaces ink-text-input (single-line only) with full multiline support.
-// Enter submits, Alt+Enter / Ctrl+J inserts newline.
-//
-// Issues fixed:
-// - Cursor and text rendering are memoized to prevent Ink re-painting
-//   the full text area on every keystroke (causes flicker).
-// - useInput is deactivated when overlays are open to avoid
-//   competing with App-level keybindings.
-// - Cursor sync tracks internal vs external value changes correctly.
-// - Memoized render output avoids rebuilding React element tree on every
-//   keystroke — only re-renders when value or cursorOffset actually change.
-// - cursorRef keeps the cursor position in a ref so the useInput handler
-//   always reads the latest position, even when multiple keystrokes arrive
-//   between React re-renders. Without this, the stale `cursorOffset` from
-//   the closure would insert characters at the wrong position, making it
-//   look like letters are being eaten or swapped during fast typing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
@@ -30,7 +30,7 @@ interface MultilineTextInputProps {
   isPickerActive?: boolean;
 }
 
-// ── Cursor helpers ──────────────────────────────────────────────────────────
+
 
 function lineStart(value: string, cursorOffset: number): number {
   let pos = cursorOffset;
@@ -44,10 +44,9 @@ function lineEnd(value: string, cursorOffset: number): number {
   return pos;
 }
 
-// ── Render helpers ─────────────────────────────────────────────────────────
 
-/** Placeholder view — reference behavior (renderPlaceholder hook): dim text;
- *  the first char is inverted only while the input is focused. */
+
+
 function renderPlaceholder(placeholder: string, focused: boolean): React.ReactNode {
   const ph = placeholder || " ";
   if (!focused) {
@@ -63,7 +62,7 @@ function renderPlaceholder(placeholder: string, focused: boolean): React.ReactNo
   );
 }
 
-/** Build the cursor-highlighted text segments. */
+
 function renderTextContent(
   value: string,
   cursorOffset: number,
@@ -103,7 +102,7 @@ function renderTextContent(
   return <Box flexDirection="column">{elements}</Box>;
 }
 
-// ── Component ───────────────────────────────────────────────────────────────
+
 
 const MultilineTextInput = React.memo(function MultilineTextInput({
   value,
@@ -113,18 +112,18 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   placeholder = "",
   isPickerActive = false,
 }: MultilineTextInputProps) {
-  // Internal mutable buffer — we write to this ref synchronously on every
-  // keystroke so rapid typing doesn't race against React's async re-render.
-  // Without this, two keystrokes between renders share the same stale `value`
-  // prop and the first character is silently dropped ("eating words").
+  
+  
+  
+  
   const bufferRef = useRef(value);
   const [cursorOffset, setCursorOffset] = useState(0);
-  const cursorRef = useRef(0); // sync'd with setCursorOffset so useInput always reads latest
+  const cursorRef = useRef(0); 
   const prevExternalValue = useRef(value);
-  // Track whether the last onChange was internal (from useInput) vs external
+  
   const internalChange = useRef(false);
 
-  // Sync cursor when value changes externally (history nav, command picker)
+  
   useEffect(() => {
     if (internalChange.current) {
       internalChange.current = false;
@@ -140,11 +139,11 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
     }
   }, [value]);
 
-  // ── Stabilize the useInput handler ──────────────────────────────────────
-  // Keep refs for props used in the handler so the handler function reference
-  // stays stable across renders. This prevents Ink's useInput from
-  // deregistering/re-registering the input listener on every keystroke
-  // (use-input.js line 121: effect dep on inputHandler).
+  
+  
+  
+  
+  
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
   const isPickerActiveRef = useRef(isPickerActive);
@@ -154,9 +153,9 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
 
   const handleInput = useCallback(
     (input: string, key: import("ink").Key) => {
-      const pos = cursorRef.current; // always reads latest cursor position
+      const pos = cursorRef.current; 
 
-      // -- Submit: plain Enter (no meta)
+      
       if (key.return && !key.meta) {
         if (!isPickerActiveRef.current) {
           onSubmitRef.current();
@@ -164,9 +163,9 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Newline: Alt+Enter or Ctrl+J
-      // Alt+Enter: key.return=true, key.meta=true
-      // Ctrl+J produces '\n' character — detected as input==='\n' with key.return===false
+      
+      
+      
       if ((key.return && key.meta) || (!key.return && input === "\n")) {
         const curVal = bufferRef.current;
         const newValue =
@@ -181,7 +180,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Backspace (also handle key.delete — Ink maps \x7f (Linux backspace) to delete)
+      
       if (key.backspace || key.delete || (key.ctrl && input === "h")) {
         if (pos > 0) {
           const curVal = bufferRef.current;
@@ -198,7 +197,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Left arrow
+      
       if (key.leftArrow) {
         if (pos > 0) {
           const nextPos = pos - 1;
@@ -208,7 +207,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Right arrow
+      
       if (key.rightArrow) {
         if (pos < bufferRef.current.length) {
           const nextPos = pos + 1;
@@ -218,7 +217,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Home: start of current line
+      
       if (key.home) {
         const curVal = bufferRef.current;
         const nextPos = lineStart(curVal, Math.min(pos, curVal.length));
@@ -227,7 +226,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- End: end of current line
+      
       if (key.end) {
         const curVal = bufferRef.current;
         const nextPos = lineEnd(curVal, Math.min(pos, curVal.length));
@@ -236,7 +235,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Ctrl+A: start of line (unless Ctrl+A is used for select-all)
+      
       if (key.ctrl && input === "a") {
         const curVal = bufferRef.current;
         const nextPos = lineStart(curVal, Math.min(pos, curVal.length));
@@ -245,7 +244,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Ctrl+E: end of line
+      
       if (key.ctrl && input === "e") {
         const curVal = bufferRef.current;
         const nextPos = lineEnd(curVal, Math.min(pos, curVal.length));
@@ -254,7 +253,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Ctrl+U: delete from cursor to start of line
+      
       if (key.ctrl && input === "u") {
         const curVal = bufferRef.current;
         const start = lineStart(curVal, pos);
@@ -268,7 +267,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Ctrl+K: delete from cursor to end of line
+      
       if (key.ctrl && input === "k") {
         const curVal = bufferRef.current;
         const end = lineEnd(curVal, pos);
@@ -280,14 +279,14 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Ctrl+W: delete word backwards
+      
       if (key.ctrl && input === "w") {
         if (pos === 0) return;
         const curVal = bufferRef.current;
         let wordStart = pos - 1;
-        // Skip whitespace
+        
         while (wordStart > 0 && curVal[wordStart] === " ") wordStart--;
-        // Skip word chars
+        
         while (wordStart > 0 && curVal[wordStart - 1] !== " " && curVal[wordStart - 1] !== "\n")
           wordStart--;
         const newValue = curVal.slice(0, wordStart) + curVal.slice(pos);
@@ -300,7 +299,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Skip keys handled elsewhere (Tab, Esc, Ctrl+C, arrows, Shift+Tab, page nav)
+      
       if (
         key.tab ||
         key.escape ||
@@ -313,7 +312,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      // -- Printable character or paste: insert at cursor (ignore control characters)
+      
       if (input && !key.ctrl && !key.meta && input.charCodeAt(0) >= 32) {
         const curVal = bufferRef.current;
         const newValue =
@@ -327,17 +326,17 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         onChangeRef.current(newValue);
       }
     },
-    [], // stable — all externals accessed via refs
+    [], 
   );
 
   useInput(handleInput, { isActive: focus });
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  
 
-  // Always render the same outer <Box> structure so Ink's incremental renderer
-  // doesn't lose its terminal position when transitioning between empty and
-  // non-empty states. The inner content changes, but the layout root stays
-  // stable — no more "doesn't refresh on the same line" bug.
+  
+  
+  
+  
   return (
     <Box flexDirection="column" flexGrow={1}>
       {value === ""

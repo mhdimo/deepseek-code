@@ -1,64 +1,43 @@
-// ThemedText — theme-aware Text component that resolves theme color keys to
-// raw colors accepted by stock Ink. Ported from
-// claude-code-main/src/components/design-system/ThemedText.tsx (fork-ink
-// imports translated to stock 'ink'; theme keys resolved via
-// getTheme()/resolveColor from src/utils/theme.ts).
+
+
+
+
+
 
 import React, { useContext } from "react";
 import { Text } from "ink";
 import { getTheme, resolveColor, type Theme } from "../../utils/theme.js";
 import { useTheme } from "./ThemeProvider.js";
 
-/** Colors uncolored ThemedText in the subtree. Precedence: explicit `color` >
- *  this > dimColor. Crosses Box boundaries (Ink's style cascade doesn't). */
+
 export const TextHoverColorContext = React.createContext<keyof Theme | undefined>(undefined);
 
 export type Props = {
-  /**
-   * Change text color. Accepts a theme key or raw color value.
-   */
+  
   readonly color?: keyof Theme | string;
 
-  /**
-   * Same as `color`, but for background. Must be a theme key.
-   */
+  
   readonly backgroundColor?: keyof Theme;
 
-  /**
-   * Dim the color using the theme's inactive color.
-   * This is compatible with bold (unlike ANSI dim).
-   */
+  
   readonly dimColor?: boolean;
 
-  /**
-   * Make the text bold.
-   */
+  
   readonly bold?: boolean;
 
-  /**
-   * Make the text italic.
-   */
+  
   readonly italic?: boolean;
 
-  /**
-   * Make the text underlined.
-   */
+  
   readonly underline?: boolean;
 
-  /**
-   * Make the text crossed with a line.
-   */
+  
   readonly strikethrough?: boolean;
 
-  /**
-   * Inverse background and foreground colors.
-   */
+  
   readonly inverse?: boolean;
 
-  /**
-   * This property tells Ink to wrap or truncate text if its width is larger
-   * than the container.
-   */
+  
   readonly wrap?: "wrap" | "end" | "middle" | "truncate" | "truncate-end" | "truncate-middle" | "truncate-start";
 
   readonly children?: React.ReactNode;
@@ -66,29 +45,24 @@ export type Props = {
 
 const RAW_COLOR_PREFIXES = ["rgb(", "#", "ansi256(", "ansi:"];
 
-/** True when the value is already a raw ink/chalk color, not a theme key. */
+
 function isRawColor(value: string): boolean {
   return RAW_COLOR_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
-/**
- * Resolves a color value that may be a theme key to a raw ink color string.
- */
+
 function resolveColorValue(color: keyof Theme | string | undefined, theme: Theme): string | undefined {
   if (!color) return undefined;
-  // Check if it's a raw color (starts with rgb(, #, ansi256(, or ansi:)
+  
   if (isRawColor(color)) {
     return resolveColor(color);
   }
-  // It's a theme key - resolve it
+  
   const resolved = theme[color as keyof Theme];
   return resolved === undefined ? undefined : resolveColor(resolved);
 }
 
-/**
- * Theme-aware Text component that resolves theme color keys to raw colors.
- * This wraps the base Ink Text component with theme resolution.
- */
+
 export default function ThemedText({
   color,
   backgroundColor,
@@ -105,7 +79,7 @@ export default function ThemedText({
   const theme = getTheme(themeName);
   const hoverColor = useContext(TextHoverColorContext);
 
-  // Resolve theme keys to raw colors
+  
   const resolvedColor =
     !color && hoverColor
       ? resolveColorValue(hoverColor, theme)

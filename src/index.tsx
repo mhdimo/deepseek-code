@@ -1,14 +1,15 @@
-// Main entry point for DeepSeek Code
-//
-// Supports:
-//   - CLI arguments: deepseek-code --model deepseek-reasoner
-//   - Environment variables: DEEPSEEK_API_KEY, DEEPSEEK_MODEL, etc.
-//   - Config file: .deepseek-code.json
-//   - Session resume: deepseek-code --resume <hash>
+
+
+
+
+
+
+
 
 import React from "react";
 import { render } from "ink";
 import App from "./components/App.js";
+import AlternateScreen from "./components/AlternateScreen.js";
 import { loadConfig, printHelp } from "./utils/config.js";
 import { loadSettings as loadPersistedSettings } from "./state/storage.js";
 import { resolveThemeSetting, syncLiveTheme } from "./utils/theme.js";
@@ -16,14 +17,14 @@ import { existsSync, readFileSync } from "fs";
 
 const VERSION = "0.1.0";
 
-// ── Bypass-permissions safety gate ──────────────────────────────────────────
-// When --dangerously-skip-permissions / bypassPermissions is on, the agent can
-// run ANY command without asking. Refusing to do that as root/sudo outside a
-// sandbox prevents the model from running unrestricted as root on the host.
+
+
+
+
 
 function isRunningAsRoot(): boolean {
   if (typeof process.getuid === "function" && process.getuid() === 0) return true;
-  // `sudo` may preserve the invoking user's uid via SUDO_UID; treat sudo as root.
+  
   if (process.env.SUDO_UID !== undefined || process.env.SUDO_USER !== undefined) return true;
   return false;
 }
@@ -32,11 +33,11 @@ function isInContainer(): boolean {
   if (existsSync("/.dockerenv")) return true;
   if (process.env.container) return true;
   try {
-    // Linux: /proc/1/cgroup or /proc/1/mountinfo reveals docker/containerd/k8s.
+    
     const cgroup = readFileSync("/proc/1/cgroup", "utf-8");
     if (/docker|containerd|kubepods|lxc/.test(cgroup)) return true;
   } catch {
-    // not on Linux or unreadable — treat as not-in-container
+    
   }
   return false;
 }
@@ -59,28 +60,28 @@ function assertBypassSafe(config: { dangerouslySkipPermissions?: boolean }): voi
 async function main() {
   const config = loadConfig();
 
-  // Handle --help
+  
   if (config.help) {
     printHelp();
     process.exit(0);
   }
 
-  // Handle --version
+  
   if (config.version) {
     console.log(`DeepSeek Code v${VERSION}`);
     process.exit(0);
   }
 
-  // Safety: refuse bypass-permissions as root/sudo outside a sandbox.
+  
   assertBypassSafe(config);
 
-  // Headless / print mode: run one prompt non-interactively, then exit.
-  // Used for scripting/CI (`--print`, `--output-format json`, etc.).
+  
+  
   if ((config as any).print !== undefined) {
     const { runPrint } = await import("./cli/print.js");
     let prompt = (config as any).print as string;
     if (!prompt) {
-      // `-p` / `--print` with no argument → read the prompt from stdin.
+      
       prompt = await new Response(Bun.stdin).text();
     }
     const providerConfig = {
@@ -105,25 +106,25 @@ async function main() {
       });
       process.exit(0);
     } catch {
-      // runPrint already reported the error; set a non-zero exit code for CI.
+      
       process.exit(1);
     }
   }
 
-  // Warn (but don't exit) if no API key — the TUI will show instructions
+  
   if (!config.apiKey) {
-    // Let it through, the App will show a helpful message when user tries to chat
+    
   }
 
   const workingDirectory = process.cwd();
   const resumeHash = config.resumeSession;
 
-  // Initialize the live theme object from the persisted setting (resolves
-  // 'auto' via the terminal, and handles ANSI/daltonized variants).
+  
+  
   const themeMode = (config as any).themeMode || "dark";
   syncLiveTheme(resolveThemeSetting(themeMode));
 
-  // Apply configured env vars to the process environment (inherited by BashTool).
+  
   try {
     const { loadSettings } = require("./state/storage.js");
     const env = loadSettings().env;
@@ -133,29 +134,29 @@ async function main() {
       }
     }
   } catch {
-    // best-effort
+    
   }
 
   const { waitUntilExit } = render(
-    <App config={config} workingDirectory={workingDirectory} resumeSessionHash={resumeHash} />,
-    // IMPORTANT: do NOT enable `incrementalRendering: true`. It switches Ink to
-    // log-update's incremental mode, which rewrites only the *changed* lines via
-    // cursor navigation based on the previous frame's measured height. With this
-    // app's dynamic content (streaming text, tool blocks, status bar, and the
-    // placeholder↔text node-type switch in MultilineTextInput), that positioning
-    // desyncs and every keystroke/append stacks a new line instead of overwriting
-    // the previous frame (the "input doesn't refresh" / streaming-overlap bug).
-    // The default (false) does a full erase+redraw per frame — robust and immune
-    // to this. Re-render frequency is already capped by Ink's maxFps (30) and our
-    // 80ms streaming flush, so there is no performance cost to leaving this off.
-    { incrementalRendering: false },
+    <AlternateScreen>
+      <App config={config} workingDirectory={workingDirectory} resumeSessionHash={resumeHash} />
+    </AlternateScreen>,
+    
+    
+    
+    
+    
+    
+    
+    
+    { incrementalRendering: true },
   );
 
   await waitUntilExit();
 
-  // After TUI exits, print a compact session summary from the latest
-  // persisted stats record (duration · model · tokens · cost), then the
-  // resume hint. Skip silently when no session was ever recorded.
+  
+  
+  
   try {
     const { loadGlobalStats } = await import("./state/stats.js");
     const stats = loadGlobalStats();
@@ -176,23 +177,23 @@ async function main() {
             totalTokens,
             cost: latest.cost ?? 0,
             model: latest.model || "unknown",
-            turns: 0, // SessionRecord does not track turn count
+            turns: 0, 
           })}`,
         );
       }
     }
   } catch {
-    // Silently skip — a summary must never break exit
+    
   }
 
-  // After TUI exits, show resume hint
+  
   try {
     const settings = loadPersistedSettings();
     if (settings.lastSessionHash) {
       console.log(`\n  Resume this session: deepseek-code --resume ${settings.lastSessionHash}\n`);
     }
   } catch {
-    // Silently skip
+    
   }
 }
 

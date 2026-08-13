@@ -1,6 +1,6 @@
-// FileMentions — dropdown of fuzzy-matched file paths shown while the user
-// types an @-mention in the input. Purely presentational: arrow/tab/esc keys
-// are handled in App's useInput; this just renders the current matches.
+
+
+
 
 import React from "react";
 import { Box, Text } from "ink";

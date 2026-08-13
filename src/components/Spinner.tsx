@@ -4,12 +4,12 @@ import { theme, resolveColor } from "../utils/theme.js";
 import { useBlink, BLACK_CIRCLE } from "./ToolBlock.js";
 
 
-// The spinner glyph — a black circle that pulses (blinks) while the model is
-// working, with a rotating verb beside it: "⏺ Pondering…". Same glyph as the
-// tool-use loader (Claude Code's BLACK_CIRCLE).
 
-// Rotating "progress" verbs shown while the agent works. Cycled sequentially
-// (shuffled once per run) so the same verb never repeats back-to-back.
+
+
+
+
+
 const SPINNER_VERBS = [
   "Exploring", "Investigating", "Pondering", "Thinking", "Processing",
   "Analyzing", "Reasoning", "Cogitating", "Contemplating", "Deliberating",
@@ -26,7 +26,7 @@ const SPINNER_VERBS = [
   "Accomplishing", "Doing", "Working", "Effecting",
 ];
 
-// Shown when the user is frustrated/hostile — the agent "stays calm".
+
 const FRUSTRATED_SPINNER_VERBS = [
   "Apologizing", "Sighing", "Remaining calm", "Deep breathing",
   "De-escalating", "Processing anger", "Absorbing criticism",
@@ -36,14 +36,14 @@ const FRUSTRATED_SPINNER_VERBS = [
 ];
 
 interface SpinnerProps {
-  /** Override the whole label (disables verb rotation). */
+  
   label?: string;
-  /** Object the verb acts on, e.g. the repo name → "✶ Exploring deepseek-code…". */
+  
   noun?: string;
   sentiment?: "neutral" | "frustrated";
 }
 
-/** Fisher–Yates shuffle returning a new array. */
+
 function shuffle<T>(arr: readonly T[]): T[] {
   const out = [...arr];
   for (let i = out.length - 1; i > 0; i--) {
@@ -60,7 +60,7 @@ export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerP
   const orderRef = useRef<string[]>([]);
   const idxRef = useRef(0);
 
-  // Rotate through the (shuffled) verb list with no immediate repeats.
+  
   useEffect(() => {
     const verbs = sentiment === "frustrated" ? FRUSTRATED_SPINNER_VERBS : SPINNER_VERBS;
     orderRef.current = shuffle(verbs);
@@ -75,14 +75,14 @@ export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerP
     return () => clearInterval(interval);
   }, [sentiment]);
 
-  // Live elapsed-seconds counter (resets each time the spinner mounts = each turn).
+  
   useEffect(() => {
     setElapsed(0);
     const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // A custom label disables rotation entirely.
+  
   const text = label ?? (noun ? `${verb} ${noun}…` : `${verb}…`);
 
   return (

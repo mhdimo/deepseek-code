@@ -35,7 +35,7 @@ export interface SessionRecord {
 
 export interface GlobalStats {
   sessions: SessionRecord[];
-  dailyUsage: Record<string, number>; // "YYYY-MM-DD" -> tokens count
+  dailyUsage: Record<string, number>; 
 }
 
 const DEFAULT_STATS: GlobalStats = {
@@ -55,7 +55,7 @@ export function loadGlobalStats(): GlobalStats {
     if (!existsSync(STATS_FILE)) return DEFAULT_STATS;
     const raw = readFileSync(STATS_FILE, "utf-8");
     const parsed = JSON.parse(raw) as GlobalStats;
-    // Ensure structure is correct
+    
     if (!parsed.sessions) parsed.sessions = [];
     if (!parsed.dailyUsage) parsed.dailyUsage = {};
     return parsed;
@@ -69,11 +69,11 @@ export function saveGlobalStats(stats: GlobalStats): void {
     ensureDir();
     writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), "utf-8");
   } catch {
-    // Best-effort
+    
   }
 }
 
-/** Record or update a session's stats globally */
+
 export function recordSessionStats(record: SessionRecord): void {
   const stats = loadGlobalStats();
   const index = stats.sessions.findIndex((s) => s.id === record.id);
@@ -83,10 +83,10 @@ export function recordSessionStats(record: SessionRecord): void {
     stats.sessions.push(record);
   }
 
-  // Update dailyUsage for target date
+  
   const dateStr = new Date(record.updatedAt).toISOString().split("T")[0]!;
   const currentTokens = record.tokens.input + record.tokens.output;
-  // Subtract previous values of this session if we are updating
+  
   let prevTokens = 0;
   if (index >= 0) {
     const prev = stats.sessions[index];

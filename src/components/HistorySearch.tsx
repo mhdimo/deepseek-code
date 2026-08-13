@@ -1,17 +1,17 @@
-// HistorySearch — Ctrl+R overlay for fuzzy search across persisted prompt
-// history. Full-screen (renders in place of the input), own key handling.
-// Enter inserts the selected entry into the input; Esc closes.
-//
-// Ported from claude-code-main's HistorySearchDialog + SearchBox:
-//   • SearchBox-style input row — round border, ⌕ prefix, placeholder with
-//     inverse first char, block cursor that tracks cursorOffset.
-//   • Result rows with the focused row in the `suggestion` theme color
-//     (reference: `color={isFocused ? 'suggestion' : undefined}`).
-//   • A bottom preview pane of the selected entry (reference
-//     renderPreview): rounded dim border, up to 6 rows, "+N more lines"
-//     overflow marker.
-// Entries here are plain strings (no timestamps), so the reference's
-// relative-time "age" column is omitted.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -20,12 +20,12 @@ import { getTheme, resolveColor, type Theme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 
 interface HistorySearchProps {
-  entries: string[]; // most-recent-first is handled here
+  entries: string[]; 
   onPick: (entry: string) => void;
   onClose: () => void;
 }
 
-/** Fallback palette used when a theme token is missing (see shared rules). */
+
 const FALLBACK_PALETTE: Partial<Record<keyof Theme, string>> = {
   suggestion: "rgb(177, 185, 249)",
   inactive: "rgb(153, 153, 153)",
@@ -36,11 +36,7 @@ const FALLBACK_PALETTE: Partial<Record<keyof Theme, string>> = {
 
 const PREVIEW_ROWS = 6;
 
-/**
- * Wrap an entry for the preview pane: hard-wrap long lines, drop blank
- * lines, cap at PREVIEW_ROWS. Returns the shown lines plus how many more
- * there were (reference: "… +N more lines").
- */
+
 function previewLines(entry: string, width: number): { lines: string[]; more: number } {
   const all: string[] = [];
   for (const raw of entry.split("\n")) {
@@ -67,7 +63,7 @@ export default function HistorySearch({ entries, onPick, onClose }: HistorySearc
   const token = (k: keyof Theme): string =>
     resolveColor(theme[k] ?? FALLBACK_PALETTE[k] ?? "rgb(255, 255, 255)");
 
-  // Most recent first.
+  
   const reversed = useMemo(() => [...entries].reverse(), [entries]);
   const results = useMemo(
     () => fuzzyFilter(query, reversed, (s) => s, 14),
@@ -89,11 +85,11 @@ export default function HistorySearch({ entries, onPick, onClose }: HistorySearc
       return;
     }
     if (key.upArrow) {
-      setSelected((i) => Math.min(results.length - 1, i + 1)); // older
+      setSelected((i) => Math.min(results.length - 1, i + 1)); 
       return;
     }
     if (key.downArrow) {
-      setSelected((i) => Math.max(0, i - 1)); // newer
+      setSelected((i) => Math.max(0, i - 1)); 
       return;
     }
     if (key.leftArrow) {
@@ -127,7 +123,7 @@ export default function HistorySearch({ entries, onPick, onClose }: HistorySearc
 
   return (
     <Box flexDirection="column" paddingX={2} marginY={0}>
-      {/* SearchBox-style input row */}
+      {}
       <Box flexShrink={0} borderStyle="round" borderColor={token("suggestion")} paddingX={1}>
         <Text color={token("inactive")}>
           {"⌕ "}
@@ -146,7 +142,7 @@ export default function HistorySearch({ entries, onPick, onClose }: HistorySearc
         </Text>
       </Box>
 
-      {/* Result rows */}
+      {}
       <Box flexDirection="column" marginTop={1}>
         {results.length === 0 ? (
           <Text dimColor>  {query ? "No matches." : "No history yet."}</Text>
@@ -166,7 +162,7 @@ export default function HistorySearch({ entries, onPick, onClose }: HistorySearc
         )}
       </Box>
 
-      {/* Preview of the selected entry */}
+      {}
       {preview && (
         <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} marginTop={1}>
           {preview.lines.map((row, i) => (

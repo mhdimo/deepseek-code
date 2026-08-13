@@ -1,17 +1,17 @@
-// ToolSearchTool — search/discover available tools by keyword.
-//
-// Adapted from Claude Code's ToolSearchTool, but greatly simplified for
-// DeepSeek Code: there is no tool-deferral system here (all enabled tools
-// are already in the prompt), so this tool is a discovery aid rather than
-// a schema-loader. It reads getToolDescriptions() from the registry and
-// returns matching names + descriptions. Read-only and concurrency-safe.
+
+
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { getToolDescriptions } from "../../tools.js";
 import { TOOL_SEARCH_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const ToolSearchInputSchema = z.object({
   query: z
@@ -25,14 +25,11 @@ const ToolSearchInputSchema = z.object({
     .describe("Maximum number of results to return (default: 5)"),
 });
 
-// ─── Name parsing ────────────────────────────────────────────────────────────
 
-/**
- * Parse a tool name into searchable parts.
- * Handles both MCP tools (mcp__server__action) and regular tools (CamelCase).
- */
+
+
 function parseToolName(name: string): { parts: string[]; full: string; isMcp: boolean } {
-  // MCP tool — mcp__server__action
+  
   if (name.startsWith("mcp__")) {
     const withoutPrefix = name.replace(/^mcp__/, "").toLowerCase();
     const parts = withoutPrefix
@@ -46,7 +43,7 @@ function parseToolName(name: string): { parts: string[]; full: string; isMcp: bo
     };
   }
 
-  // Regular tool — split CamelCase and underscores
+  
   const parts = name
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/_/g, " ")
@@ -57,16 +54,12 @@ function parseToolName(name: string): { parts: string[]; full: string; isMcp: bo
   return { parts, full: parts.join(" "), isMcp: false };
 }
 
-/**
- * Escape a string for safe use inside a RegExp.
- */
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Pre-compile word-boundary regexes for all search terms.
- */
+
 function compileTermPatterns(terms: string[]): Map<string, RegExp> {
   const patterns = new Map<string, RegExp>();
   for (const term of terms) {
@@ -77,19 +70,11 @@ function compileTermPatterns(terms: string[]): Map<string, RegExp> {
   return patterns;
 }
 
-// ─── Keyword search ──────────────────────────────────────────────────────────
+
 
 type ToolDescription = { name: string; description: string };
 
-/**
- * Keyword-based search over tool names and descriptions.
- *
- * Supports:
- * - Exact name match (fast path)
- * - MCP prefix matching (mcp__server)
- * - Required (+prefixed) vs optional terms
- * - Weighted scoring: name part > substring > description word-boundary
- */
+
 function searchToolsWithKeywords(
   query: string,
   tools: ToolDescription[],
@@ -97,11 +82,11 @@ function searchToolsWithKeywords(
 ): string[] {
   const queryLower = query.toLowerCase().trim();
 
-  // Fast path: exact name match
+  
   const exact = tools.find((t) => t.name.toLowerCase() === queryLower);
   if (exact) return [exact.name];
 
-  // MCP prefix match (mcp__server)
+  
   if (queryLower.startsWith("mcp__") && queryLower.length > 5) {
     const prefixMatches = tools
       .filter((t) => t.name.toLowerCase().startsWith(queryLower))
@@ -112,7 +97,7 @@ function searchToolsWithKeywords(
 
   const queryTerms = queryLower.split(/\s+/).filter((t) => t.length > 0);
 
-  // Partition into required (+prefixed) and optional terms
+  
   const requiredTerms: string[] = [];
   const optionalTerms: string[] = [];
   for (const term of queryTerms) {
@@ -127,7 +112,7 @@ function searchToolsWithKeywords(
     requiredTerms.length > 0 ? [...requiredTerms, ...optionalTerms] : queryTerms;
   const termPatterns = compileTermPatterns(allScoringTerms);
 
-  // Pre-filter: tools matching ALL required terms in name or description
+  
   let candidates = tools;
   if (requiredTerms.length > 0) {
     candidates = tools.filter((tool) => {
@@ -144,7 +129,7 @@ function searchToolsWithKeywords(
     });
   }
 
-  // Score each candidate
+  
   const scored = candidates.map((tool) => {
     const parsed = parseToolName(tool.name);
     const descLower = tool.description.toLowerCase();
@@ -153,19 +138,19 @@ function searchToolsWithKeywords(
     for (const term of allScoringTerms) {
       const pattern = termPatterns.get(term)!;
 
-      // Exact name-part match (higher weight for MCP server names)
+      
       if (parsed.parts.includes(term)) {
         score += parsed.isMcp ? 12 : 10;
       } else if (parsed.parts.some((part) => part.includes(term))) {
         score += parsed.isMcp ? 6 : 5;
       }
 
-      // Full name fallback for edge cases
+      
       if (parsed.full.includes(term) && score === 0) {
         score += 3;
       }
 
-      // Description word-boundary match
+      
       if (pattern.test(descLower)) {
         score += 2;
       }
@@ -181,7 +166,7 @@ function searchToolsWithKeywords(
     .map((item) => item.name);
 }
 
-// ─── Output formatting ───────────────────────────────────────────────────────
+
 
 function formatResults(
   matches: ToolDescription[],
@@ -192,7 +177,7 @@ function formatResults(
   }
 
   const lines = matches.map((m) => {
-    // Trim description to first line / first sentence for a concise summary.
+    
     const firstLine = m.description.split("\n")[0] ?? "";
     const summary = firstLine.length > 160 ? firstLine.slice(0, 157) + "..." : firstLine;
     return `- ${m.name}: ${summary}`;
@@ -202,7 +187,7 @@ function formatResults(
   return `${header}\n${lines.join("\n")}`;
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const ToolSearchTool = buildTool({
   name: TOOL_SEARCH_TOOL_NAME,
@@ -221,8 +206,8 @@ export const ToolSearchTool = buildTool({
   maxResultSizeChars: 100_000,
 
   checkPermissions: async (_input, _context) => {
-    // Discovery only — no side effects, no filesystem/network access.
-    // Always allowed regardless of the agent's read/write/execute permission set.
+    
+    
     return { approved: true };
   },
 
@@ -238,8 +223,8 @@ export const ToolSearchTool = buildTool({
 
     const tools = getToolDescriptions();
 
-    // select:<names> — direct selection (comma-separated). Unknown names are
-    // silently dropped so the model still gets the ones that exist.
+    
+    
     const selectMatch = query.match(/^select:(.+)$/i);
     if (selectMatch) {
       const requested = selectMatch[1]!
@@ -259,7 +244,7 @@ export const ToolSearchTool = buildTool({
       return { data: formatResults(found, tools.length) };
     }
 
-    // Keyword search
+    
     const matchNames = new Set(searchToolsWithKeywords(query, tools, maxResults));
     const matches = tools.filter((t) => matchNames.has(t.name));
     return { data: formatResults(matches, tools.length) };

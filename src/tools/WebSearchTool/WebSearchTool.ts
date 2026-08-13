@@ -1,7 +1,7 @@
-// WebSearchTool — placeholder implementation for web search
-//
-// Disabled by default. Requires SEARCH_API_KEY configuration to enable.
-// Returns a helpful message when invoked while disabled.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";

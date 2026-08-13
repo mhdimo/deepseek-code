@@ -1,7 +1,7 @@
-// LSTool — list directory contents with icons
-//
-// Shows files and subdirectories with type icons. Filters hidden files
-// and node_modules. Sorts directories first, then alphabetically.
+
+
+
+
 
 import { readdir } from "fs/promises";
 import { relative, resolve } from "path";
@@ -10,7 +10,7 @@ import { buildTool } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { LS_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const LSInputSchema = z.object({
   path: z.string().optional().describe(
@@ -18,7 +18,7 @@ const LSInputSchema = z.object({
   ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const LSTool = buildTool({
   name: LS_TOOL_NAME,
@@ -50,11 +50,11 @@ export const LSTool = buildTool({
     try {
       const entries = await readdir(fullPath, { withFileTypes: true });
 
-      // Filter hidden files and node_modules
+      
       const filtered = entries
         .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
         .sort((a, b) => {
-          // Directories first, then alphabetical
+          
           if (a.isDirectory() && !b.isDirectory()) return -1;
           if (!a.isDirectory() && b.isDirectory()) return 1;
           return a.name.localeCompare(b.name);

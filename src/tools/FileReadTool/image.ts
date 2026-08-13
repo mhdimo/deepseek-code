@@ -1,28 +1,23 @@
-// Image metadata reading for FileReadTool.
-//
-// The model layer cannot consume images today (DeepSeek models are text-only,
-// and the C++ SDK drops FilePart content in tool results — see the tool
-// prompt), so FileRead does NOT emit images as model-visible content. Instead
-// it reports format, size, and dimensions (parsed dependency-free from the
-// file headers), and — for small images — includes a data: URL in the result
-// text so a future binding change can consume the bytes without re-reading
-// the file.
-//
-// Dimensions are parsed from headers only: PNG (IHDR), JPEG (SOF markers),
-// GIF (logical screen descriptor), and WebP (VP8X / VP8 / VP8L). No image
-// decoding, no dependencies.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { formatFileSize } from "../../utils/limits.js";
 
-/** Image extensions routed to the summary path. */
+
 export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
 
-/**
- * Images at or below this many raw bytes get their data: URL included in the
- * result (base64 ≈ 1.37× the raw size, so 32 KB ≈ 44 KB of result text,
- * ~11 K tokens — comfortably inside the default 25 K token budget).
- * Larger images report size + dimensions only.
- */
+
 export const MAX_IMAGE_DATA_URL_BYTES = 32 * 1024;
 
 export type ImageType = "png" | "jpeg" | "gif" | "webp";
@@ -36,7 +31,7 @@ function u8(buf: Uint8Array, i: number): number {
   return buf[i] ?? 0;
 }
 
-/** Detect the image format from magic bytes; null when unrecognized. */
+
 export function detectImageType(buf: Uint8Array): ImageType | null {
   if (
     buf.length >= 8 &&
@@ -90,12 +85,12 @@ export function imageMediaType(type: ImageType): string {
   return `image/${type}`;
 }
 
-/** Parse width/height from the file headers; null when unrecognized. */
+
 export function parseImageDimensions(buf: Uint8Array): ImageDimensions | null {
   const type = detectImageType(buf);
   switch (type) {
     case "png": {
-      // 8-byte signature, then IHDR chunk: length(4) "IHDR"(4) w(4 BE) h(4 BE)
+      
       if (
         buf.length >= 24 &&
         u8(buf, 12) === 0x49 &&
@@ -125,16 +120,16 @@ export function parseImageDimensions(buf: Uint8Array): ImageDimensions | null {
   }
 }
 
-/** Walk JPEG segments to the first Start-Of-Frame marker (height/width). */
+
 function parseJPEGDimensions(buf: Uint8Array): ImageDimensions | null {
-  let i = 2; // Skip SOI.
+  let i = 2; 
   while (i + 9 < buf.length) {
     if (u8(buf, i) !== 0xff) {
       i++;
       continue;
     }
     const marker = u8(buf, i + 1);
-    // Standalone markers: RSTn, SOI, TEM.
+    
     if (
       marker === 0xd8 ||
       (marker >= 0xd0 && marker <= 0xd7) ||
@@ -143,10 +138,10 @@ function parseJPEGDimensions(buf: Uint8Array): ImageDimensions | null {
       i += 2;
       continue;
     }
-    if (marker === 0xd9) break; // EOI.
+    if (marker === 0xd9) break; 
     const segLen = (u8(buf, i + 2) << 8) | u8(buf, i + 3);
-    if (segLen < 2) break; // Malformed.
-    // SOF0..SOF15 excluding DHT(C4), JPG(C8), DAC(CC).
+    if (segLen < 2) break; 
+    
     if (
       marker >= 0xc0 &&
       marker <= 0xcf &&
@@ -176,10 +171,10 @@ function parseWebPDimensions(buf: Uint8Array): ImageDimensions | null {
     u8(buf, 14),
     u8(buf, 15),
   );
-  // Chunk data starts at offset 20 (8-byte header after RIFF/WEBP).
+  
   switch (chunkType) {
     case "VP8X": {
-      // flags(1) reserved(3) width-1(3 LE) height-1(3 LE)
+      
       if (buf.length < 30) return null;
       return {
         width: u24LE(buf, 24) + 1,
@@ -187,7 +182,7 @@ function parseWebPDimensions(buf: Uint8Array): ImageDimensions | null {
       };
     }
     case "VP8 ": {
-      // Frame tag(3) start code 9D 01 2A(3), then 14-bit LE dimensions.
+      
       if (u8(buf, 23) !== 0x9d || u8(buf, 24) !== 0x01 || u8(buf, 25) !== 0x2a) {
         return null;
       }
@@ -199,7 +194,7 @@ function parseWebPDimensions(buf: Uint8Array): ImageDimensions | null {
       };
     }
     case "VP8L": {
-      // Signature byte 0x2f, then 14-bit width-1 / height-1 packed in 4 bytes.
+      
       if (u8(buf, 20) !== 0x2f) return null;
       const bits =
         u8(buf, 21) |
@@ -216,10 +211,7 @@ function parseWebPDimensions(buf: Uint8Array): ImageDimensions | null {
   }
 }
 
-/**
- * Build the image result text: format, size, dimensions, and — for images
- * small enough — the data: URL for future machine consumption.
- */
+
 export function buildImageSummary(opts: {
   filePath: string;
   sizeBytes: number;

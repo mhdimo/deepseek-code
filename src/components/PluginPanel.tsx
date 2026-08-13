@@ -28,7 +28,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
   const [isLoadingMarketplace, setIsLoadingMarketplace] = useState(false);
   const [installingPluginName, setInstallingPluginName] = useState<string | null>(null);
 
-  // Reload local plugins
+  
   const reloadLocal = () => {
     try {
       const list = loadInstalledPlugins();
@@ -40,7 +40,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
     reloadLocal();
   }, []);
 
-  // Fetch marketplace list when entering the browse tab
+  
   useEffect(() => {
     if (activeTab === "browse" && marketplace.length === 0) {
       setIsLoadingMarketplace(true);
@@ -59,26 +59,26 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
     }
   }, [activeTab]);
 
-  // Compute filtered/mapped arrays based on tab
+  
   const listSize = useMemo(() => {
     return activeTab === "installed" ? installed.length : marketplace.length;
   }, [activeTab, installed, marketplace]);
 
-  // Handle selected index clamping
+  
   useEffect(() => {
     if (selectedIndex >= listSize) {
       setSelectedIndex(Math.max(0, listSize - 1));
     }
   }, [listSize, selectedIndex]);
 
-  // Handle inputs
+  
   useInput(async (input, key) => {
     if (key.escape || input === "q") {
       onClose();
       return;
     }
 
-    // Switch tabs with Tab/Shift+Tab
+    
     if (key.tab) {
       setActiveTab((prev) => (prev === "installed" ? "browse" : "installed"));
       setSelectedIndex(0);
@@ -96,23 +96,23 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
       return;
     }
 
-    // Installed Tab interactions: Toggle (Space/Enter) and Delete (d)
+    
     if (activeTab === "installed" && installed.length > 0) {
       const selected = installed[selectedIndex];
       if (!selected) return;
 
       if (key.return || input === " ") {
-        // Toggle enabled
+        
         const nextState = !selected.enabled;
         togglePlugin(selected.name, nextState);
         reloadLocal();
-        onRefreshPlugins(); // refresh loaded plugins in App.tsx
+        onRefreshPlugins(); 
         setStatusMessage(`✓ Plugin "${selected.name}" ${nextState ? "enabled" : "disabled"}.`);
         return;
       }
 
       if (input === "d" || key.delete) {
-        // Uninstall
+        
         uninstallPlugin(selected.name);
         reloadLocal();
         onRefreshPlugins();
@@ -122,13 +122,13 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
       }
     }
 
-    // Browse Tab interactions: Install (Enter)
+    
     if (activeTab === "browse" && marketplace.length > 0 && !installingPluginName) {
       const selected = marketplace[selectedIndex];
       if (!selected) return;
 
       if (key.return) {
-        // Check if already installed
+        
         const isInstalled = installed.some((p) => p.name === selected.name);
         if (isInstalled) {
           setStatusMessage(`Plugin "${selected.name}" is already installed.`);
@@ -163,7 +163,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
     <Box flexDirection="column" width="100%" paddingX={1} marginY={0}>
       <Text color="gray">{dividerLine}</Text>
 
-      {/* Header / Tabs */}
+      {}
       <Box flexDirection="row" paddingBottom={1} paddingLeft={2}>
         <Box marginRight={4}>
           <Text bold={activeTab === "installed"} color={activeTab === "installed" ? "cyan" : "gray"}>
@@ -177,7 +177,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
         </Box>
       </Box>
 
-      {/* List Area */}
+      {}
       <Box flexDirection="column" paddingLeft={2} minHeight={6}>
         {activeTab === "installed" ? (
           installed.length === 0 ? (
@@ -240,7 +240,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
         )}
       </Box>
 
-      {/* Status Bar */}
+      {}
       {statusMessage && (
         <Box paddingLeft={2} paddingTop={1}>
           <Text bold color="yellow">
@@ -249,7 +249,7 @@ export default function PluginPanel({ onClose, onRefreshPlugins }: PluginPanelPr
         </Box>
       )}
 
-      {/* Footer Hints */}
+      {}
       <Box paddingLeft={2} paddingTop={1}>
         <Text dimColor color="gray">
           {activeTab === "installed"

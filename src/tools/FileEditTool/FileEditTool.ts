@@ -1,7 +1,7 @@
-// FileEditTool — edit files by replacing exact string matches
-//
-// Validates that old_string exists and is unique in the file before
-// performing the replacement. Shows diff preview when requesting permission.
+
+
+
+
 
 import { readFile, writeFile } from "fs/promises";
 import { z } from "zod";
@@ -14,7 +14,7 @@ import {
 } from "../../utils/toolUtils.js";
 import { FILE_EDIT_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const FileEditInputSchema = z.object({
   file_path: z.string().describe(
@@ -31,7 +31,7 @@ const FileEditInputSchema = z.object({
   ),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const FileEditTool = buildTool({
   name: FILE_EDIT_TOOL_NAME,

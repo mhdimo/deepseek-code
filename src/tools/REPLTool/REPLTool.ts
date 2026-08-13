@@ -1,22 +1,22 @@
-// REPLTool — persistent JS/TS interpreter backed by node:vm
-//
-// Maintains a single module-scoped vm.Context so that state (globals, helper
-// functions, accumulated data) persists across calls within a process. Each
-// call wraps the user's code so that:
-//   1. console output is captured and returned,
-//   2. the value of the last top-level expression is captured and returned,
-//   3. async code (top-level await / a returned Promise) is awaited.
-//
-// Execution permission is required: arbitrary code execution is a sensitive
-// operation, so each call goes through the standard permission flow unless
-// execute permission is already granted.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import vm from "node:vm";
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { REPL_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const REPLInputSchema = z.object({
   code: z.string().describe(
@@ -27,11 +27,11 @@ const REPLInputSchema = z.object({
   ),
 });
 
-// ─── Module-scoped persistent state ──────────────────────────────────────────
-//
-// The vm.Context lives at module scope so it is shared by every REPLTool.call
-// invocation within the process. This is the persistence mechanism: globals set
-// in one call survive into the next.
+
+
+
+
+
 
 type CapturedConsole = {
   logs: string[];
@@ -44,13 +44,13 @@ interface REPLSession {
 
 let session: REPLSession | null = null;
 
-// Build a fresh vm.Context pre-loaded with safe standard globals + a capturing
-// console. This runs only the global setup once per context.
+
+
 function createSession(): REPLSession {
   const consoleState: CapturedConsole = { logs: [] };
 
   const sandbox: Record<string, unknown> = {
-    // Capturing console — every method appends to consoleState.logs.
+    
     console: {
       log: (...args: unknown[]) => consoleState.logs.push(formatArgs(args)),
       info: (...args: unknown[]) => consoleState.logs.push(formatArgs(args)),
@@ -59,9 +59,9 @@ function createSession(): REPLSession {
       error: (...args: unknown[]) => consoleState.logs.push(formatArgs(args)),
       dir: (obj: unknown) => consoleState.logs.push(formatValue(obj)),
     },
-    // Pass-through standard globals the sandbox wouldn't otherwise have.
-    // vm contexts get a fresh global object, so we explicitly re-export the
-    // commonly-needed builtins from the host.
+    
+    
+    
     JSON,
     Math,
     Date,
@@ -110,13 +110,13 @@ function createSession(): REPLSession {
 
   const context = vm.createContext(sandbox, {
     name: "deepseek-repl",
-    // code cache + mitigations keep the sandbox from accidentally touching host
-    // internals; we intentionally share builtin *constructors* (above) for
-    // instanceof/value compatibility across the boundary.
+    
+    
+    
     codeGeneration: { strings: true, wasm: false },
   });
 
-  // Seed a friendly global alias so users can address the context root.
+  
   vm.runInContext("var globalThis = this;", context);
 
   return { context, consoleState };
@@ -133,7 +133,7 @@ function resetSession(): void {
   session = createSession();
 }
 
-// ─── Output formatting ───────────────────────────────────────────────────────
+
 
 function formatValue(value: unknown): string {
   if (typeof value === "string") return value;
@@ -144,7 +144,7 @@ function formatValue(value: unknown): string {
     return value.toString();
   }
   try {
-    // Pretty-print objects, handling circular structures gracefully.
+    
     return JSON.stringify(
       value,
       (() => {
@@ -173,21 +173,15 @@ function formatArgs(args: unknown[]): string {
     .join(" ");
 }
 
-// ─── Code execution ──────────────────────────────────────────────────────────
+
 
 const EXECUTION_TIMEOUT_MS = 30_000;
 
-/**
- * Wrap the user code so the last expression's value is captured. We do this by
- * appending `\n;(__replLast = (function(){ return (..., <code>) })())` — but
- * that fails for statements (const/return/etc.). Instead we run the code as-is
- * in the context, capturing only via the fact that vm.runInContext returns the
- * completion value of the script (the value of the last evaluated expression).
- */
+
 function executeCode(code: string, sessionState: REPLSession): unknown {
   const { context } = sessionState;
-  // Wrap in an async IIFE so top-level await works and the completion value is
-  // the resolved value of the last expression.
+  
+  
   const wrapped = `(async () => {\n${code}\n})()`;
   const result = vm.runInContext(wrapped, context, {
     filename: "repl-input.js",
@@ -197,7 +191,7 @@ function executeCode(code: string, sessionState: REPLSession): unknown {
   return result;
 }
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const REPLTool = buildTool({
   name: REPL_TOOL_NAME,
@@ -239,14 +233,14 @@ export const REPLTool = buildTool({
     }
 
     const sessionState = getSession();
-    // Clear captured console for this run.
+    
     sessionState.consoleState.logs.length = 0;
 
     try {
       const result = executeCode(code, sessionState);
 
-      // Resolve top-level await / returned Promises. We poll with a timeout so
-      // a never-resolving promise can't hang the tool forever.
+      
+      
       let resolved: unknown = result;
       if (result && typeof (result as Promise<unknown>).then === "function") {
         resolved = await Promise.race([

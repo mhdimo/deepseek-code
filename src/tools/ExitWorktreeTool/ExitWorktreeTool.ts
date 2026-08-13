@@ -1,25 +1,25 @@
-// ExitWorktreeTool — exit a worktree session created by EnterWorktreeTool.
-//
-// Adapted from Claude Code's ExitWorktreeTool, but reworked for DeepSeek's
-// tool pattern (buildTool + ToolUseContext) and the C++ agent backend:
-//   - No Claude-internal state (bootstrap/state, Shell.setCwd, claudemd caches,
-//     plans directory, systemPromptSections). The C++ backend owns compaction,
-//     memory, and conversation history; the TS side only owns the TUI, tool
-//     definitions, and ToolUseContext. So session restoration here is limited
-//     to what the TS layer actually controls: the worktree session registry
-//     and a best-effort `process.chdir` back to the original directory.
-//   - Worktree operations (git worktree remove / branch -D, tmux kill) are run
-//     via Bun.spawn. No C++ changes are required.
-//   - Write permission (allowWrite) is required for BOTH actions: "remove"
-//     deletes the worktree directory + branch (destructive), and "keep" still
-//     mutates session state and changes the working directory.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { EXIT_WORKTREE_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 import { WorktreeSessionStore } from "./worktreeSession.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const ExitWorktreeInputSchema = z.object({
   action: z
@@ -35,7 +35,7 @@ const ExitWorktreeInputSchema = z.object({
     ),
 });
 
-// ─── git helper ──────────────────────────────────────────────────────────────
+
 
 interface GitResult {
   code: number;
@@ -43,11 +43,7 @@ interface GitResult {
   stderr: string;
 }
 
-/**
- * Run a git command via Bun.spawn, capturing stdout/stderr. Never throws —
- * callers inspect `code`. A non-zero code surfaces as an empty/error result
- * rather than an exception so change-counting can fail closed.
- */
+
 async function runGit(args: string[]): Promise<GitResult> {
   try {
     const proc = Bun.spawn({
@@ -63,7 +59,7 @@ async function runGit(args: string[]): Promise<GitResult> {
     const code = await proc.exited;
     return { code, stdout, stderr };
   } catch (err) {
-    // spawn itself failed (e.g. git not installed) — treat as non-zero.
+    
     return {
       code: 1,
       stdout: "",
@@ -77,14 +73,7 @@ interface ChangeSummary {
   commits: number;
 }
 
-/**
- * Count uncommitted files and commits unique to the worktree branch.
- *
- * Returns null when state cannot be reliably determined — callers MUST treat
- * null as "unknown, assume unsafe" (fail-closed). A silent 0/0 would let a
- * remove destroy real work. Null is returned when git status / rev-list exit
- * non-zero, or when originalHeadCommit is undefined (no baseline to count from).
- */
+
 async function countWorktreeChanges(
   worktreePath: string,
   originalHeadCommit: string | undefined,
@@ -103,8 +92,8 @@ async function countWorktreeChanges(
     .filter((l) => l.trim() !== "").length;
 
   if (!originalHeadCommit) {
-    // git status succeeded → it's a repo, but without a baseline commit we
-    // cannot count commits. Fail-closed rather than claim 0.
+    
+    
     return null;
   }
 
@@ -123,11 +112,7 @@ async function countWorktreeChanges(
   return { changedFiles, commits };
 }
 
-/**
- * Physically remove the worktree directory and its branch.
- * `git worktree remove --force` handles dirty working trees; we already
- * gated on discard_changes in the caller, so force is appropriate here.
- */
+
 async function removeWorktreeAndBranch(
   worktreePath: string,
   worktreeBranch: string | undefined,
@@ -136,7 +121,7 @@ async function removeWorktreeAndBranch(
 
   const remove = await runGit(["worktree", "remove", "--force", worktreePath]);
   if (remove.code !== 0) {
-    // Fall back to prune if the directory was already moved/deleted.
+    
     notes.push(
       `git worktree remove exited ${remove.code}${
         remove.stderr ? `: ${remove.stderr.trim()}` : ""
@@ -158,7 +143,7 @@ async function removeWorktreeAndBranch(
   return notes.join("\n");
 }
 
-// ─── Tool definition ────────────────────────────────────────────────────────
+
 
 export const ExitWorktreeTool = buildTool({
   name: EXIT_WORKTREE_TOOL_NAME,
@@ -175,8 +160,8 @@ export const ExitWorktreeTool = buildTool({
   maxResultSizeChars: 100_000,
 
   checkPermissions: async (input, context) => {
-    // Both actions mutate session state and the working directory; "remove"
-    // is also destructive. Gate on allowWrite for either.
+    
+    
     if (!context.permissions.allowWrite) {
       return {
         approved: false,
@@ -186,8 +171,8 @@ export const ExitWorktreeTool = buildTool({
 
     const session = WorktreeSessionStore.get();
     if (!session) {
-      // No active session — this will no-op in call(). Don't prompt; let it
-      // through so the no-op message reaches the model.
+      
+      
       return { approved: true };
     }
 
@@ -203,8 +188,8 @@ export const ExitWorktreeTool = buildTool({
   call: async (input) => {
     const session = WorktreeSessionStore.get();
     if (!session) {
-      // Scope guard: only operate on worktrees created by EnterWorktree in
-      // THIS session. Manual worktrees / previous sessions are invisible.
+      
+      
       return {
         data:
           "No-op: there is no active EnterWorktree session to exit. This tool only operates on worktrees created by EnterWorktree in the current session — it will not touch worktrees created manually or in a previous session. No filesystem changes were made.",
@@ -214,9 +199,9 @@ export const ExitWorktreeTool = buildTool({
     const { originalCwd, worktreePath, worktreeBranch, originalHeadCommit } =
       session;
 
-    // Re-count at execution time for accurate messaging. Null (git failure)
-    // falls back to 0/0 for keep; for remove we already safety-gated in
-    // validateInput-like logic below.
+    
+    
+    
     const summary =
       (await countWorktreeChanges(worktreePath, originalHeadCommit)) ?? {
         changedFiles: 0,
@@ -224,10 +209,10 @@ export const ExitWorktreeTool = buildTool({
       };
     const { changedFiles, commits } = summary;
 
-    // ── Safety gate for "remove" ──────────────────────────────────────────
+    
     if (input.action === "remove" && !input.discard_changes) {
-      // Re-derive a trustworthy summary for the gate (the one above fell back
-      // to 0/0 on git failure). If we can't verify, refuse.
+      
+      
       const verify =
         await countWorktreeChanges(worktreePath, originalHeadCommit);
       if (verify === null) {
@@ -259,15 +244,15 @@ export const ExitWorktreeTool = buildTool({
       }
     }
 
-    // ── Perform the exit ──────────────────────────────────────────────────
+    
     if (input.action === "keep") {
-      // Best-effort restore of the TS-layer working directory. The C++ backend
-      // owns the agent loop and history; we only restore what the TS layer
-      // controls. EnterWorktreeTool (when implemented) should set originalCwd.
+      
+      
+      
       try {
         process.chdir(originalCwd);
       } catch {
-        // originalCwd may no longer exist; non-fatal for "keep".
+        
       }
       WorktreeSessionStore.clear();
 
@@ -278,7 +263,7 @@ export const ExitWorktreeTool = buildTool({
       };
     }
 
-    // action === "remove"
+    
     let extra = "";
     try {
       const notes = await removeWorktreeAndBranch(worktreePath, worktreeBranch);
@@ -290,7 +275,7 @@ export const ExitWorktreeTool = buildTool({
     try {
       process.chdir(originalCwd);
     } catch {
-      // non-fatal
+      
     }
     WorktreeSessionStore.clear();
 

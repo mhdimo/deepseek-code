@@ -1,7 +1,7 @@
-// TaskUpdateTool — updates fields on an existing task
-//
-// Supports partial updates to any task field. Setting status to "deleted"
-// removes the task from the store. addBlocks/addBlockedBy merge into arrays.
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -47,7 +47,7 @@ export const TaskUpdateTool = buildTool({
       return { data: `Task #${args.taskId} not found.` };
     }
 
-    // Handle deletion
+    
     if (args.status === "deleted") {
       const removed = tasks.splice(index, 1)[0]!;
       context.setTasks(tasks);
@@ -57,7 +57,7 @@ export const TaskUpdateTool = buildTool({
     const task = tasks[index]!;
     const now = Date.now();
 
-    // Apply scalar updates
+    
     if (args.subject !== undefined) task.subject = args.subject;
     if (args.description !== undefined) task.description = args.description;
     if (args.activeForm !== undefined) task.activeForm = args.activeForm;
@@ -65,7 +65,7 @@ export const TaskUpdateTool = buildTool({
     if (args.owner !== undefined) task.owner = args.owner;
     if (args.metadata !== undefined) task.metadata = args.metadata;
 
-    // Merge array fields
+    
     if (args.addBlocks) {
       task.blocks = [...new Set([...task.blocks, ...args.addBlocks])];
     }

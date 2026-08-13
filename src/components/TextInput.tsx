@@ -1,11 +1,11 @@
-// Input component — boxed prompt area: a divider line above the prompt
-// (titled with the working directory), the ❯ input row, and a divider line
-// below. The footer row with status info + hints renders under it (StatusBar).
-//
-// Layout:
-// ── deepseek-code ──────────────────────────────────────
-// ❯ what does project do?
-// ───────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
 
 import React, { useMemo, useRef, useCallback } from "react";
 import { Box, Text } from "ink";
@@ -33,7 +33,7 @@ const AGENT_COLORS: Record<string, string> = {
   review: "magenta",
 };
 
-/** Context-aware placeholder suggestions — Claude Code style ("Try '…'"). */
+
 function getSuggestion(
   agentName: string,
   cwd: string,
@@ -82,10 +82,10 @@ export default function Input({
 }: InputProps) {
   const color = AGENT_COLORS[agentName] || theme.claude;
 
-  // Stabilize the onSubmit wrapper so it doesn't create a new function reference
-  // on every render. A changing onSubmit bypasses React.memo on MultilineTextInput
-  // and causes Ink's useInput to deregister/re-register the input handler on every
-  // keystroke (use-input.js line 121: effect dep on inputHandler).
+  
+  
+  
+  
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
   const stableOnSubmit = useCallback(() => onSubmitRef.current(), []);
@@ -110,10 +110,10 @@ export default function Input({
 
   return (
     <Box flexDirection="column" width="100%">
-      {/* Divider above the prompt (titled with the working directory) */}
+      {}
       <Text color="gray">{topDivider}</Text>
 
-      {/* Prompt row */}
+      {}
       <Box flexDirection="row" paddingX={1}>
         <Text bold={!isLoading} dimColor={isLoading} color={resolveColor(color)}>
           {isLoading ? "⏳ " : "❯ "}
@@ -128,10 +128,10 @@ export default function Input({
         />
       </Box>
 
-      {/* Divider below the prompt */}
+      {}
       <Text color="gray">{bottomDivider}</Text>
 
-      {/* Multiline submit hint (the footer StatusBar shows the rest) */}
+      {}
       {hasNewlines && (
         <Box paddingX={2}>
           <Text dimColor>enter to submit · alt+enter for newline</Text>

@@ -1,8 +1,8 @@
-// Streaming query engine — ai-sdk-cpp (native C++) backend, memory-session mode.
-//
-// The C++ Session owns history + context management (memory auto-inject +
-// sliding-window auto-compact). This module just drives session.sendStream and
-// maps native events to deepseek-code's QueryEvent shape for the Ink UI.
+
+
+
+
+
 
 import type { Session as BindingSession } from "ai-sdk-cpp";
 import type { AgentConfig, QueryEvent, TokenUsage } from "../types/index.js";
@@ -80,14 +80,14 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
                 totalTokens: ev.usage.inputTokens + ev.usage.outputTokens,
               }
             : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-          // DeepSeek pricing (per 1M tokens, in USD)
+          
           const inputCost = (u.promptTokens / 1_000_000) * 0.27;
           const outputCost = (u.completionTokens / 1_000_000) * 1.10;
           yield {
             type: "finish",
             usage: u,
             cost: { inputCost, outputCost, totalCost: inputCost + outputCost },
-            finishReason: "stop", // C++ finish event doesn't distinguish; will improve
+            finishReason: "stop", 
           };
           break;
         }

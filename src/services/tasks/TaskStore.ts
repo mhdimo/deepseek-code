@@ -1,7 +1,7 @@
-// TaskStore — in-memory task management for the task tools
-//
-// Simple class that stores TaskItem objects with auto-incrementing IDs.
-// No persistence — tasks live only for the duration of the session.
+
+
+
+
 
 import type { TaskItem } from "../../types/index.js";
 
@@ -10,7 +10,7 @@ let nextId = 1;
 export class TaskStore {
   private tasks: Map<string, TaskItem> = new Map();
 
-  /** Create a new task and return it */
+  
   create(
     subject: string,
     description: string,
@@ -33,12 +33,12 @@ export class TaskStore {
     return task;
   }
 
-  /** Get a single task by ID */
+  
   get(id: string): TaskItem | undefined {
     return this.tasks.get(id);
   }
 
-  /** Update a task's fields */
+  
   update(
     id: string,
     updates: Partial<
@@ -51,7 +51,7 @@ export class TaskStore {
     const task = this.tasks.get(id);
     if (!task) return undefined;
 
-    // Handle status="deleted" as removal
+    
     if (updates.status === ("deleted" as any)) {
       this.tasks.delete(id);
       return undefined;
@@ -59,7 +59,7 @@ export class TaskStore {
 
     const now = Date.now();
 
-    // Handle addBlocks / addBlockedBy by merging
+    
     if (updates.addBlocks) {
       task.blocks = [...new Set([...task.blocks, ...updates.addBlocks])];
       delete (updates as any).addBlocks;
@@ -73,17 +73,17 @@ export class TaskStore {
     return task;
   }
 
-  /** Delete a task by ID */
+  
   delete(id: string): boolean {
     return this.tasks.delete(id);
   }
 
-  /** List all tasks */
+  
   list(): TaskItem[] {
     return Array.from(this.tasks.values());
   }
 
-  /** Reset the store (useful for testing) */
+  
   clear(): void {
     this.tasks.clear();
     nextId = 1;

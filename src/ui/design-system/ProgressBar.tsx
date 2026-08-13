@@ -1,7 +1,7 @@
-// ProgressBar — a character-based progress bar. Ported from
-// claude-code-main/src/components/design-system/ProgressBar.tsx (fork-ink
-// import translated to stock 'ink'; theme keys resolve via
-// getTheme()/resolveColor).
+
+
+
+
 
 import React from "react";
 import { Text } from "ink";
@@ -10,35 +10,22 @@ import type { Theme } from "../../utils/theme.js";
 import { useTheme } from "./ThemeProvider.js";
 
 export type ProgressBarProps = {
-  /**
-   * How much progress to display, between 0 and 1 inclusive
-   */
-  ratio: number; // [0, 1]
+  
+  ratio: number; 
 
-  /**
-   * How many characters wide to draw the progress bar
-   */
-  width: number; // how many characters wide
+  
+  width: number; 
 
-  /**
-   * Optional color for the filled portion of the bar
-   */
+  
   fillColor?: keyof Theme;
 
-  /**
-   * Optional color for the empty portion of the bar
-   */
+  
   emptyColor?: keyof Theme;
 };
 
 const BLOCKS = [" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
 
-/**
- * Renders a progress bar with partial-block precision.
- *
- * @example
- * <ProgressBar ratio={0.7} width={20} />
- */
+
 export function ProgressBar({
   ratio: inputRatio,
   width,

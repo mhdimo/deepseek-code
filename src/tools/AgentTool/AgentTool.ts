@@ -1,8 +1,8 @@
-// AgentTool — spawns sub-agents with restricted tool sets
-//
-// Delegates work to a sub-agent that runs independently. The sub-agent type
-// determines the available tools and permissions. This is a stub implementation
-// pending full integration with the agent loop.
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
@@ -33,13 +33,13 @@ export const AgentTool = buildTool({
     const subagentType = args.subagent_type;
     const agentName = subagentType === "explore" ? "plan" : subagentType === "plan" ? "plan" : "code";
     
-    // Instantiate sub-agent
+    
     const agent = agentManager.createAgent(agentName, context.providerConfig);
     
     const toolLogs: string[] = [];
     let reply = "";
     
-    // Execute sub-agent run loop
+    
     const events = agent.run(
       args.prompt,
       [],

@@ -1,8 +1,8 @@
-// ScheduleCronTool prompt + constants.
+
 
 export const SCHEDULE_CRON_TOOL_NAME = "ScheduleCron";
 
-/** Recurring jobs auto-expire after this many days. Mirrors the scheduler. */
+
 export const MAX_AGE_DAYS = 7;
 
 export const DESCRIPTION = `Schedule a prompt to run at a future time — recurring on a cron schedule, or once at a specific time. Also cancels or lists existing jobs.

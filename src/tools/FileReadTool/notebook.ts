@@ -1,15 +1,15 @@
-// Jupyter notebook (.ipynb) reading for FileReadTool.
-//
-// Parses the notebook JSON and renders all cells — markdown and code — with
-// their outputs as a plain-text listing. Image outputs are noted but not
-// included (the model cannot view them; see the tool prompt).
+
+
+
+
+
 
 import { readFile } from "fs/promises";
 
-/** Per-output character cap before truncation with a marker. */
+
 const MAX_OUTPUT_CHARS = 2000;
 
-/** Cap on cells rendered per read; larger notebooks are truncated with a marker. */
+
 export const MAX_NOTEBOOK_CELLS = 200;
 
 export interface NotebookCellOutput {
@@ -100,8 +100,7 @@ function processCell(raw: any): NotebookCell | null {
   return { cell_type: cellType, execution_count: executionCount, source, outputs };
 }
 
-/** Parse a notebook file from disk. Throws with a descriptive message on
- *  invalid JSON or a non-notebook structure. */
+
 export async function readNotebook(filePath: string): Promise<Notebook> {
   let raw: string;
   try {
@@ -130,7 +129,7 @@ export async function readNotebook(filePath: string): Promise<Notebook> {
   };
 }
 
-/** Render a notebook as readable text: one block per cell, outputs indented. */
+
 export function formatNotebook(notebook: Notebook): string {
   const blocks: string[] = [];
   for (let i = 0; i < notebook.cells.length; i++) {
@@ -167,7 +166,7 @@ export function formatNotebook(notebook: Notebook): string {
   return blocks.join("\n\n");
 }
 
-/** Convenience wrapper used by the tool: parse + format. */
+
 export async function readNotebookText(filePath: string): Promise<{
   text: string;
   cellCount: number;

@@ -1,14 +1,14 @@
-// ScheduleCronTool — schedule / cancel / list cron-driven prompts.
-//
-// Delegates all scheduling logic to src/services/scheduler.ts (the in-process
-// singleton scheduler). Persistence is to ~/.deepseek-code/schedules.json
-// (durable jobs) or in-memory (session-only jobs). Needs Write permission
-// because durable jobs write to disk and recurring/one-shot jobs drive
-// future agent actions.
-//
-// Adapted from Claude Code's CronCreate/CronDelete/CronList tools but unified
-// into a single tool that dispatches on an `action` field, matching DeepSeek's
-// buildTool + C++-binding patterns.
+
+
+
+
+
+
+
+
+
+
+
 
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
@@ -22,7 +22,7 @@ import {
 } from "../../services/scheduler.js";
 import { cronToHuman, parseCronExpression } from "../../utils/cron.js";
 
-// ─── Input schema ────────────────────────────────────────────────────────────
+
 
 const inputSchema = z.object({
   action: z
@@ -56,7 +56,7 @@ const inputSchema = z.object({
     .describe("Job ID returned by action: create. Required for action: cancel."),
 });
 
-// ─── Tool definition ─────────────────────────────────────────────────────────
+
 
 export const ScheduleCronTool = buildTool({
   name: SCHEDULE_CRON_TOOL_NAME,
@@ -78,13 +78,13 @@ export const ScheduleCronTool = buildTool({
 
   isEnabled: () => true,
   isReadOnly: (input) => input.action === "list",
-  // list is concurrency-safe; create/cancel mutate shared scheduler state.
+  
   isConcurrencySafe: (input) => input.action === "list",
 
   maxResultSizeChars: 100_000,
 
   checkPermissions: async (input, context) => {
-    // list is read-only — no permission needed.
+    
     if (input.action === "list") return { approved: true };
 
     if (!context.permissions.allowWrite) {
@@ -104,7 +104,7 @@ export const ScheduleCronTool = buildTool({
       return context.requestPermission("ScheduleCron", summary);
     }
 
-    // cancel
+    
     return context.requestPermission("ScheduleCron", `Cancel scheduled job ${input.id ?? ""}`);
   },
 
@@ -140,7 +140,7 @@ export const ScheduleCronTool = buildTool({
       };
     }
 
-    // action === "create"
+    
     const cron = input.cron;
     const prompt = input.prompt;
     if (!cron) {
@@ -150,7 +150,7 @@ export const ScheduleCronTool = buildTool({
       return { data: "Error: prompt is required for action: create." };
     }
 
-    // Pre-flight validation for friendlier errors than the throw.
+    
     if (!parseCronExpression(cron)) {
       return {
         data: `Invalid cron expression '${cron}'. Expected 5 fields: M H DoM Mon DoW.`,
@@ -162,7 +162,7 @@ export const ScheduleCronTool = buildTool({
       };
     }
 
-    const recurring = input.recurring !== false; // default true
+    const recurring = input.recurring !== false; 
     const durable = !!input.durable;
 
     let id: string;
