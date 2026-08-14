@@ -29,10 +29,11 @@ interface MessageViewProps {
   message: Message;
   selectedToolCallId?: string | null;
   isTranscriptMode?: boolean;
+  isStreaming?: boolean;
 }
 
 
-function TextBlock({ content, isError, dim }: { content: string; isError?: boolean; dim?: boolean }): React.ReactElement {
+function TextBlock({ content, isError, dim, isStreaming }: { content: string; isError?: boolean; dim?: boolean; isStreaming?: boolean }): React.ReactElement {
   if (isError) {
     
     return (
@@ -50,12 +51,17 @@ function TextBlock({ content, isError, dim }: { content: string; isError?: boole
       </Box>
       <Box flexDirection="column" flexGrow={1}>
         <Markdown dim={dim}>{content}</Markdown>
+        {isStreaming && (
+          <Box>
+            <Text color={resolveColor(theme.claude)}>▊</Text>
+          </Box>
+        )}
       </Box>
     </Box>
   );
 }
 
-function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageViewProps) {
+function MessageView({ message, selectedToolCallId, isTranscriptMode, isStreaming = false }: MessageViewProps) {
   
   
   if (message.role === "user") {
@@ -82,12 +88,17 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
 
   
   if (message.role === "assistant") {
+    const lastBlockIndex = message.blocks?.length ? message.blocks.length - 1 : -1;
     const renderBlock = (block: MessageBlock, idx: number, first: boolean): React.ReactNode => {
       const marginTop = first ? 1 : 0;
       if (block.type === "text" && block.content) {
         return (
           <Box key={`msg-block-${idx}`} marginTop={marginTop}>
-            <TextBlock content={block.content} isError={message.isError} />
+            <TextBlock
+              content={block.content}
+              isError={message.isError}
+              isStreaming={isStreaming && idx === lastBlockIndex}
+            />
           </Box>
         );
       }
@@ -112,6 +123,7 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
             <ThinkingBlock
               content={block.content || ""}
               isTranscriptMode={isTranscriptMode}
+              isStreaming={isStreaming && idx === lastBlockIndex}
             />
           </Box>
         );
@@ -136,7 +148,7 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
             {}
             {message.content && (
               <Box marginTop={1}>
-                <TextBlock content={message.content} isError={message.isError} />
+                <TextBlock content={message.content} isError={message.isError} isStreaming={isStreaming} />
               </Box>
             )}
 
