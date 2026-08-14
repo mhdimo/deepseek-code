@@ -598,27 +598,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       for (const p of enabled) {
         if (p.manifest.commands) {
           for (const pcmd of p.manifest.commands) {
-            const name = pcmd.name.startsWith("/") ? pcmd.name : `/${pcmd.name}`;
+            const name = pcmd.name.trim().replace(/^\/+/, "").toLowerCase();
             if (seen.has(name)) continue;
             seen.add(name);
             cmds.push({
               name,
               description: truncate(pcmd.description ?? `Plugin command from ${p.name}`),
-              usage: `${name} `,
-              category: "session",
+              usage: [`/${name} `],
+              category: "plugin",
+              acceptsArgs: true,
+              executionKey: "plugin",
             });
           }
         }
         if (p.manifest.skills) {
           for (const skill of p.manifest.skills) {
-            const name = skill.name.startsWith("/") ? skill.name : `/${skill.name}`;
+            const name = skill.name.trim().replace(/^\/+/, "").toLowerCase();
             if (seen.has(name)) continue;
             seen.add(name);
             cmds.push({
               name,
               description: truncate(skill.description),
-              usage: `${name} `,
-              category: "session",
+              usage: [`/${name} `],
+              category: "plugin",
+              acceptsArgs: true,
+              executionKey: "plugin",
             });
           }
         }
@@ -1216,12 +1220,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const safeIdx = Math.min(commandPickerIndex, filteredCommands.length - 1);
         const cmd = filteredCommands[safeIdx];
         if (cmd) {
-          if (key.return && !cmd.usage) {
-            
-            handleSubmitRef.current(cmd.name);
+          const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
+          if (key.return && !cmd.acceptsArgs) {
+            handleSubmitRef.current(`/${cmd.name}`);
           } else {
-            
-            setInput(cmd.usage ?? cmd.name);
+            setInput(usage);
           }
           setCommandPickerIndex(0);
         }

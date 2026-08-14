@@ -19,7 +19,10 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join, relative } from "path";
 import { homedir } from "os";
-import type { CommandDef } from "../components/CommandPicker.js";
+import {
+  resolveCommandName,
+  type CommandDefinition,
+} from "./commands/commandRegistry.js";
 
 export interface CustomCommand {
   name: string; 
@@ -110,23 +113,27 @@ export function renderCommand(cmd: CustomCommand, args: readonly string[]): stri
   return out.trim();
 }
 
-export function toCommandDefs(cmds: readonly CustomCommand[]): CommandDef[] {
+export function toCommandDefs(cmds: readonly CustomCommand[]): CommandDefinition[] {
   return cmds
-    .filter((c) => !isReservedBuiltin(c.name)) 
-    .map((c) => ({
-      name: `/${c.name}`,
-      description: c.description,
-      usage: c.argumentHint ? `/${c.name} ${c.argumentHint}` : `/${c.name} `,
-    }));
+    .filter((c) => !isReservedBuiltin(c.name))
+    .map((c) => {
+      const name = c.name.trim().replace(/^\/+/, "").toLowerCase();
+      const definition: CommandDefinition = {
+        name,
+        description: c.description,
+        argumentHint: c.argumentHint,
+        category: "custom",
+        acceptsArgs: true,
+        executionKey: "custom",
+      };
+      if (c.argumentHint) {
+        definition.usage = [`/${name} ${c.argumentHint}`];
+      }
+      return definition;
+    });
 }
 
 
 export function isReservedBuiltin(name: string): boolean {
-  
-  return [
-    "help", "shortcuts", "think", "model", "models", "agent", "tools", "mcp",
-    "clear", "compact", "sessions", "resume", "commit", "pr", "copy", "diff",
-    "history", "rewind", "doctor", "plugin", "plugins", "hooks", "config",
-    "status", "stats", "usage", "cost", "settings", "exit", "quit", "add-dir",
-  ].includes(name.toLowerCase());
+  return resolveCommandName(name) !== null;
 }
