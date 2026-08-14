@@ -47,6 +47,7 @@ const command = (
  */
 export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("setup", "Quick API key and model setup", "model", {
+    aliases: ["login"],
     usage: ["/setup <api-key> [model]"],
     acceptsArgs: true,
   }),
@@ -64,6 +65,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     usage: ["/baseurl <url>", "/baseurl clear"],
     acceptsArgs: true,
   }),
+  command("logout", "Clear the saved DeepSeek API key", "model"),
 
   command("agent", "Switch agent (code, plan, review)", "agent", {
     usage: ["/agent <name>"],
@@ -90,6 +92,10 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
 
   command("init", "Create a project memory file", "project"),
   command("memory", "Show or edit the project memory file", "project"),
+  command("files", "List top-level project files and directories", "project", {
+    usage: ["/files [path]"],
+    acceptsArgs: true,
+  }),
   command("permissions", "Show configured permission rules", "project"),
   command("workspace", "Show workspace path and trust status", "project"),
   command("branch", "Show the current git branch", "project"),
@@ -138,7 +144,9 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("help", "Show help and keybindings", "general", {
     aliases: ["?"],
   }),
-  command("shortcuts", "Toggle the keyboard shortcuts panel", "general"),
+  command("shortcuts", "Toggle the keyboard shortcuts panel", "general", {
+    aliases: ["keybindings"],
+  }),
   command("mcp", "Show MCP servers and status", "mcp", {
     aliases: ["servers"],
     usage: ["/mcp enable <name>", "/mcp disable <name>"],
@@ -156,6 +164,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("config", "Open configuration settings", "general"),
   command("status", "Show session status and diagnostics", "general"),
   command("theme", "Show or set the color theme", "general", {
+    aliases: ["color"],
     usage: ["/theme <setting>"],
     acceptsArgs: true,
   }),
@@ -164,8 +173,16 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     acceptsArgs: true,
   }),
   command("context", "Show context window usage", "session"),
-  command("todos", "Show the agent's todo list", "session"),
+  command("todos", "Show the agent's todo list", "session", {
+    aliases: ["tasks"],
+  }),
   command("bashes", "List background tasks", "session"),
+  command("test", "Run the project's basic test suite", "general", {
+    usage: ["/test [typecheck|build]"],
+    acceptsArgs: true,
+  }),
+  command("terminal-setup", "Show terminal setup and rendering guidance", "general"),
+  command("version", "Show DeepSeek Code and runtime versions", "general"),
   command("plugin", "Manage installed plugins", "plugin", {
     aliases: ["plugins"],
     acceptsArgs: true,
@@ -323,7 +340,7 @@ export function mergeCommandDefinitions(
 const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] = [
   {
     title: "Setup & model",
-    names: ["setup", "model", "models", "apikey", "baseurl"],
+    names: ["setup", "model", "models", "apikey", "baseurl", "logout"],
   },
   {
     title: "Agents & reasoning",
@@ -331,7 +348,7 @@ const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] =
   },
   {
     title: "Project",
-    names: ["init", "memory", "permissions", "workspace", "branch", "env"],
+    names: ["init", "memory", "files", "permissions", "workspace", "branch", "env"],
   },
   {
     title: "Sessions & history",
@@ -357,6 +374,9 @@ const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] =
       "context",
       "todos",
       "bashes",
+      "test",
+      "terminal-setup",
+      "version",
       "plugin",
       "exit",
     ],

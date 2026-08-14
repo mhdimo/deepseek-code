@@ -95,6 +95,7 @@ import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
 import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
 import { safeTerminalRows } from "./terminalLayout.js";
+import { formatDirectoryTree } from "../tools/LS/LSTool.js";
 
 
 
@@ -678,15 +679,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     [pluginCommands, customCommands],
   );
   const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, extraCommands) : [];
-  
+  const parsedInput = parseSlashCommand(input);
   const isExactCommandMatch =
-    filteredCommands.length === 1 && filteredCommands[0]?.name === input.trimEnd().toLowerCase();
+    filteredCommands.length === 1 &&
+    parsedInput !== null &&
+    filteredCommands[0]?.name === parsedInput.canonicalName &&
+    parsedInput.args.length === 0;
   
   
   
   const firstWord = input.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   const hasExactCommandPrefix =
-    firstWord.length > 0 && filteredCommands.some((c) => c.name === firstWord);
+    firstWord.length > 0 && filteredCommands.some((c) => `/${c.name}` === firstWord);
   const showCommandPicker =
     filteredCommands.length > 0 && !isExactCommandMatch && !hasExactCommandPrefix && !input.includes("\n");
   
@@ -2179,6 +2183,20 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
+        case "logout": {
+          setActiveApiKey("");
+          persistSettings({ apiKey: "" });
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "Saved API key cleared. Use /setup <api-key> or /apikey <key> to connect again.",
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
         
         case "model": {
           if (!arg) {
@@ -3590,6 +3608,37 @@ Based on the above changes:
           return true;
         }
 
+        case "files": {
+          const target = resolve(workingDirectory, arg || ".");
+          try {
+            const entries = readdirSync(target, { withFileTypes: true })
+              .filter((entry) => !entry.name.startsWith(".") && entry.name !== "node_modules")
+              .sort((a, b) => {
+                if (a.isDirectory() && !b.isDirectory()) return -1;
+                if (!a.isDirectory() && b.isDirectory()) return 1;
+                return a.name.localeCompare(b.name);
+              });
+            const lines = formatDirectoryTree(entries.map((entry) => ({
+              name: entry.name,
+              isDirectory: entry.isDirectory(),
+            })));
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `${target}/\n${lines.length > 0 ? lines.join("\n") : "(empty directory)"}`,
+                timestamp: Date.now(),
+              },
+            ]);
+          } catch (error) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: `Unable to list ${target}: ${(error as Error).message}`, timestamp: Date.now() },
+            ]);
+          }
+          return true;
+        }
+
         case "permissions": {
           const rules = (() => { try { return loadSettings().permissions; } catch { return undefined; } })();
           const lines = ["Permission rules (settings.permissions):", ""];
@@ -3730,6 +3779,75 @@ Based on the above changes:
             lines.push("", "Read output with TaskOutput, kill with TaskStop.");
             setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
           }
+          return true;
+        }
+
+        case "test": {
+          const requested = arg?.toLowerCase();
+          const commandArgs = requested === "typecheck"
+            ? ["run", "typecheck"]
+            : requested === "build"
+              ? ["run", "build"]
+              : ["test"];
+          const commandLabel = `bun ${commandArgs.join(" ")}`;
+          try {
+            const result = Bun.spawnSync(["bun", ...commandArgs], {
+              cwd: workingDirectory,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const stdoutText = result.stdout?.toString().trim() ?? "";
+            const stderrText = result.stderr?.toString().trim() ?? "";
+            const output = [stdoutText, stderrText].filter(Boolean).join("\n");
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: [
+                  `${commandLabel} exited with code ${result.exitCode}.`,
+                  output ? "" : "No output.",
+                  output.slice(-12000),
+                ].filter((line) => line !== "").join("\n"),
+                timestamp: Date.now(),
+              },
+            ]);
+          } catch (error) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: `Unable to run ${commandLabel}: ${(error as Error).message}`, timestamp: Date.now() },
+            ]);
+          }
+          return true;
+        }
+
+        case "version": {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `DeepSeek Code v0.1.0\nBun ${Bun.version}\nNode compatibility ${process.version}`,
+              timestamp: Date.now(),
+            },
+          ]);
+          return true;
+        }
+
+        case "terminal-setup": {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: [
+                "Terminal setup",
+                "",
+                "- Use a terminal with ANSI color and alternate-screen support.",
+                "- The interface uses full redraws to keep streaming output and permission prompts aligned.",
+                "- Ctrl+O toggles the detailed transcript; Esc closes overlays.",
+                "- If the terminal is narrow, resize it before starting a long tool call.",
+              ].join("\n"),
+              timestamp: Date.now(),
+            },
+          ]);
           return true;
         }
 
