@@ -43,6 +43,12 @@ describe("canonical slash command registry", () => {
     expect(filterCommandDefinitions("/").length).toBe(BUILTIN_COMMANDS.length);
   });
 
+  test("does not activate for empty input or ordinary prompt text", () => {
+    expect(filterCommandDefinitions("/").length).toBeGreaterThan(0);
+    expect(filterCommandDefinitions("")).toEqual([]);
+    expect(filterCommandDefinitions("what could be improved here?")).toEqual([]);
+  });
+
   test("merges definitions by canonical name and keeps the first definition", () => {
     const merged = mergeCommandDefinitions(
       [

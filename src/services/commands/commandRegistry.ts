@@ -291,7 +291,9 @@ export function filterCommandDefinitions(
   input: string,
   extras: readonly CommandDefinition[] = [],
 ): CommandDefinition[] {
-  const query = input.trim().toLowerCase().replace(/^\/+/, "");
+  const trimmedInput = input.trim();
+  if (!trimmedInput.startsWith("/")) return [];
+  const query = trimmedInput.toLowerCase().replace(/^\/+/, "");
   const definitions = mergeCommandDefinitions(BUILTIN_COMMANDS, extras);
 
   return definitions

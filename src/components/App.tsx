@@ -678,7 +678,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     () => [...pluginCommands, ...toCommandDefs(customCommands)],
     [pluginCommands, customCommands],
   );
-  const filteredCommands: CommandDef[] = !isLoading ? filterCommands(input, extraCommands) : [];
+  const slashInputActive = input.trimStart().startsWith("/");
+  const filteredCommands: CommandDef[] = !isLoading && slashInputActive ? filterCommands(input, extraCommands) : [];
   const parsedInput = parseSlashCommand(input);
   const isExactCommandMatch =
     filteredCommands.length === 1 &&
@@ -692,7 +693,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const hasExactCommandPrefix =
     firstWord.length > 0 && filteredCommands.some((c) => `/${c.name}` === firstWord);
   const showCommandPicker =
-    filteredCommands.length > 0 && !isExactCommandMatch && !hasExactCommandPrefix && !input.includes("\n");
+    slashInputActive &&
+    filteredCommands.length > 0 &&
+    !isExactCommandMatch &&
+    !hasExactCommandPrefix &&
+    !input.includes("\n");
   
   pickerActiveRef.current = showCommandPicker;
 
