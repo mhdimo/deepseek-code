@@ -83,7 +83,7 @@ export default React.memo(function ChatPanel({
   const sentiment = hasBadWord ? "frustrated" : "neutral";
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
       {}
       {messages.length === 0 && (
         <Box marginBottom={1}>
@@ -102,7 +102,7 @@ export default React.memo(function ChatPanel({
 
       {}
       {}
-      <Box flexDirection="column">
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         {messages.map((m, idx) => (
           <MessageView
             key={`msg-${m.timestamp}-${idx}`}

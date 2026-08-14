@@ -94,6 +94,7 @@ import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../ut
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
 import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
+import { safeTerminalRows } from "./terminalLayout.js";
 
 
 
@@ -335,10 +336,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   
   const { stdout } = useStdout();
-  const [termRows, setTermRows] = useState<number>(() => stdout?.rows ?? process.stdout.rows ?? 40);
+  const [termRows, setTermRows] = useState<number>(() => safeTerminalRows(stdout?.rows ?? process.stdout.rows));
   useEffect(() => {
     if (!stdout || typeof stdout.on !== "function") return;
-    const onResize = () => setTermRows(stdout.rows ?? termRows);
+    const onResize = () => setTermRows(safeTerminalRows(stdout.rows));
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
@@ -1678,7 +1679,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               ...prev,
               {
                 role: "system",
-                content: `📦 Context compacted: ${event.messagesBefore} → ${event.messagesAfter} messages (${event.reason})`,
+                content: `Context compacted: ${event.messagesBefore} → ${event.messagesAfter} messages (${event.reason})`,
                 timestamp: Date.now(),
               },
             ]);
@@ -1697,7 +1698,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 ...prev,
                 {
                   role: "system",
-                  content: `⚠ Context at ${pct}% — approaching limit. Use /compact to free space or /clear to start fresh.`,
+                  content: `Warning: context at ${pct}% — approaching limit. Use /compact to free space or /clear to start fresh.`,
                   timestamp: Date.now(),
                 },
               ]);
@@ -1881,7 +1882,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           {
             role: "system",
             content:
-              "⚠ No API key configured.\n\n" +
+              "Warning: no API key configured.\n\n" +
               "Set one of:\n" +
               "  /setup <your-key>              (quick setup)\n" +
               "  /apikey <your-key>             (in-app)\n" +
@@ -1947,7 +1948,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               ...prev,
               {
                 role: "system",
-                content: `⚠ Provider overloaded — retrying once with fallback: ${fallback.type}/${fallback.model}`,
+                content: `Warning: provider overloaded — retrying once with fallback: ${fallback.type}/${fallback.model}`,
                 timestamp: Date.now(),
               },
             ]);
@@ -2589,8 +2590,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               {
                 role: "system",
                 content: newMode === "off"
-                  ? "💭 Thinking disabled."
-                  : "🐋 Whalethink enabled — deep reasoning mode active.",
+                  ? "Thinking disabled."
+                  : "Whalethink enabled — deep reasoning mode active.",
                 timestamp: Date.now(),
               },
             ]);
@@ -2603,8 +2604,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               {
                 role: "system",
                 content: next === "off"
-                  ? "💭 Thinking disabled."
-                  : "🐋 Whalethink enabled — deep reasoning mode active.",
+                  ? "Thinking disabled."
+                  : "Whalethink enabled — deep reasoning mode active.",
                 timestamp: Date.now(),
               },
             ]);
@@ -3487,7 +3488,7 @@ Based on the above changes:
 
           
           const keySet = !!activeApiKey;
-          lines.push(`  ${keySet ? "✓" : "⚠"} API Key:      ${keySet ? `Configured (${activeApiKey.slice(0, 8)}…${activeApiKey.slice(-4)})` : "Not set (set with /setup or /apikey)"}`);
+          lines.push(`  ${keySet ? "✓" : "-"} API Key:      ${keySet ? `Configured (${activeApiKey.slice(0, 8)}…${activeApiKey.slice(-4)})` : "Not set (set with /setup or /apikey)"}`);
           lines.push(`  ✓ Active Model: ${activeProvider}/${activeModel}`);
 
           
@@ -3523,7 +3524,7 @@ Based on the above changes:
               newLines.push("");
               newLines.push(connOk && bindingsOk && gitOk && keySet
                 ? "  ✓ Everything looks healthy! You are ready to code."
-                : "  ⚠ Diagnostics finished with warnings. Review the issues above.");
+                : "  Warning: diagnostics finished with warnings. Review the issues above.");
 
               const last = prev[prev.length - 1];
               if (last && last.role === "system" && last.content.includes("Diagnostic")) {
@@ -3930,9 +3931,9 @@ Based on the above changes:
     
     
     
-    <Box flexDirection="column" height={termRows}>
+    <Box flexDirection="column" height={safeTerminalRows(termRows)} minHeight={1}>
       {}
-      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         <ChatPanel
           messages={messages}
           isLoading={isLoading}

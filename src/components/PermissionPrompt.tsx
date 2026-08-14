@@ -217,6 +217,8 @@ export default function PermissionPrompt({
       borderColor={theme.permission}
       paddingX={1}
       marginY={0}
+      width="100%"
+      flexShrink={0}
     >
       {}
       <Text bold color={theme.permission}>

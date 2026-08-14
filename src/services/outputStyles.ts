@@ -40,7 +40,7 @@ const EXPLANATORY_INSIGHTS_FRAGMENT = `
 To encourage learning, before and after writing code, provide brief educational
 explanations about your implementation choices using this fenced block:
 
-> ★ Insight ─────────────────────────────────────
+> Insight ─────────────────────────────────────
 > [2-3 key educational points]
 > ─────────────────────────────────────────────────
 

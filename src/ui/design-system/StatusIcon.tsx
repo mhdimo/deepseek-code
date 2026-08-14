@@ -23,7 +23,7 @@ const STATUS_CONFIG: Record<
 > = {
   success: { icon: "✔", color: "success" },
   error: { icon: "✖", color: "error" },
-  warning: { icon: "⚠", color: "warning" },
+  warning: { icon: "!", color: "warning" },
   info: { icon: "ℹ", color: "suggestion" },
   pending: { icon: "○", color: undefined },
   loading: { icon: "…", color: undefined },

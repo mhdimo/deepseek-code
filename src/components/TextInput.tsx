@@ -11,6 +11,7 @@ import React, { useMemo, useRef, useCallback } from "react";
 import { Box, Text } from "ink";
 import MultilineTextInput from "./MultilineTextInput.js";
 import { theme, resolveColor } from "../utils/theme.js";
+import { separatorWidth } from "./terminalLayout.js";
 
 
 interface InputProps {
@@ -102,7 +103,7 @@ export default function Input({
     : suggestion;
 
   const hasNewlines = value.includes("\n");
-  const cols = process.stdout.columns || 80;
+  const cols = separatorWidth(process.stdout.columns);
   const cwdBase = workingDirectory.split("/").filter(Boolean).pop() || "";
   const left = cwdBase ? `── ${cwdBase} ` : "──";
   const topDivider = left + "─".repeat(Math.max(0, cols - left.length));

@@ -14,6 +14,7 @@ import { loadConfig, printHelp } from "./utils/config.js";
 import { loadSettings as loadPersistedSettings } from "./state/storage.js";
 import { resolveThemeSetting, syncLiveTheme } from "./utils/theme.js";
 import { existsSync, readFileSync } from "fs";
+import { INK_RENDER_OPTIONS } from "./components/terminalLayout.js";
 
 const VERSION = "0.1.0";
 
@@ -149,7 +150,7 @@ async function main() {
     
     
     
-    { incrementalRendering: true },
+    INK_RENDER_OPTIONS,
   );
 
   await waitUntilExit();

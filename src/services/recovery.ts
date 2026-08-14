@@ -34,7 +34,7 @@ export function classifyError(errorText: string): ErrorClass {
 
 export function promptTooLongMessage(): string {
   return (
-    "⚠ Prompt is too long for the model's context window.\n\n" +
+    "Warning: prompt is too long for the model's context window.\n\n" +
     "  /compact   — summarize the conversation to free context\n" +
     "  /clear     — start a fresh conversation\n\n" +
     "(Compaction is handled by the session engine; use the commands above.)"
@@ -44,12 +44,12 @@ export function promptTooLongMessage(): string {
 
 export function overloadMessage(model: string): string {
   return (
-    "⚠ The provider is overloaded or rate-limited (HTTP 429) and no fallback " +
+    "Warning: the provider is overloaded or rate-limited (HTTP 429) and no fallback " +
     "model is configured.\n\n" +
-    "  • Wait a moment and resend the prompt\n" +
-    "  • Configure a fallback: set the DEEPSEEK_FALLBACK_MODEL env var or add " +
+    "  - Wait a moment and resend the prompt\n" +
+    "  - Configure a fallback: set the DEEPSEEK_FALLBACK_MODEL env var or add " +
     "a second profile to .deepseek-code.json\n" +
-    `  • Switch models with /model${model ? ` (current: ${model})` : ""}`
+    `  - Switch models with /model${model ? ` (current: ${model})` : ""}`
   );
 }
 

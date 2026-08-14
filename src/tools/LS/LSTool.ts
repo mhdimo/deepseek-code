@@ -18,6 +18,18 @@ const LSInputSchema = z.object({
   ),
 });
 
+export interface DirectoryEntryLike {
+  name: string;
+  isDirectory: boolean;
+}
+
+export function formatDirectoryTree(entries: readonly DirectoryEntryLike[]): string[] {
+  return entries.map((entry, index) => {
+    const branch = index === entries.length - 1 ? "└──" : "├──";
+    return `${branch} ${entry.name}${entry.isDirectory ? "/" : ""}`;
+  });
+}
+
 
 
 export const LSTool = buildTool({
@@ -60,10 +72,12 @@ export const LSTool = buildTool({
           return a.name.localeCompare(b.name);
         });
 
-      const lines = filtered.map((e) => {
-        const icon = e.isDirectory() ? "\uD83D\uDCC1" : "\uD83D\uDCC4";
-        return `${icon} ${e.name}${e.isDirectory() ? "/" : ""}`;
-      });
+      const lines = formatDirectoryTree(
+        filtered.map((entry) => ({
+          name: entry.name,
+          isDirectory: entry.isDirectory(),
+        })),
+      );
 
       const header = `${relative(cwd, fullPath) || "."}/`;
       if (lines.length === 0) {

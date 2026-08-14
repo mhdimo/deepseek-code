@@ -22,7 +22,7 @@ export default function QueuePreview({ queueItems }: QueuePreviewProps) {
     <Box paddingX={0}>
       <Text>
         <Text color={theme.warning} bold>
-          {"📋 "}{queueItems.length} queued
+          {queueItems.length} queued
         </Text>
         <Text dimColor>
           {" · ▸ "}

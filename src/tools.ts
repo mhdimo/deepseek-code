@@ -135,12 +135,12 @@ export function toolsToBindingFormat(
     out.push(
       bindingTool(tool.name, cleanSchema, description, async (input: Record<string, unknown>) => {
         if (context.abortController.signal.aborted) {
-          throw new Error("❌ Aborted/Cancelled by user");
+          throw new Error("Aborted/Cancelled by user");
         }
 
         let abortHandler: (() => void) | null = null;
         const abortPromise = new Promise<never>((_, reject) => {
-          abortHandler = () => reject(new Error("❌ Aborted/Cancelled by user"));
+          abortHandler = () => reject(new Error("Aborted/Cancelled by user"));
           context.abortController.signal.addEventListener("abort", abortHandler);
         });
 

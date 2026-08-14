@@ -111,7 +111,7 @@ Review guidelines:
 - Identify performance concerns
 - Suggest improvements with concrete code examples
 - Be constructive — explain WHY something should change
-- Rate severity: 🔴 Critical, 🟡 Warning, 🔵 Suggestion`,
+- Rate severity: Critical, Warning, Suggestion`,
     temperature: 0,
     maxTokens: 16384,
     maxSteps: 15,

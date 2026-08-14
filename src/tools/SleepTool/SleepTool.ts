@@ -34,7 +34,7 @@ const SleepInputSchema = z.object({
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
-      reject(new Error("❌ Aborted/Cancelled by user"));
+      reject(new Error("Aborted/Cancelled by user"));
       return;
     }
     const timer = setTimeout(() => {
@@ -43,7 +43,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     }, ms);
     const onAbort = () => {
       cleanup();
-      reject(new Error("❌ Aborted/Cancelled by user"));
+      reject(new Error("Aborted/Cancelled by user"));
     };
     function cleanup(): void {
       clearTimeout(timer);

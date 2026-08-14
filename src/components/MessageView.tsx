@@ -60,8 +60,11 @@ function MessageView({ message, selectedToolCallId, isTranscriptMode }: MessageV
   
   if (message.role === "user") {
     return (
-      <Box flexDirection="column" marginTop={1}>
-        <Text wrap="wrap">{message.content}</Text>
+      <Box flexDirection="row" marginTop={1}>
+        <Text color={resolveColor(theme.claude)} bold>{"❯ "}</Text>
+        <Box flexGrow={1}>
+          <Text wrap="wrap">{message.content}</Text>
+        </Box>
       </Box>
     );
   }

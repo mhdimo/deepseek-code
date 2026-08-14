@@ -49,7 +49,7 @@ export default function ShortcutOverlay({
 
       <Box>
         <Text>Thinking: </Text>
-        <Text color={theme.thinking}>{thinkingMode === "off" ? "off" : "🐋 whalethink"}</Text>
+        <Text color={theme.thinking}>{thinkingMode === "off" ? "off" : "whalethink"}</Text>
         <Text> · MCP: </Text>
         <Text color={theme.assistant}>{mcpEnabledCount}/{mcpCount}</Text>
       </Box>
