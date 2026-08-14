@@ -256,6 +256,16 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | null {
   };
 }
 
+export function parseSetupArguments(
+  parsed: ParsedSlashCommand | null,
+): { apiKey: string; model?: string } | null {
+  if (!parsed || parsed.canonicalName !== "setup") return null;
+  const apiKey = parsed.args[0]?.trim();
+  if (!apiKey) return null;
+  const model = parsed.args[1]?.trim();
+  return model ? { apiKey, model } : { apiKey };
+}
+
 function definitionAliases(definition: CommandDefinition): string[] {
   return [definition.name, ...(definition.aliases ?? [])].map(normalizeName);
 }

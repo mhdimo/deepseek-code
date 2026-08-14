@@ -93,6 +93,7 @@ import { searchMessages } from "../utils/transcriptSearch.js";
 import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../utils/fileHistory.js";
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
+import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
 
 
 
@@ -2046,13 +2047,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   const handleCommand = useCallback(
     (cmd: string): boolean => {
-      const parts = cmd.trim().split(/\s+/);
-      const command = parts[0]!.toLowerCase();
-      const arg = parts[1];
-      const restArgs = parts.slice(1);
+      const parsed = parseSlashCommand(cmd);
+      if (!parsed) return false;
+      const command = parsed.canonicalName;
+      const arg = parsed.args[0];
+      const restArgs = parsed.args;
 
       switch (command) {
-        case "/help": {
+        case "help": {
           
           
           setShowHelp(true);
@@ -2060,7 +2062,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/statusline": {
+        case "statusline": {
           const current = (() => {
             try {
               return loadSettings().statusLine;
@@ -2123,10 +2125,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/setup": {
-          const mode = (parts[1] || "").toLowerCase();
+        case "setup": {
+          const setupArgs = parseSetupArguments(parsed);
 
-          if (!mode) {
+          if (!setupArgs) {
             setMessages((prev) => [
               ...prev,
               {
@@ -2154,27 +2156,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           }
 
           
-          const key = parts[2];
-          const modelOverride = parts[3];
-
-          if (!key) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  "Usage: /setup <api-key> [model]\n\n" +
-                  "Examples:\n" +
-                  "  /setup sk-xxxxx\n" +
-                  "  /setup sk-xxxxx deepseek-reasoner\n\n" +
-                  "Models: deepseek-chat (default), deepseek-reasoner",
-                timestamp: Date.now(),
-              },
-            ]);
-            return true;
-          }
-
-          const resolvedModel = modelOverride || "deepseek-chat";
+          const key = setupArgs.apiKey;
+          const resolvedModel = setupArgs.model || "deepseek-chat";
           setActiveProvider("deepseek");
           setActiveModel(resolvedModel);
           setActiveApiKey(key);
@@ -2196,7 +2179,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/model": {
+        case "model": {
           if (!arg) {
             
             setMessages((prev) => [
@@ -2246,7 +2229,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/models": {
+        case "models": {
           const profileEntries = Object.entries(config.profiles || {});
 
           const lines: string[] = [];
@@ -2278,7 +2261,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/apikey": {
+        case "apikey": {
           const key = restArgs.join(""); 
           if (!key) {
             setMessages((prev) => [
@@ -2310,7 +2293,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/baseurl": {
+        case "baseurl": {
           const url = restArgs.join(" ").trim();
           if (!url) {
             setMessages((prev) => [
@@ -2346,7 +2329,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/agent": {
+        case "agent": {
           if (!arg) {
             const agents = agentManager.listAgents();
             setMessages((prev) => [
@@ -2391,7 +2374,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/clear":
+        case "clear":
           setMessages([]);
           resetMemorySession();
           setSessionAllowAll(false);
@@ -2402,7 +2385,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           contextManagerRef.current.reset();
           return true;
 
-        case "/compact": {
+        case "compact": {
           if (messages.length === 0) {
             setMessages((prev) => [
               ...prev,
@@ -2446,7 +2429,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/tools": {
+        case "tools": {
           const tools = getToolDescriptions();
           const agentConfig = agentManager.getConfig(currentAgent);
           const perms = agentConfig.permissions;
@@ -2473,7 +2456,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/hooks": {
+        case "hooks": {
           const hooks = loadHooks();
           const events = Object.keys(hooks) as Array<keyof typeof hooks>;
           const lines: string[] = ["── Lifecycle Hooks ──", ""];
@@ -2509,14 +2492,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/shortcuts": {
+        case "shortcuts": {
           setShowShortcuts((prev) => !prev);
           return true;
         }
 
-        case "/mcp": {
-          const action = parts[1]?.toLowerCase();
-          const serverName = parts[2];
+        case "mcp": {
+          const action = restArgs[0]?.toLowerCase();
+          const serverName = restArgs[1];
 
           if (!action || action === "list") {
             if (mcpEntries.length === 0) {
@@ -2596,7 +2579,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/think": {
+        case "think": {
           const VALID_MODES: ThinkingMode[] = ["off", "whale"];
           if (arg && VALID_MODES.includes(arg as ThinkingMode)) {
             const newMode = arg as ThinkingMode;
@@ -2643,7 +2626,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/effort": {
+        case "effort": {
           
           
           
@@ -2745,8 +2728,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/queue": {
-          const subCmd = parts[1]?.toLowerCase();
+        case "queue": {
+          const subCmd = restArgs[0]?.toLowerCase();
           if (subCmd === "clear") {
             const count = queuedSubmissions.length;
             setQueuedSubmissions([]);
@@ -2786,41 +2769,41 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        case "/cost":
+        case "cost":
           
           setSettingsTab("Usage");
           setShowSettingsUI(true);
           return true;
 
-        case "/usage":
+        case "usage":
           setSettingsTab("Usage");
           setShowSettingsUI(true);
           return true;
 
-        case "/settings":
+        case "settings":
           
           setSettingsTab("Config");
           setShowSettingsUI(true);
           return true;
 
-        case "/status":
+        case "status":
           setSettingsTab("Status");
           setShowSettingsUI(true);
           return true;
 
-        case "/config":
+        case "config":
           setSettingsTab("Config");
           setShowSettingsUI(true);
           return true;
 
-        case "/stats":
+        case "stats":
           
           
           setSettingsTab("Stats");
           setShowSettingsUI(true);
           return true;
 
-        case "/exit":
+        case "exit":
           if (activeSessionHash) {
             
             process.stderr.write(`\n  Session saved: ${activeSessionHash}\n  Resume with: deepseek-code --resume ${activeSessionHash}\n\n`);
@@ -2829,7 +2812,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
 
         
-        case "/sessions": {
+        case "sessions": {
           const sessions = listSessions();
           if (sessions.length === 0) {
             setMessages((prev) => [
@@ -2859,7 +2842,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/resume": {
+        case "resume": {
           if (!arg) {
             setMessages((prev) => [
               ...prev,
@@ -2903,7 +2886,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         
-        case "/commit": {
+        case "commit": {
           const { execSync } = require("child_process");
           let isGit = false;
           try {
@@ -2987,7 +2970,7 @@ Based on the above changes, create a git commit:
         }
 
         
-        case "/pr": {
+        case "pr": {
           const { execSync } = require("child_process");
           let isGit = false;
           try {
@@ -3076,7 +3059,7 @@ Based on the above changes:
         }
 
         
-        case "/copy": {
+        case "copy": {
           const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isError && m.content);
           if (assistantMsgs.length === 0) {
             setMessages((prev) => [
@@ -3138,8 +3121,8 @@ Based on the above changes:
         }
 
         
-        case "/export": {
-          const formatArg = (parts[1] || "markdown").toLowerCase();
+        case "export": {
+          const formatArg = (restArgs[0] || "markdown").toLowerCase();
           if (formatArg !== "markdown" && formatArg !== "md" && formatArg !== "json") {
             setMessages((prev) => [
               ...prev,
@@ -3172,7 +3155,7 @@ Based on the above changes:
         }
 
         
-        case "/search": {
+        case "search": {
           const queryStr = restArgs.join(" ");
           if (!queryStr) {
             setMessages((prev) => [
@@ -3221,7 +3204,7 @@ Based on the above changes:
         }
 
         
-        case "/skills": {
+        case "skills": {
           const skills = listSkills();
 
           if (!arg) {
@@ -3292,7 +3275,7 @@ Based on the above changes:
         }
 
         
-        case "/diff": {
+        case "diff": {
           const { execSync } = require("child_process");
           let isGit = false;
           try {
@@ -3352,8 +3335,7 @@ Based on the above changes:
         }
 
         
-        case "/messages":
-        case "/history": {
+        case "history": {
           const lines = messages.map((m, i) => {
             const time = m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : "";
             const contentPreview = m.content.split("\n")[0] || "";
@@ -3377,7 +3359,7 @@ Based on the above changes:
         }
 
         
-        case "/rewind": {
+        case "rewind": {
           if (!arg) {
             setMessages((prev) => [
               ...prev,
@@ -3473,7 +3455,7 @@ Based on the above changes:
         }
 
         
-        case "/doctor": {
+        case "doctor": {
           const lines: string[] = ["━━━ DeepSeek Code Diagnostic (Doctor) ━━━━━━━━━━━━", ""];
 
           
@@ -3561,13 +3543,12 @@ Based on the above changes:
         }
 
         
-        case "/plugin":
-        case "/plugins":
+        case "plugin":
           setShowPluginOverlay(true);
           return true;
 
         
-        case "/init": {
+        case "init": {
           const file = resolve(workingDirectory, "CLAUDE.md");
           if (existsSync(file)) {
             setMessages((prev) => [...prev, { role: "system", content: `CLAUDE.md already exists at ${file}`, timestamp: Date.now() }]);
@@ -3595,7 +3576,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/memory": {
+        case "memory": {
           const file = resolve(workingDirectory, "CLAUDE.md");
           if (!existsSync(file)) {
             writeFileSync(file, "# CLAUDE.md\n\n<!-- Add project guidance here — it is loaded into context automatically. -->\n");
@@ -3608,7 +3589,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/permissions": {
+        case "permissions": {
           const rules = (() => { try { return loadSettings().permissions; } catch { return undefined; } })();
           const lines = ["Permission rules (settings.permissions):", ""];
           if (!rules || ((rules.allow?.length ?? 0) === 0 && (rules.deny?.length ?? 0) === 0 && (rules.ask?.length ?? 0) === 0)) {
@@ -3630,7 +3611,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/theme": {
+        case "theme": {
           if (!arg) {
             
             setShowThemePicker(true);
@@ -3641,7 +3622,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/output-style": {
+        case "output-style": {
           const styles = listOutputStyles();
           if (!arg) {
             const current = (() => { try { return loadSettings().outputStyle; } catch { return undefined; } })();
@@ -3656,8 +3637,8 @@ Based on the above changes:
             setMessages((prev) => [...prev, { role: "system", content: "Output style reset to default", timestamp: Date.now() }]);
             return true;
           }
-          if (arg === "explain" && parts[2]) {
-            const style = styles.find((s) => s.name === parts[2]);
+          if (arg === "explain" && restArgs[1]) {
+            const style = styles.find((s) => s.name === restArgs[1]);
             if (style) {
               setMessages((prev) => [...prev, { role: "system", content: `${style.name}: ${style.description}`, timestamp: Date.now() }]);
               return true;
@@ -3673,9 +3654,9 @@ Based on the above changes:
           return true;
         }
 
-        case "/review":
-        case "/security-review": {
-          const security = command === "/security-review";
+        case "review":
+        case "security-review": {
+          const security = command === "security-review";
           const prompt = security
             ? "Perform a security review of the uncommitted changes in this repository: look for injection vulnerabilities, unsafe input handling, secrets, path traversal, and unsafe shell usage. Report findings by severity."
             : "Review the uncommitted changes in this repository for bugs, correctness issues, and code quality problems. Report findings with file paths and line numbers.";
@@ -3684,7 +3665,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/todos": {
+        case "todos": {
           const items = todos;
           if (items.length === 0) {
             setMessages((prev) => [...prev, { role: "system", content: "No todos — the TodoWrite tool adds items as the agent works.", timestamp: Date.now() }]);
@@ -3698,7 +3679,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/context": {
+        case "context": {
           const budget = contextManagerRef.current.getBudget();
           const max = budget?.maxContextTokens ?? 1_000_000;
           const used = inputTokens + outputTokens;
@@ -3715,7 +3696,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/env": {
+        case "env": {
           const lines = ["Environment variables:", ""];
           for (const v of ["DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "DEEPSEEK_FALLBACK_MODEL"]) {
             const val = process.env[v];
@@ -3727,7 +3708,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/branch": {
+        case "branch": {
           try {
             const proc = Bun.spawnSync(["git", "branch", "--show-current"], { cwd: workingDirectory });
             const branch = proc.stdout?.toString().trim() || "(detached HEAD)";
@@ -3738,7 +3719,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/bashes": {
+        case "bashes": {
           const tasks = listTasks();
           if (tasks.length === 0) {
             setMessages((prev) => [...prev, { role: "system", content: "No background tasks running.", timestamp: Date.now() }]);
@@ -3751,7 +3732,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/workspace": {
+        case "workspace": {
           const trusted = isTrusted(workingDirectory);
           setMessages((prev) => [...prev, {
             role: "system",
@@ -3763,7 +3744,7 @@ Based on the above changes:
           return true;
         }
 
-        case "/plan": {
+        case "plan": {
           setCurrentAgent("plan");
           setMessages((prev) => [...prev, { role: "system", content: "Switched to plan agent — read-only analysis mode. Shift+Tab cycles permission modes; /agent code returns to full access.", timestamp: Date.now() }]);
           return true;
@@ -3771,12 +3752,12 @@ Based on the above changes:
 
         default: {
           
-          const custom = customCommands.find((c) => c.name === command.slice(1).toLowerCase());
+          const custom = customCommands.find((c) => c.name.replace(/^\/+/, "").toLowerCase() === command);
           if (custom) {
             void submitUserPrompt(cmd, renderCommand(custom, restArgs));
             return true;
           }
-          const pluginCommandName = command.slice(1).trim().toLowerCase(); 
+          const pluginCommandName = command;
           try {
             const plugins = loadInstalledPlugins();
             const enabled = plugins.filter((p) => p.enabled);
