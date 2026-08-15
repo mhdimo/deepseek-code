@@ -35,6 +35,10 @@ export interface MessageBlock {
   type: "text" | "tool" | "thinking";
   content?: string;
   block?: ToolUseBlock;
+  /** Thinking block lifecycle timestamps (ms since epoch), for the
+   *  elapsed-time label. Set by App on thinking-start / thinking-end. */
+  thinkingStart?: number;
+  thinkingEnd?: number;
 }
 
 export interface Message {

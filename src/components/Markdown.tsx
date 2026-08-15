@@ -18,6 +18,9 @@ import React, { useMemo } from "react";
 import { Text, Box } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { highlightLine } from "./codeHighlight.js";
+import type { StyledRun, TextStyle, TextRow } from "../services/selection/lineModel.js";
+import { wrapTextRuns, splitRowAt, rowText } from "../services/selection/lineModel.js";
+import type { ContentSelection } from "./useMouseSelection.js";
 
 
 
@@ -358,223 +361,74 @@ function parseBlocks(input: string): Block[] {
 
 
 
-function renderTokens(
-  tokens: Token[],
-  parentKey: string,
-  dim?: boolean,
-): React.ReactNode[] {
-  return tokens.map((tok, idx) => {
-    const key = `${parentKey}-t${idx}`;
+// ---------------------------------------------------------------------------
+// Selection-aware row model. Every text block is pre-wrapped with the same
+// wrap-ansi algorithm ink's <Text wrap="wrap"> uses (see lineModel.ts), so
+// the model's rows are byte-identical to the rendered cells and mouse
+// selection can highlight and copy the exact text on screen.
+// ---------------------------------------------------------------------------
 
+function tokensToRuns(tokens: Token[], dim?: boolean, permissionColor?: string): StyledRun[] {
+  const runs: StyledRun[] = [];
+  for (const tok of tokens) {
+    const d: TextStyle | undefined = dim ? { dim: true } : undefined;
     switch (tok.type) {
       case "text":
-        return (
-          <Text key={key} dimColor={dim} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: d });
+        break;
       case "bold":
-        return (
-          <Text key={key} bold dimColor={dim} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: { bold: true, ...d } });
+        break;
       case "italic":
-        return (
-          <Text key={key} italic dimColor={dim} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: { italic: true, ...d } });
+        break;
       case "code-inline":
-        
-        return (
-          <Text key={key} color={resolveColor(theme.permission)} dimColor={dim} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: { color: permissionColor, ...d } });
+        break;
       case "link":
-        
-        
-        return (
-          <Text key={key} dimColor={dim} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: d });
+        break;
       default:
-        return (
-          <Text key={key} wrap="wrap">
-            {tok.content}
-          </Text>
-        );
+        runs.push({ text: tok.content, style: d });
+    }
+  }
+  return runs;
+}
+
+/** Wrap a block's runs at `width`, marking each row's column origin
+ *  (blockquote prefix / list indent). */
+function wrapBlock(runs: StyledRun[], width: number, origin: number): TextRow[] {
+  const rows = wrapTextRuns(runs, Math.max(1, width - origin));
+  for (const r of rows) r.origin = origin;
+  return rows;
+}
+
+/** Pure line model for a code block (per-line syntax highlight; empty
+ *  lines render as a space — matches the previous renderer). */
+function codeBlockRows(block: Block, width: number): TextRow[] {
+  const lines = (block.content ?? "").split("\n").map((l) => (l === "" ? " " : l));
+  const runs: StyledRun[] = [];
+  lines.forEach((line, i) => {
+    if (i > 0) runs.push({ text: "\n" });
+    for (const sp of highlightLine(line, block.language || "")) {
+      runs.push({ text: sp.text, style: { color: sp.color, bold: sp.bold } });
     }
   });
+  return wrapTextRuns(runs, width);
 }
 
-
-
-
-
-function renderHeading(block: Block, key: string, dim?: boolean): React.ReactNode {
-  const level = block.level ?? 1;
-  
-  
-  return (
-    <Box key={key} flexDirection="column" marginBottom={1}>
-      <Text bold={level >= 2} italic={level === 1} underline={level === 1} dimColor={dim} wrap="wrap">
-        {renderTokens(block.tokens ?? [], key, dim)}
-      </Text>
-    </Box>
-  );
-}
-
-function renderCodeBlock(block: Block, key: string): React.ReactNode {
-  const lang = block.language || "";
-  const content = block.content ?? "";
-  const lines = content.split("\n");
-
-  
-  
-  return (
-    <Box key={key} flexDirection="column">
-      {lines.map((line, i) => {
-        const spans = highlightLine(line, lang);
-        return (
-          <Text key={`${key}-cl-${i}`} wrap="wrap">
-            {line === ""
-              ? " "
-              : spans.map((sp, j) => (
-                  <Text key={`${key}-cl-${i}-s${j}`} color={sp.color} bold={sp.bold}>
-                    {sp.text}
-                  </Text>
-                ))}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-}
-
-
-function numberToLetter(n: number): string {
-  let result = "";
-  while (n > 0) {
-    n--;
-    result = String.fromCharCode(97 + (n % 26)) + result;
-    n = Math.floor(n / 26);
-  }
-  return result;
-}
-
-const ROMAN_VALUES: ReadonlyArray<[number, string]> = [
-  [1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"],
-  [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"],
-];
-
-function numberToRoman(n: number): string {
-  let result = "";
-  for (const [value, numeral] of ROMAN_VALUES) {
-    while (n >= value) {
-      result += numeral;
-      n -= value;
-    }
-  }
-  return result;
-}
-
-function getListNumber(listDepth: number, orderedListNumber: number): string {
-  switch (listDepth) {
-    case 2:
-      return numberToLetter(orderedListNumber);
-    case 3:
-      return numberToRoman(orderedListNumber);
-    default:
-      return orderedListNumber.toString();
-  }
-}
-
-function renderListItem(block: Block, key: string): React.ReactNode {
-  const indent = block.indent ?? 0;
-  
-  
-  const bullet = block.ordered
-    ? `${getListNumber(indent, block.index ?? 1)}.`
-    : "-";
-  const leftPad = indent * 2;
-
-  return (
-    <Box key={key} marginLeft={leftPad}>
-      <Text wrap="wrap">
-        {bullet} {renderTokens(block.tokens ?? [], key, false)}
-      </Text>
-    </Box>
-  );
-}
-
-function renderBlockquote(block: Block, key: string, dim?: boolean): React.ReactNode {
-  
-  
-  return (
-    <Box key={key}>
-      <Text dimColor>{"▎ "}</Text>
-      <Text italic dimColor={dim} wrap="wrap">
-        {renderTokens(block.tokens ?? [], key, dim)}
-      </Text>
-    </Box>
-  );
-}
-
-function renderHR(key: string): React.ReactNode {
-  
-  return <Text key={key}>---</Text>;
-}
-
-function renderParagraph(
-  block: Block,
-  key: string,
-  dim?: boolean,
-): React.ReactNode {
-  return (
-    <Box key={key}>
-      <Text wrap="wrap">{renderTokens(block.tokens ?? [], key, dim)}</Text>
-    </Box>
-  );
-}
-
-
-
-
-
-
-
-function wrapWords(text: string, width: number): string[] {
-  if (width <= 1) return [text];
-  const words = text.split(/\s+/).filter(Boolean);
-  const out: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    if (!cur) cur = w;
-    else if (cur.length + 1 + w.length <= width) cur += " " + w;
-    else {
-      out.push(cur);
-      cur = w;
-    }
-  }
-  if (cur) out.push(cur);
-  return out.length ? out : [""];
-}
-
-function renderTable(block: Block, key: string): React.ReactNode {
+/** Padded cell rows of a table; the header row is bold, the separator dim. */
+function tableLines(block: Block): { text: string; bold?: boolean; dim?: boolean }[] {
   const header = block.header ?? [];
   const rows = block.rows ?? [];
   const align = block.align ?? [];
   const cols = header.length;
-  if (cols === 0) return null;
+  if (cols === 0) return [];
 
   const termWidth = process.stdout.columns || 80;
-  const sepOverhead = Math.max(0, cols - 1) * 3; 
+  const sepOverhead = Math.max(0, cols - 1) * 3;
   const avail = Math.max(20, termWidth - sepOverhead);
 
-  
   const widths: number[] = [];
   for (let c = 0; c < cols; c++) {
     let w = header[c]?.length ?? 0;
@@ -615,63 +469,378 @@ function renderTable(block: Block, key: string): React.ReactNode {
     return out;
   };
 
-  const headerLines = renderCells(header);
-  const sep = widths.map((w) => "─".repeat(w)).join("─┼─");
+  const out: { text: string; bold?: boolean; dim?: boolean }[] = [];
+  for (const l of renderCells(header)) out.push({ text: l, bold: true });
+  out.push({ text: widths.map((w) => "─".repeat(w)).join("─┼─"), dim: true });
+  for (const row of rows) {
+    for (const l of renderCells(row)) out.push({ text: l });
+  }
+  return out;
+}
 
-  return (
-    <Box key={key} flexDirection="column" marginY={0}>
-      {headerLines.map((l, i) => (
-        <Text key={`${key}-h-${i}`} bold>
-          {l}
+function tableRows(block: Block, width: number): TextRow[] {
+  const lines = tableLines(block);
+  const runs: StyledRun[] = [];
+  lines.forEach((line, i) => {
+    if (i > 0) runs.push({ text: "\n" });
+    runs.push({
+      text: line.text,
+      style: line.bold ? { bold: true } : line.dim ? { dim: true } : undefined,
+    });
+  });
+  return wrapTextRuns(runs, width);
+}
+
+const SPACER: TextRow = { runs: [], softWrapped: false };
+
+export interface MarkdownBlockRows {
+  block: Block;
+  rows: TextRow[];
+  /** Extra blank rows after this block (heading marginBottom + gap). */
+  spacersAfter: number;
+}
+
+/** Parse + wrap a markdown string into the exact rows ink renders for it
+ *  (used by Markdown for rendering and by ChatPanel for copy extraction). */
+export function markdownRows(
+  content: string,
+  width: number,
+  dim?: boolean,
+  permissionColor?: string,
+): MarkdownBlockRows[] {
+  const blocks = parseBlocks(content);
+  const out: MarkdownBlockRows[] = [];
+  for (const block of blocks) {
+    let rows: TextRow[];
+    switch (block.type) {
+      case "paragraph":
+        rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
+        break;
+      case "heading": {
+        const level = block.level ?? 1;
+        const style: TextStyle = level >= 2 ? { bold: true } : { italic: true, underline: true };
+        if (dim) style.dim = true;
+        const runs = (block.tokens ?? []).map((t) => ({ text: t.content, style }));
+        rows = wrapTextRuns(runs, width);
+        break;
+      }
+      case "code-block":
+        rows = codeBlockRows(block, width);
+        break;
+      case "list-item": {
+        const indent = block.indent ?? 0;
+        const leftPad = indent * 2;
+        const bullet = block.ordered ? `${getListNumber(indent, block.index ?? 1)}.` : "-";
+        const runs: StyledRun[] = [
+          { text: `${bullet} ` },
+          ...tokensToRuns(block.tokens ?? [], dim, permissionColor),
+        ];
+        rows = wrapBlock(runs, width, leftPad);
+        break;
+      }
+      case "blockquote": {
+        const runs = tokensToRuns(block.tokens ?? [], dim, permissionColor);
+        for (const r of runs) r.style = { italic: true, ...(r.style ?? {}) };
+        rows = wrapBlock(runs, width, 2);
+        break;
+      }
+      case "hr":
+        rows = [{ runs: [{ text: "---" }], softWrapped: false }];
+        break;
+      case "table":
+        rows = tableRows(block, width);
+        break;
+      default:
+        rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
+    }
+    // heading's marginBottom={1} plus the flex gap between blocks = 2
+    // spacer rows after it; other blocks contribute 1 gap row each.
+    out.push({ block, rows, spacersAfter: block.type === "heading" ? 2 : 0 });
+  }
+  return out;
+}
+
+/** Total rendered rows of a markdownRows() result (rows + spacers). */
+export function markdownTotalRows(model: MarkdownBlockRows[]): number {
+  return flattenMarkdown(model).length;
+}
+
+/** Flatten a markdownRows() result into one row list including spacer rows
+ *  (used for copy extraction and row accounting). */
+export function flattenMarkdown(model: MarkdownBlockRows[]): TextRow[] {
+  const out: TextRow[] = [];
+  for (let i = 0; i < model.length; i++) {
+    if (i > 0) out.push(SPACER);
+    out.push(...model[i]!.rows);
+    for (let s = 0; s < (model[i]!.spacersAfter ?? 0); s++) out.push(SPACER);
+  }
+  return out;
+}
+
+/** Selection columns ([start, end), content-relative) covered at a global
+ *  content row, accounting for the row's column origin. Returns null when
+ *  the row is outside the selection. */
+export function rowSelection(
+  selection: ContentSelection | null,
+  globalRow: number,
+  origin: number,
+  width: number,
+): [number, number] | null {
+  if (!selection) return null;
+  if (globalRow < selection.startRow || globalRow > selection.endRow) return null;
+  const startCol = (globalRow === selection.startRow ? selection.startCol : 0) - origin;
+  const endCol = (globalRow === selection.endRow ? selection.endCol : width) - origin;
+  const avail = width - origin;
+  return [
+    Math.max(0, Math.min(startCol, avail)),
+    Math.max(0, Math.min(endCol, avail)),
+  ];
+}
+
+/** One model row rendered with optional selection highlight. `selCols` are
+ *  block-content-relative [start, end) columns (already minus origin). */
+export function RowText({
+  row,
+  selCols,
+  rowWidth,
+  dim,
+}: {
+  row: TextRow;
+  selCols: [number, number] | null;
+  rowWidth: number;
+  dim?: boolean;
+}): React.ReactElement {
+  const bg = resolveColor(theme.selectionBg);
+  const text = rowText(row);
+  const selActive = selCols !== null && selCols[1] > selCols[0];
+  if (text.length === 0) {
+    // Blank row (spacer / gap): highlight the covered width.
+    if (selActive) {
+      const origin = row.origin ?? 0;
+      const from = Math.max(0, selCols![0]);
+      const to = Math.min(rowWidth - origin, selCols![1]);
+      const n = Math.max(1, to - from);
+      return (
+        <Text dimColor={dim} backgroundColor={bg}>
+          {" ".repeat(n)}
         </Text>
-      ))}
-      <Text dimColor>{sep}</Text>
-      {rows.map((row, ri) =>
-        renderCells(row).map((l, li) => (
-          <Text key={`${key}-r${ri}-${li}`} wrap="wrap">
-            {l}
-          </Text>
-        )),
-      )}
+      );
+    }
+    return <Text dimColor={dim}>{" "}</Text>;
+  }
+  // `selected` runs drop their own backgroundColor so the selection highlight
+  // (selectionBg) shows instead of the diff/token background.
+  const runEls = (runs: StyledRun[], k: string, selected = false): React.ReactNode =>
+    runs.map((r, i) => (
+      <Text
+        key={`${k}${i}`}
+        bold={r.style?.bold}
+        italic={r.style?.italic}
+        underline={r.style?.underline}
+        dimColor={r.style?.dim}
+        color={r.style?.color}
+        backgroundColor={selected ? undefined : r.style?.backgroundColor}
+      >
+        {r.text}
+      </Text>
+    ));
+  if (!selActive) {
+    return <Text dimColor={dim}>{runEls(row.runs, "t")}</Text>;
+  }
+  const { before, selected, after } = splitRowAt(row, selCols![0], selCols![1]);
+  return (
+    <Text dimColor={dim}>
+      {runEls(before, "b")}
+      {selected.length > 0 && <Text backgroundColor={bg}>{runEls(selected, "s", true)}</Text>}
+      {runEls(after, "a")}
+    </Text>
+  );
+}
+
+/** A fixed 1-row-tall box holding one model row (guarantees every model
+ *  row occupies exactly one screen row regardless of text length). */
+function RowBox({
+  row,
+  selCols,
+  width,
+  dim,
+}: {
+  row: TextRow;
+  selCols: [number, number] | null;
+  width: number;
+  dim?: boolean;
+}): React.ReactElement {
+  return (
+    <Box height={1} flexShrink={0} minWidth={0}>
+      <RowText row={row} selCols={selCols} rowWidth={width} dim={dim} />
     </Box>
   );
+}
+
+function numberToLetter(n: number): string {
+  let result = "";
+  while (n > 0) {
+    n--;
+    result = String.fromCharCode(97 + (n % 26)) + result;
+    n = Math.floor(n / 26);
+  }
+  return result;
+}
+
+const ROMAN_VALUES: ReadonlyArray<[number, string]> = [
+  [1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"],
+  [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"],
+];
+
+function numberToRoman(n: number): string {
+  let result = "";
+  for (const [value, numeral] of ROMAN_VALUES) {
+    while (n >= value) {
+      result += numeral;
+      n -= value;
+    }
+  }
+  return result;
+}
+
+function getListNumber(listDepth: number, orderedListNumber: number): string {
+  switch (listDepth) {
+    case 2:
+      return numberToLetter(orderedListNumber);
+    case 3:
+      return numberToRoman(orderedListNumber);
+    default:
+      return orderedListNumber.toString();
+  }
+}
+
+function wrapWords(text: string, width: number): string[] {
+  if (width <= 1) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= width) cur += " " + w;
+    else {
+      out.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [""];
 }
 
 interface MarkdownProps {
   children: string;
   dim?: boolean;
+  /** Content width (cols) available to this markdown box. */
+  width: number;
+  /** Active selection in content coordinates (rows inclusive), or null. */
+  selection?: ContentSelection | null;
+  /** Global content row where this markdown box begins. */
+  startRow?: number;
+  /** Column offset of this box's left edge within the content area
+   *  ("● " / "❯ " prefix or padding shifts the markdown right). */
+  leftOffset?: number;
 }
 
 export default function Markdown({
   children,
   dim,
+  width,
+  selection,
+  startRow = 0,
+  leftOffset = 0,
 }: MarkdownProps): React.ReactElement {
-  
-  const blocks = useMemo(() => parseBlocks(children), [children]);
-
-  
-  return (
-    <Box flexDirection="column" gap={1}>
-      {blocks.map((block, idx) => {
-        const key = `b${idx}`;
-        switch (block.type) {
-          case "heading":
-            return renderHeading(block, key, dim);
-          case "code-block":
-            return renderCodeBlock(block, key);
-          case "list-item":
-            return renderListItem(block, key);
-          case "blockquote":
-            return renderBlockquote(block, key, dim);
-          case "hr":
-            return renderHR(key);
-          case "table":
-            return renderTable(block, key);
-          case "paragraph":
-          default:
-            return renderParagraph(block, key, dim);
-        }
-      })}
-    </Box>
+  const permissionColor = resolveColor(theme.permission);
+  const model = useMemo(
+    () => markdownRows(children, width, dim, permissionColor),
+    [children, width, dim, permissionColor],
   );
+
+  const selColsAt = (globalRow: number, origin: number): [number, number] | null =>
+    rowSelection(selection ?? null, globalRow, origin + leftOffset, width + leftOffset);
+
+  const fragments: React.ReactNode[] = [];
+  let row = startRow;
+  model.forEach((b, bi) => {
+    if (bi > 0) {
+      fragments.push(
+        <RowBox key={`sp${bi}`} row={SPACER} selCols={selColsAt(row, 0)} width={width} dim={dim} />,
+      );
+      row++;
+    }
+    const blockStart = row;
+    let inner: React.ReactNode;
+    switch (b.block.type) {
+      case "blockquote":
+        inner = (
+          <Box flexDirection="row" minWidth={0}>
+            <Text dimColor>{"▎ "}</Text>
+            <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+              {b.rows.map((r, i) => (
+                <RowBox
+                  key={`r${i}`}
+                  row={r}
+                  selCols={selColsAt(blockStart + i, r.origin ?? 0)}
+                  width={width}
+                  dim={dim}
+                />
+              ))}
+            </Box>
+          </Box>
+        );
+        break;
+      case "list-item":
+        inner = (
+          <Box
+            marginLeft={(b.block.indent ?? 0) * 2}
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            minWidth={0}
+          >
+            {b.rows.map((r, i) => (
+              <RowBox
+                key={`r${i}`}
+                row={r}
+                selCols={selColsAt(blockStart + i, r.origin ?? 0)}
+                width={width}
+                dim={dim}
+              />
+            ))}
+          </Box>
+        );
+        break;
+      default:
+        inner = (
+          <Box flexDirection="column" minWidth={0}>
+            {b.rows.map((r, i) => (
+              <RowBox
+                key={`r${i}`}
+                row={r}
+                selCols={selColsAt(blockStart + i, r.origin ?? 0)}
+                width={width}
+                dim={dim}
+              />
+            ))}
+          </Box>
+        );
+    }
+    fragments.push(
+      <Box key={`b${bi}`} flexDirection="column" flexShrink={0}>
+        {inner}
+      </Box>,
+    );
+    row = blockStart + b.rows.length;
+    for (let s = 0; s < (b.spacersAfter ?? 0); s++) {
+      fragments.push(
+        <RowBox key={`sp${bi}-${s}`} row={SPACER} selCols={selColsAt(row, 0)} width={width} dim={dim} />,
+      );
+      row++;
+    }
+  });
+
+  return <Box flexDirection="column" flexShrink={0}>{fragments}</Box>;
 }
