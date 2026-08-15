@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="DeepSeek Code — a terminal-native AI coding agent powered by DeepSeek. Read, edit, run, plan, review, ship. All from your shell.">
+<title>deepseek-code — the deep end of coding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============ reset & tokens ============ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --font-display: "Syne", "Avenir Next", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --accent: #6fe3cf;            /* bioluminescence (deep water) */
+  --accent-ink: #0b8f7a;        /* bioluminescence (shallow water) */
+  --ease: cubic-bezier(.22, .8, .3, 1);
+  /* chrome defaults (shallow); JS flips ink/accents as the dive deepens */
+  --ink: #0b2a31;
+  --faint: #4b6a6e;
+}
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--font-body);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+::selection { background: rgba(111, 227, 207, .28); }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* ============ fixed layers ============ */
+.water {
+  position: fixed; inset: 0; z-index: -3;
+  background-color: #e9f6f3;
+}
+.sunrays {
+  position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(ellipse 72% 44% at 50% -12%, rgba(255, 255, 255, .55), transparent 62%),
+    radial-gradient(ellipse 30% 22% at 22% -6%, rgba(255, 255, 255, .35), transparent 60%);
+}
+.bubbles { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.bubbles span {
+  position: absolute; bottom: -4vh;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, .85), rgba(255, 255, 255, 0) 70%);
+  animation: rise linear infinite;
+  opacity: 0;
+}
+@keyframes rise {
+  0%   { transform: translateY(0); opacity: 0; }
+  8%   { opacity: var(--bubble-o, .25); }
+  92%  { opacity: var(--bubble-o, .25); }
+  100% { transform: translateY(-118vh); opacity: 0; }
+}
+
+/* ============ top bar ============ */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px clamp(20px, 4vw, 48px);
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 9%, transparent), transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand .ping {
+  position: relative; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+}
+.brand .ping::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  border: 1px solid var(--accent); opacity: 0;
+  animation: ping 2.6s var(--ease) infinite;
+}
+@keyframes ping {
+  0% { transform: scale(.4); opacity: .9; }
+  70%, 100% { transform: scale(1.6); opacity: 0; }
+}
+.readout { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.readout b { color: var(--accent); font-weight: 500; }
+
+/* ============ depth ruler ============ */
+.ruler {
+  position: fixed; right: clamp(14px, 2.4vw, 34px); top: 50%;
+  transform: translateY(-50%);
+  height: 62vh; width: 118px; z-index: 30;
+  display: none;
+}
+.ruler-line {
+  position: absolute; top: 0; bottom: 0; left: 44px; width: 1px;
+  background: linear-gradient(180deg, var(--ink) 0%, var(--ink) 100%);
+  opacity: .28;
+}
+.ruler-tick {
+  position: absolute; left: 40px; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: .62rem;
+  letter-spacing: .08em; color: var(--ink); opacity: .55;
+}
+.ruler-tick::before { content: ""; width: 8px; height: 1px; background: var(--ink); opacity: .7; }
+.ruler-marker {
+  position: absolute; left: 44px; top: 8%;
+  transform: translate(-50%, 0);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  transition: top .1s linear;
+}
+.ruler-dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent),
+              0 0 18px 4px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.ruler-whale { width: 34px; height: auto; color: var(--ink); }
+.ruler-depth {
+  margin-top: 6px; font-family: var(--font-mono); font-size: .62rem;
+  letter-spacing: .1em; white-space: nowrap; color: var(--accent);
+}
+
+/* ============ layout ============ */
+main { position: relative; z-index: 1; }
+.zone {
+  min-height: 100vh;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(96px, 14vh, 160px) clamp(20px, 5vw, 64px);
+  scroll-margin-top: 24px;
+}
+.inner { width: min(1080px, 100%); margin: 0 auto; }
+
+/* zone theming — colors only, one attribute selector per zone */
+[data-zone] { color: var(--ink); }
+[data-zone="0"]  { --ink: #0b2a31;  --faint: #4b6a6e;  --accent: var(--accent-ink); }
+[data-zone="200"]{ --ink: #0c3336;  --faint: #4f7473;  --accent: var(--accent-ink); }
+[data-zone="1000"]{ --ink: #d9f2ec; --faint: #8fbdb4; --accent: var(--accent); }
+[data-zone="4000"]{ --ink: #d9f2ec; --faint: #86b3ad; --accent: var(--accent); }
+[data-zone="11000"]{ --ink: #d9f2ec; --faint: #7fa8a2; --accent: var(--accent); }
+
+/* ============ shared bits ============ */
+.eyebrow {
+  font-family: var(--font-mono); font-size: .72rem;
+  letter-spacing: .22em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 22px;
+}
+h1, h2 { font-family: var(--font-display); font-weight: 800; letter-spacing: -.025em; line-height: .98; }
+h1 { font-size: clamp(2.9rem, 9vw, 6rem); }
+h2 { font-size: clamp(1.9rem, 4.6vw, 3.1rem); font-weight: 700; }
+.lede {
+  margin-top: 26px; max-width: 56ch;
+  font-size: clamp(1.02rem, 1.5vw, 1.18rem);
+  color: var(--faint);
+}
+.zone-label {
+  display: flex; align-items: center; gap: 14px;
+  font-family: var(--font-mono); font-size: .7rem;
+  letter-spacing: .2em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 14px;
+}
+.zone-label::before { content: ""; width: 34px; height: 1px; background: var(--accent); }
+.zone-label b { color: var(--accent); font-weight: 500; letter-spacing: .12em; }
+
+/* ============ hero ============ */
+.hero { min-height: 100vh; justify-content: center; padding-top: 110px; }
+.hero .inner { display: grid; grid-template-columns: 1.25fr .75fr; gap: clamp(24px, 4vw, 64px); align-items: center; }
+.hero-copy .sub { margin-top: 14px; font-size: clamp(1.02rem, 1.5vw, 1.18rem); color: var(--faint); max-width: 52ch; }
+.hero-whale { color: var(--ink); animation: bob 6.5s ease-in-out infinite alternate; justify-self: center; }
+.hero-whale svg { width: min(300px, 60vw); height: auto; display: block; }
+.hero-whale .eye { fill: var(--accent); }
+@keyframes bob {
+  from { transform: translateY(-7px); }
+  to   { transform: translateY(8px); }
+}
+.cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 36px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--font-mono); font-size: .82rem; letter-spacing: .06em;
+  text-decoration: none; padding: 13px 22px; border-radius: 999px;
+  border: 1px solid transparent; cursor: pointer;
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease), background .18s var(--ease);
+}
+.btn:hover { transform: translateY(-2px); }
+.btn-primary { background: var(--accent); color: #04222a; font-weight: 500; }
+.btn-primary:hover { box-shadow: 0 10px 30px -8px color-mix(in srgb, var(--accent) 70%, transparent); }
+.btn-ghost { border-color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.btn-ghost:hover { border-color: var(--ink); }
+
+.terminal {
+  margin-top: 8px;
+  background: rgba(6, 24, 30, .86);
+  border: 1px solid rgba(217, 242, 236, .12);
+  border-radius: 14px;
+  box-shadow: 0 30px 70px -20px rgba(4, 13, 21, .6);
+  font-family: var(--font-mono); font-size: .74rem; line-height: 1.9;
+  padding: 0 0 18px; overflow: hidden;
+}
+.terminal-bar {
+  display: flex; align-items: center; gap: 7px;
+  padding: 11px 16px; border-bottom: 1px solid rgba(217, 242, 236, .1);
+}
+.terminal-bar i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.terminal-bar i:nth-child(1) { background: #ff5f57; }
+.terminal-bar i:nth-child(2) { background: #febc2e; }
+.terminal-bar i:nth-child(3) { background: #28c840; }
+.terminal-bar span { margin-left: 8px; color: rgba(217, 242, 236, .45); font-size: .64rem; letter-spacing: .1em; }
+.terminal-body { padding: 14px 18px 0; color: #cfe8e2; }
+.terminal-body .c-green { color: #6ee7a8; }
+.terminal-body .c-cyan  { color: #7fe3d8; }
+.terminal-body .c-blue  { color: #8fb0ff; }
+.terminal-body .c-dim   { color: rgba(207, 232, 226, .45); }
+.terminal-body .c-accent{ color: #6fe3cf; }
+.cursor { display: inline-block; width: 7px; height: 13px; background: #6fe3cf; vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ============ tools (twilight) ============ */
+.tools-grid {
+  margin-top: 44px;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 0 40px;
+}
+.tool {
+  padding: 17px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.tool-name {
+  font-family: var(--font-mono); font-size: .84rem; font-weight: 500;
+  letter-spacing: .02em; display: flex; align-items: baseline; gap: 8px;
+}
+.tool-name i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; align-self: center; }
+.tool-desc { margin-top: 4px; font-size: .9rem; color: var(--faint); }
+.tools-note { margin-top: 30px; font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; color: var(--faint); }
+.tools-note b { color: var(--accent); font-weight: 500; }
+
+/* ============ engine (midnight) ============ */
+.pipeline {
+  margin-top: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  font-family: var(--font-mono); font-size: .78rem;
+}
+.pipeline .node {
+  padding: 9px 15px; border: 1px solid color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 999px; color: var(--ink);
+}
+.pipeline .node.hot { border-color: var(--accent); color: var(--accent); }
+.pipeline .arrow { color: var(--faint); }
+.quote {
+  margin-top: 44px; padding: 22px 26px;
+  border-left: 2px solid var(--accent);
+  font-family: var(--font-mono); font-size: .86rem; line-height: 1.7;
+  color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent);
+  border-radius: 0 10px 10px 0;
+  max-width: 62ch;
+}
+.quote cite { display: block; margin-top: 8px; font-style: normal; font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+.stats { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 10px; }
+.stat {
+  font-family: var(--font-mono); font-size: .74rem; letter-spacing: .05em;
+  padding: 8px 14px; border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--ink) 30%, transparent);
+  color: var(--ink);
+}
+.stat b { color: var(--accent); font-weight: 500; }
+
+/* ============ models (abyssal) ============ */
+.model-row { margin-top: 44px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.model-card {
+  padding: 30px 30px 26px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.model-card .id { font-family: var(--font-mono); font-size: .86rem; font-weight: 500; color: var(--accent); letter-spacing: .04em; }
+.model-card h3 { font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; margin-top: 10px; letter-spacing: -.01em; }
+.model-card p { margin-top: 10px; font-size: .95rem; color: var(--faint); max-width: 40ch; }
+.model-card .tag {
+  display: inline-block; margin-top: 18px; padding: 5px 11px;
+  font-family: var(--font-mono); font-size: .64rem; letter-spacing: .12em; text-transform: uppercase;
+  border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.effort { margin-top: 26px; }
+.effort-label { font-family: var(--font-mono); font-size: .7rem; letter-spacing: .18em; text-transform: uppercase; color: var(--faint); }
+.effort-chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.effort-chips span {
+  font-family: var(--font-mono); font-size: .72rem; letter-spacing: .06em;
+  padding: 7px 13px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 26%, transparent); color: var(--ink);
+}
+.effort-chips span.on { border-color: var(--accent); color: var(--accent); }
+.mcp-line { margin-top: 30px; font-size: .95rem; color: var(--faint); max-width: 60ch; }
+.mcp-line code { font-family: var(--font-mono); font-size: .82rem; color: var(--accent); }
+
+/* ============ hadal / bottom ============ */
+.hadal { text-align: center; }
+.hadal .zone-label { justify-content: center; }
+.hadal .zone-label::before, .hadal .zone-label::after { content: ""; width: 34px; height: 1px; background: var(--accent); }
+.hadal .zone-label::after { display: block; }
+.install {
+  margin: 44px auto 0; max-width: 620px; text-align: left;
+  background: rgba(4, 13, 21, .72);
+  border: 1px solid rgba(217, 242, 236, .12); border-radius: 14px;
+  font-family: var(--font-mono); font-size: .8rem; line-height: 2.1;
+  padding: 24px 28px; color: #cfe8e2;
+  box-shadow: 0 30px 70px -24px rgba(0, 0, 0, .7);
+}
+.install .p { color: rgba(207, 232, 226, .5); }
+.install .c { color: #7fe3d8; }
+.install .d { color: rgba(207, 232, 226, .4); }
+.install .cm { color: #6ee7a8; }
+.commands { margin-top: 40px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 760px; margin-left: auto; margin-right: auto; }
+.commands span {
+  font-family: var(--font-mono); font-size: .72rem; letter-spacing: .04em;
+  padding: 7px 13px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ink) 26%, transparent); color: var(--ink);
+}
+.commands .lead { border: none; color: var(--faint); letter-spacing: .14em; text-transform: uppercase; font-size: .66rem; align-self: center; }
+.bottom-whale { margin: 70px auto 0; color: var(--accent); width: 110px; }
+.bottom-whale svg { width: 100%; height: auto; display: block; filter: drop-shadow(0 0 22px rgba(111, 227, 207, .5)); }
+.bottom-whale .eye { fill: #04222a; }
+.depth-caption { margin-top: 12px; font-family: var(--font-mono); font-size: .66rem; letter-spacing: .22em; text-transform: uppercase; color: var(--faint); }
+footer {
+  position: relative; z-index: 1;
+  padding: 34px clamp(20px, 5vw, 64px) 46px;
+  display: flex; flex-wrap: wrap; gap: 10px 26px; justify-content: space-between;
+  font-family: var(--font-mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--faint);
+}
+footer a:hover { color: var(--accent); }
+
+/* ============ responsive ============ */
+@media (min-width: 1100px) { .ruler { display: block; } }
+@media (max-width: 900px) {
+  .hero .inner { grid-template-columns: 1fr; }
+  .hero-whale { order: -1; }
+  .tools-grid { grid-template-columns: repeat(2, 1fr); }
+  .model-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .tools-grid { grid-template-columns: 1fr; }
+  .zone { min-height: auto; padding-top: 110px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="water" id="water"></div>
+<div class="sunrays" id="sunrays"></div>
+<div class="bubbles" id="bubbles" aria-hidden="true"></div>
+
+<header class="topbar" id="topbar">
+  <div class="brand"><span class="ping"></span>deepseek-code</div>
+  <div class="readout" id="readout">0 m · <b>surface</b></div>
+</header>
+
+<aside class="ruler" id="ruler" aria-hidden="true">
+  <div class="ruler-line"></div>
+  <div class="ruler-tick" style="top:0%">0 m</div>
+  <div class="ruler-tick" style="top:1.8%">200 m</div>
+  <div class="ruler-tick" style="top:9.1%">1 000 m</div>
+  <div class="ruler-tick" style="top:36.4%">4 000 m</div>
+  <div class="ruler-tick" style="top:100%">11 000 m</div>
+  <div class="ruler-marker" id="rulerMarker">
+    <span class="ruler-dot"></span>
+    <svg class="ruler-whale" viewBox="0 0 200 90" fill="currentColor" aria-hidden="true">
+      <path d="M12 50 C16 30 50 22 90 28 C120 33 148 36 162 44 L186 36 L186 58 L164 50 C150 56 120 56 90 52 C56 48 30 54 18 58 C12 62 8 56 12 50 Z"/>
+      <circle cx="52" cy="41" r="3" fill="var(--accent)"/>
+    </svg>
+    <span class="ruler-depth" id="rulerDepth">0 m</span>
+  </div>
+</aside>
+
+<main>
+
+  <!-- 0 m — surface -->
+  <section class="zone hero" data-zone="0">
+    <div class="inner">
+      <div class="hero-copy">
+        <p class="eyebrow">deepseek-code · v0.1.0 · bun + ink + ai-sdk-cpp</p>
+        <h1>The deep end of coding.</h1>
+        <p class="sub">DeepSeek Code is an AI agent that lives in your terminal. It reads your files, runs your commands, plans the work, reviews the diff, and ships the change — powered by DeepSeek models, without leaving your shell.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#install">Install DeepSeek Code</a>
+          <a class="btn btn-ghost" href="docs/ARCHITECTURE.md">Read the docs</a>
+        </div>
+      </div>
+      <div class="hero-whale" aria-hidden="true">
+        <svg viewBox="0 0 200 90" fill="currentColor">
+          <path d="M12 50 C16 30 50 22 90 28 C120 33 148 36 162 44 L186 36 L186 58 L164 50 C150 56 120 56 90 52 C56 48 30 54 18 58 C12 62 8 56 12 50 Z"/>
+          <circle class="eye" cx="52" cy="41" r="3"/>
+        </svg>
+      </div>
+    </div>
+    <div class="inner" style="margin-top:56px">
+      <div class="terminal" aria-hidden="true">
+        <div class="terminal-bar"><i></i><i></i><i></i><span>deepseek-code — ~/deepseek-code</span></div>
+        <div class="terminal-body">
+          <div><span class="c-green">$</span> bun run dev</div>
+          <div><span class="c-cyan">∴</span> thinking — scanning the repo for entry points…</div>
+          <div><span class="c-blue">✳</span> Read <span class="c-accent">src/index.tsx</span> <span class="c-dim">(loads config, renders App)</span></div>
+          <div><span class="c-blue">✳</span> Grep <span class="c-accent">"context window"</span> <span class="c-dim">· 12 files</span></div>
+          <div><span class="c-cyan">●</span> step 3/25 — planning the change<span class="cursor"></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 200 m — twilight: tools -->
+  <section class="zone" data-zone="200">
+    <div class="inner">
+      <p class="zone-label"><b>200 m</b> · twilight zone</p>
+      <h2>Thirty-one tools. No mouse required.</h2>
+      <p class="lede">Everything a coding agent needs, wired into one shell. Each tool is small, permission-checked, and readable by the model — so it can read your code, run your tests, and ask you before touching anything.</p>
+      <div class="tools-grid">
+        <div class="tool"><div class="tool-name"><i></i>FileRead</div><div class="tool-desc">Code, PDFs, notebooks, images</div></div>
+        <div class="tool"><div class="tool-name"><i></i>FileWrite</div><div class="tool-desc">New files, whole files</div></div>
+        <div class="tool"><div class="tool-name"><i></i>FileEdit</div><div class="tool-desc">Structured patches with diff preview</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Bash</div><div class="tool-desc">Commands — and background tasks</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Glob · LS</div><div class="tool-desc">Find files, map directories</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Grep</div><div class="tool-desc">Ripgrep search with context</div></div>
+        <div class="tool"><div class="tool-name"><i></i>WebFetch · WebSearch</div><div class="tool-desc">Reach beyond the repo</div></div>
+        <div class="tool"><div class="tool-name"><i></i>NotebookEdit</div><div class="tool-desc">Edit .ipynb cells</div></div>
+        <div class="tool"><div class="tool-name"><i></i>TodoWrite</div><div class="tool-desc">Keep the plan visible</div></div>
+        <div class="tool"><div class="tool-name"><i></i>TaskCreate · Get · Update · List</div><div class="tool-desc">Track work in flight</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Agent</div><div class="tool-desc">Delegate to a sub-agent</div></div>
+        <div class="tool"><div class="tool-name"><i></i>AskUserQuestion</div><div class="tool-desc">Ask you, instead of guessing</div></div>
+        <div class="tool"><div class="tool-name"><i></i>EnterPlanMode · ExitPlanMode</div><div class="tool-desc">Think first, then act</div></div>
+        <div class="tool"><div class="tool-name"><i></i>ScheduleCron</div><div class="tool-desc">Run this later</div></div>
+        <div class="tool"><div class="tool-name"><i></i>EnterWorktree · ExitWorktree</div><div class="tool-desc">Isolated workspaces</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Skill</div><div class="tool-desc">Load a SKILL.md playbook</div></div>
+        <div class="tool"><div class="tool-name"><i></i>REPL · LSP</div><div class="tool-desc">Evaluate, jump to definition</div></div>
+        <div class="tool"><div class="tool-name"><i></i>Brief</div><div class="tool-desc">Surface what matters</div></div>
+      </div>
+      <p class="tools-note"><b>31 instruments</b> in the registry — TaskOutput, TaskStop, Sleep, PowerShell, ToolSearch, and more — each in its own folder, each with a permission gate.</p>
+    </div>
+  </section>
+
+  <!-- 1000 m — midnight: engine -->
+  <section class="zone" data-zone="1000">
+    <div class="inner">
+      <p class="zone-label"><b>1 000 m</b> · midnight zone</p>
+      <h2>The engine is native. The loop is C++.</h2>
+      <p class="lede">Beneath the interface, an ai-sdk-cpp Agent owns the whole loop: history, memory injection, sliding-window compaction, retries, and step limits. TypeScript only draws the picture — streaming events become pixels.</p>
+      <div class="pipeline" aria-label="request pipeline">
+        <span class="node">prompt</span><span class="arrow">→</span>
+        <span class="node hot">agent</span><span class="arrow">→</span>
+        <span class="node">tools</span><span class="arrow">→</span>
+        <span class="node">events</span><span class="arrow">→</span>
+        <span class="node">ink</span>
+      </div>
+      <blockquote class="quote">
+        “The heavy lifting lives in the C++ SDK.”
+        <cite>— CLAUDE.md, this repository</cite>
+      </blockquote>
+      <div class="stats">
+        <span class="stat"><b>25</b> max steps · code agent</span>
+        <span class="stat"><b>1M</b> token context window</span>
+        <span class="stat"><b>auto</b> compaction</span>
+        <span class="stat"><b>429</b> → fallback model retry</span>
+        <span class="stat"><b>80ms</b> renderer flushes</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4000 m — abyssal: models -->
+  <section class="zone" data-zone="4000">
+    <div class="inner">
+      <p class="zone-label"><b>4 000 m</b> · abyssal zone</p>
+      <h2>Two models. Pick your depth.</h2>
+      <p class="lede">Switch mid-conversation with <code>/model</code>. The session rebuilds around your choice — cache key and all.</p>
+      <div class="model-row">
+        <div class="model-card">
+          <div class="id">deepseek-chat</div>
+          <h3>The workhorse</h3>
+          <p>General-purpose coding assistant. Default, always reliable, fast on the long haul.</p>
+          <span class="tag">default</span>
+        </div>
+        <div class="model-card">
+          <div class="id">deepseek-reasoner</div>
+          <h3>The thinker</h3>
+          <p>Extended thinking for the hard problems — architecture calls, gnarly bugs, anything that needs depth before it needs speed.</p>
+          <span class="tag">extended thinking</span>
+        </div>
+      </div>
+      <div class="effort">
+        <div class="effort-label">reasoning effort</div>
+        <div class="effort-chips">
+          <span>off</span><span>low</span><span class="on">medium</span><span>high</span><span>max</span>
+        </div>
+      </div>
+      <p class="mcp-line">Extend with <b>Model Context Protocol</b>: define servers in config, toggle them live with <code>/mcp</code>, watch them appear in the status bar.</p>
+    </div>
+  </section>
+
+  <!-- 11 000 m — hadal: the bottom -->
+  <section class="zone hadal" data-zone="11000" id="install">
+    <div class="inner">
+      <p class="zone-label"><b>11 000 m</b> · hadal zone — challenger deep</p>
+      <h2>Reached the bottom. Ready to dive?</h2>
+      <p class="lede" style="margin-left:auto;margin-right:auto">Every dive ends somewhere. Install it, point it at a repo, and go.</p>
+      <div class="install" aria-label="install commands">
+        <div><span class="p">#</span> <span class="cm">clone, install, set your key, dive</span></div>
+        <div><span class="c">$</span> git clone https://github.com/your-repo/deepseek-code.git</div>
+        <div><span class="c">$</span> cd deepseek-code <span class="d">&amp;&amp;</span> bun install</div>
+        <div><span class="c">$</span> export DEEPSEEK_API_KEY=<span class="d">"sk-…"</span></div>
+        <div><span class="c">$</span> bun run dev</div>
+      </div>
+      <div class="commands">
+        <span class="lead">once you're down there</span>
+        <span>/help</span><span>/model</span><span>/agent</span><span>/think</span><span>/effort</span><span>/mcp</span><span>/skills</span><span>/export</span><span>/search</span><span>/rewind</span><span>/compact</span>
+      </div>
+      <div class="bottom-whale" aria-hidden="true">
+        <svg viewBox="0 0 200 90" fill="currentColor">
+          <path d="M12 50 C16 30 50 22 90 28 C120 33 148 36 162 44 L186 36 L186 58 L164 50 C150 56 120 56 90 52 C56 48 30 54 18 58 C12 62 8 56 12 50 Z"/>
+          <circle class="eye" cx="52" cy="41" r="3"/>
+        </svg>
+      </div>
+      <p class="depth-caption">whale sighting · 11 000 m</p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>deepseek-code · MIT</span>
+  <span>built with bun · ink · ai-sdk-cpp</span>
+  <a href="README.md">README</a>
+  <a href="docs/ARCHITECTURE.md">architecture</a>
+</footer>
+
+<script>
+(() => {
+  "use strict";
+  var prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---- ambient bubbles ---- */
+  var bubbles = document.getElementById("bubbles");
+  if (bubbles && !prefersReduced) {
+    for (var i = 0; i < 18; i++) {
+      var s = document.createElement("span");
+      var size = 2 + Math.random() * 7;
+      s.style.width = size + "px";
+      s.style.height = size + "px";
+      s.style.left = (Math.random() * 100) + "%";
+      s.style.setProperty("--bubble-o", (0.08 + Math.random() * 0.22).toFixed(2));
+      s.style.animationDuration = (9 + Math.random() * 16) + "s";
+      s.style.animationDelay = (-Math.random() * 20) + "s";
+      bubbles.appendChild(s);
+    }
+  }
+
+  /* ---- water color ramp: [depth, [r, g, b]] ---- */
+  var STOPS = [
+    [0,      [233, 246, 243]],
+    [200,    [191, 228, 223]],
+    [1000,   [79,  168, 162]],
+    [4000,   [19,  96,  122]],
+    [6000,   [10,  44,  64]],
+    [11000,  [4,   13,  21]]
+  ];
+  var MAX_DEPTH = 11000;
+
+  function sample(depth) {
+    if (depth <= STOPS[0][0]) return STOPS[0][1];
+    for (var i = 1; i < STOPS.length; i++) {
+      if (depth <= STOPS[i][0]) {
+        var a = STOPS[i - 1], b = STOPS[i];
+        var t = (depth - a[0]) / (b[0] - a[0]);
+        return [
+          Math.round(a[1][0] + (b[1][0] - a[1][0]) * t),
+          Math.round(a[1][1] + (b[1][1] - a[1][1]) * t),
+          Math.round(a[1][2] + (b[1][2] - a[1][2]) * t)
+        ];
+      }
+    }
+    return STOPS[STOPS.length - 1][1];
+  }
+
+  function fmtDepth(d) {
+    return Math.round(d).toLocaleString("en-US").replace(/,/g, "\u202f") + " m";
+  }
+  function zoneName(d) {
+    if (d < 200) return "surface";
+    if (d < 1000) return "twilight zone";
+    if (d < 4000) return "midnight zone";
+    if (d < 11000) return "abyssal zone";
+    return "hadal zone";
+  }
+
+  var water = document.getElementById("water");
+  var sunrays = document.getElementById("sunrays");
+  var readout = document.getElementById("readout");
+  var marker = document.getElementById("rulerMarker");
+  var rulerDepth = document.getElementById("rulerDepth");
+  var ticking = false;
+
+  function paint() {
+    var doc = document.documentElement;
+    var max = doc.scrollHeight - window.innerHeight;
+    var progress = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+    var depth = progress * MAX_DEPTH;
+
+    var c = sample(depth);
+    water.style.backgroundColor = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+
+    var rays = Math.max(0, 1 - progress * 4.2);
+    sunrays.style.opacity = rays.toFixed(3);
+
+    /* chrome (topbar, ruler, footer) flips from dark-ink to light-ink once we're below the sunlight zone */
+    var root = document.documentElement;
+    var shallow = depth < 800;
+    root.style.setProperty("--ink", shallow ? "#0b2a31" : "#d9f2ec");
+    root.style.setProperty("--faint", shallow ? "#4b6a6e" : "#86b3ad");
+    root.style.setProperty("--accent", shallow ? "#0b8f7a" : "#6fe3cf");
+
+    if (marker) marker.style.top = (8 + 84 * progress) + "%";
+    if (readout) readout.innerHTML = fmtDepth(depth) + " · <b>" + zoneName(depth) + "</b>";
+    if (rulerDepth) rulerDepth.textContent = fmtDepth(depth);
+    ticking = false;
+  }
+
+  window.addEventListener("scroll", function () {
+    if (!ticking) { ticking = true; requestAnimationFrame(paint); }
+  }, { passive: true });
+  paint();
+})();
+</script>
+</body>
+</html>
