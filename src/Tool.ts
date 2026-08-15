@@ -73,8 +73,11 @@ export interface ToolUseContext {
   askUserQuestions?: AskUserQuestionsCallback;
   
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
-  
+
   onToolOutput?: (toolName: string, text: string) => void;
+
+  /** Surface a system message in the UI (e.g. background task completion). */
+  onSystemMessage?: (content: string) => void;
 }
 
 

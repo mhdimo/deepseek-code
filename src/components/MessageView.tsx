@@ -5,6 +5,7 @@ import { theme, resolveColor, getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import Markdown, { RowText, rowSelection, markdownRows, flattenMarkdown } from "./Markdown.js";
 import ToolBlock, { buildToolBlockSpans, BLACK_CIRCLE } from "./ToolBlock.js";
+import { AgentFanout, agentFanoutLineCount } from "./AgentFanout.js";
 import MessageResponse from "./MessageResponse.js";
 import ThinkingBlock from "./ThinkingBlock.js";
 import type { TextRow } from "../services/selection/lineModel.js";
@@ -269,6 +270,16 @@ function MessageView({
           />
         </Box>
       );
+    };
+
+    // Consecutive Agent tool blocks collapse into one Claude Code-style tree
+    // ("Running N agents…", ├─/└─ per agent). Renders its lines as opaque
+    // rows so the row accumulator stays in sync with the screen.
+    const renderAgentFanout = (run: ToolUseBlock[], baseKey: string): React.ReactNode => {
+      const lineCount = agentFanoutLineCount(run);
+      row += lineCount;
+      report({ key: `${baseKey}:fanout`, rowCount: lineCount, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
+      return <AgentFanout key={baseKey} blocks={run} />;
     };
 
     const renderBlock = (block: MessageBlock, idx: number): React.ReactNode => {

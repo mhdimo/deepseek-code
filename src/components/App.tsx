@@ -34,16 +34,16 @@ import Onboarding, { type ThemeChoice } from "./Onboarding.js";
 import EffortCallout from "./EffortCallout.js";
 import ThemePicker from "./ThemePicker.js";
 import { isTrusted } from "../services/projectTrust.js";
+import { buildStatusLineCommandInput } from "../utils/statusline.js";
 import { agentManager } from "../services/agent/index.js";
 import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
 import { getOrCreateMemorySession, resetMemorySession } from "../services/agent/agentSession.js";
 import os from "node:os";
-import { readdirSync, existsSync, writeFileSync } from "node:fs";
+import { readdirSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { listOutputStyles } from "../services/outputStyles.js";
-import { listTasks } from "../services/tasks/backgroundFramework.js";
 import { writeFile, mkdir, rm } from "node:fs/promises";
-import { resolve, relative, dirname } from "node:path";
+import { resolve, relative, dirname, join } from "node:path";
 import { TokenTracker } from "../services/tokenTracker.js";
 import { ContextManager } from "../services/contextManager.js";
 import { getToolDescriptions } from "../tools.js";
@@ -76,7 +76,7 @@ import {
 } from "../state/storage.js";
 import { Settings } from "./Settings/Settings.js";
 import { recordSessionStats } from "../state/stats.js";
-import { loadHooks, runHooksFireAndForget } from "../services/hooks.js";
+import { runHooksFireAndForget } from "../services/hooks.js";
 import {
   loadCustomCommands,
   renderCommand,
@@ -85,10 +85,31 @@ import {
 } from "../services/customCommands.js";
 import PluginPanel from "./PluginPanel.js";
 import { loadInstalledPlugins } from "../services/pluginService.js";
+import { clearSkillsCache } from "../skills/skillService.js";
 import { shutdownLspServerManager } from "../services/lsp/manager.js";
-import TodoList from "./TodoList.js";
+import TaskListV2 from "./TaskListV2.js";
 import HistorySearch from "./HistorySearch.js";
 import FileMentions from "./FileMentions.js";
+import ModelPicker from "./ModelPicker.js";
+import AgentPicker from "./AgentPicker.js";
+import ContextView from "./ContextView.js";
+import DoctorView from "./DoctorView.js";
+import TasksView from "./TasksView.js";
+import PermissionsView from "./PermissionsView.js";
+import HooksView from "./HooksView.js";
+import McpView from "./McpView.js";
+import SkillsMenu from "./SkillsMenu.js";
+import RewindPicker, { type RewindMode } from "./RewindPicker.js";
+import CopyPicker from "./CopyPicker.js";
+import MemoryPicker from "./MemoryPicker.js";
+import OutputStylePicker from "./OutputStylePicker.js";
+import InputDialog from "./InputDialog.js";
+import WorkflowsMenu from "./WorkflowsMenu.js";
+import TeamsDialog from "./teams/TeamsDialog.js";
+import { listWorkflows, getWorkflow, type Workflow } from "../services/workflow/workflowService.js";
+import { startWorkflowRun } from "../services/workflow/runner.js";
+import TasksStatusPill from "./TasksStatusPill.js";
+import { listTasks } from "../services/tasks/backgroundFramework.js";
 import { buildFileIndex } from "../utils/fileIndex.js";
 import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
 import { getEffortLevel, isEffortLevel } from "../services/effort.js";
@@ -103,8 +124,34 @@ import { matchDecision, parsePermissionSettings, escapeRuleContent } from "../se
 import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
 import { safeTerminalRows } from "./terminalLayout.js";
 import { formatDirectoryTree } from "../tools/LS/LSTool.js";
+import { hasUltrathinkKeyword, ULTRATHINK_EFFORT } from "../utils/thinkingKeywords.js";
 
 
+
+/**
+ * Interactive slash-command overlays (Claude Code local-jsx equivalent): one
+ * discriminator for every command view so the exclusive render chain and the
+ * input guard stay in sync as views are added.
+ */
+type CommandOverlayView =
+  | "model"
+  | "agent"
+  | "context"
+  | "doctor"
+  | "permissions"
+  | "hooks"
+  | "mcp"
+  | "skills"
+  | "tasks"
+  | "rewind"
+  | "copy"
+  | "memory"
+  | "output-style"
+  | "apikey"
+  | "baseurl"
+  | "statusline"
+  | "workflows"
+  | "teams";
 
 export default function App({ config, workingDirectory, resumeSessionHash: cliResumeHash }: { config: DeepSeekCodeConfig; workingDirectory: string; resumeSessionHash?: string }) {
   const { exit } = useApp();
@@ -140,13 +187,22 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [outputTokens, setOutputTokens] = useState(0);
   const [cost, setCost] = useState(0);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
-  const [pendingPermission, setPendingPermission] = useState<{
-    toolName: string;
-    description: string;
-    /** Tool input — the dialog renders a faithful diff from it. */
-    input?: unknown;
-    resolve: (decision: { approved: boolean; feedback?: string }) => void;
-  } | null>(null);
+  // Permission prompts queue (Claude Code toolUseConfirmQueue parity): parallel
+  // subagents can request several tool approvals at once — each gets a slot
+  // instead of clobbering a single state entry. The dialog renders the head.
+  const [permissionQueue, setPermissionQueue] = useState<
+    Array<{
+      toolName: string;
+      description: string;
+      /** Tool input — the dialog renders a faithful diff from it. */
+      input?: unknown;
+      /** Matched permission rule / hook that raised this request (dim
+       *  explanation line, e.g. "/permissions to update rules"). */
+      explanation?: string;
+      resolve: (decision: { approved: boolean; feedback?: string }) => void;
+    }>
+  >([]);
+  const pendingPermission = permissionQueue[0] ?? null;
   const [pendingQuestions, setPendingQuestions] = useState<{
     questions: AskUserQuestion[];
     resolve: (answers: Record<string, string>) => void;
@@ -486,15 +542,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [showPluginOverlay, setShowPluginOverlay] = useState(false);
   const [pluginCommands, setPluginCommands] = useState<CommandDef[]>([]);
 
-  
+
   const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
+
+  
+  const [workflowCommands, setWorkflowCommands] = useState<CommandDef[]>([]);
 
   
   const [todos, setTodos] = useState<TodoItem[]>([]);
   
   
   const [tasksExpanded, setTasksExpanded] = useState(false);
-  const [tasksSelectedIndex, setTasksSelectedIndex] = useState(0);
 
   
   const [showHistorySearch, setShowHistorySearch] = useState(false);
@@ -516,6 +574,167 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   } | null>(null);
 
   
+  const [commandOverlay, setCommandOverlay] = useState<{ view: CommandOverlayView } | null>(null);
+
+  
+  const pushSystem = useCallback((content: string) => {
+    setMessages((prev) => [...prev, { role: "system", content, timestamp: Date.now() }]);
+  }, []);
+
+  
+  const closeCommandOverlay = useCallback((dismissedAs?: string) => {
+    setCommandOverlay(null);
+    if (dismissedAs) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "system", content: `${dismissedAs} dismissed.`, timestamp: Date.now() },
+      ]);
+    }
+  }, []);
+
+  
+  const rewindToDepth = useCallback(
+    async (messageNumber: number, mode: RewindMode = "both") => {
+      const targetDepth = messageNumber;
+      const oldDepth = messages.length;
+      if (targetDepth < 1 || targetDepth > messages.length) return;
+      if (mode === "conversation" || mode === "both") {
+        setMessages(messages.slice(0, targetDepth));
+      }
+
+      const restored: string[] = [];
+      const failures: string[] = [];
+      if (mode === "code" || mode === "both") {
+        if (hasSnapshot(targetDepth)) {
+          let entries;
+          try {
+            entries = await restoreSnapshot(targetDepth, workingDirectory);
+          } catch (e) {
+            // Restore failures surface in the picker as a red error line.
+            throw new Error(`Code restore failed: ${(e as Error).message}`);
+          }
+          for (const entry of entries) {
+            try {
+              if (entry.content === null) {
+                await rm(entry.path, { force: true });
+              } else {
+                await mkdir(dirname(entry.path), { recursive: true });
+                await writeFile(entry.path, entry.content, "utf-8");
+              }
+              restored.push(entry.path);
+            } catch (e) {
+              failures.push(`${entry.path}: ${(e as Error).message}`);
+            }
+          }
+        }
+
+        for (let k = targetDepth + 1; k <= oldDepth; k++) {
+          try {
+            await dropSnapshot(k);
+          } catch {
+
+          }
+        }
+      }
+
+      const suffixParts: string[] = [];
+      if (restored.length > 0) {
+        suffixParts.push(
+          `\n✓ Restored ${restored.length} file${restored.length === 1 ? "" : "s"}:\n` +
+            restored
+              .map((p) => {
+                try {
+                  return `    ${relative(workingDirectory, p)}`;
+                } catch {
+                  return `    ${p}`;
+                }
+              })
+              .join("\n"),
+        );
+      }
+      if (failures.length > 0) {
+        suffixParts.push(
+          `\n⚠ ${failures.length} file${failures.length === 1 ? "" : "s"} failed to restore:\n` +
+            failures.map((f) => `    ${f}`).join("\n"),
+        );
+      }
+      const suffix = suffixParts.join("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system",
+          content: `✓ Rewound conversation back to message #${targetDepth}.${suffix}`,
+          timestamp: Date.now(),
+        },
+      ]);
+    },
+    [messages, workingDirectory],
+  );
+
+  
+  const copyToClipboard = useCallback(
+    (content: string) => {
+      const lineCount = content.split("\n").length;
+      const charCount = content.length;
+      const filePath = join(os.homedir(), ".cache", "deepseek-code", "copy", "response.md");
+      try {
+        // OSC 52 clipboard write (iTerm2, kitty, foot, …) — terminal-agnostic;
+        // the temp file is the reliable fallback and always written.
+        process.stdout.write(`\x1b]52;c;${Buffer.from(content, "utf-8").toString("base64")}\x07`);
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, content, "utf-8");
+        pushSystem(
+          `✓ Copied assistant response to clipboard (${charCount} characters, ${lineCount} lines). Also at ${filePath}`,
+        );
+      } catch (e) {
+        pushSystem(`✗ Failed to copy to clipboard: ${(e as Error).message}`);
+      }
+    },
+    [pushSystem],
+  );
+
+  
+  const openInEditor = useCallback(
+    (path: string) => {
+      const editor = (process.env.EDITOR || process.env.VISUAL || "vi").trim();
+      if (!existsSync(path)) {
+        try {
+          writeFileSync(
+            path,
+            path.endsWith("CLAUDE.md")
+              ? "# CLAUDE.md\n\n<!-- Add project guidance here — it is loaded into context automatically. -->\n"
+              : `# ${basename(path)}\n\n<!-- Created by /memory — edit to add guidance. -->\n`,
+          );
+        } catch {
+
+        }
+      }
+      let failed: string | null = null;
+      try {
+        process.stdin.setRawMode?.(false);
+        Bun.spawnSync(editor.split(/\s+/), {
+          stdio: ["inherit", "inherit", "inherit"],
+        });
+      } catch (e) {
+        failed = (e as Error).message;
+      } finally {
+        process.stdin.setRawMode?.(true);
+      }
+      let relPath = path;
+      try {
+        relPath = relative(workingDirectory, path);
+      } catch {}
+      if (failed) {
+        pushSystem(`✗ Failed to open ${editor}: ${failed} — file is at ${path}`);
+      } else {
+        const editorHint = process.env.EDITOR || process.env.VISUAL ? "" : " To change editor, set $EDITOR or $VISUAL.";
+        pushSystem(`Editing ${relPath} in ${editor} — changes apply to future sessions.${editorHint}`);
+      }
+    },
+    [workingDirectory, pushSystem],
+  );
+
+  
   
   
   const [statusLineText, setStatusLineText] = useState<string | null>(null);
@@ -524,7 +743,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const statusLineTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   
-  const statusLineSetting = (settingsSnapshot as { statusLine?: { type: "command"; command: string } })
+  const statusLineSetting = (settingsSnapshot as { statusLine?: { type: "command"; command: string; padding?: number } })
     .statusLine;
 
   
@@ -559,10 +778,25 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const proc = Bun.spawn(["sh", "-c", command], {
           stdout: "pipe",
           stderr: "ignore",
-          stdin: "ignore",
+          stdin: "pipe",
           signal: controller.signal,
           cwd: workingDirectory,
         });
+        // Rich JSON contract on stdin — see src/utils/statusline.ts for the
+        // schema. Read via refs so the 20s refresh isn't stale.
+        const usage = tokenTrackerRef.current.getSessionUsage();
+        const payload = buildStatusLineCommandInput({
+          model: activeModel,
+          currentDir: workingDirectory,
+          costUsd: tokenTrackerRef.current.estimateCost(usage).totalCost,
+          inputTokens: usage.promptTokens,
+          outputTokens: usage.completionTokens,
+          contextWindowSize: contextManagerRef.current.getBudget().maxContextTokens,
+          agentName: currentAgent,
+          permissionMode: permissionModeRef.current,
+        });
+        proc.stdin.write(JSON.stringify(payload) + "\n");
+        proc.stdin.end();
         const stdout = await new Response(proc.stdout).text();
         clearTimeout(killTimer);
         if (controller.signal.aborted) return;
@@ -667,6 +901,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
       }
       setMcpServers(newMcp);
+      // Plugin skills are cached in skillService — invalidate after any
+      // plugin install/enable/disable mutation so /skills reflects it.
+      clearSkillsCache();
     } catch {}
   }, [config.mcpServers]);
 
@@ -676,7 +913,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   
   const inputHistory = useRef<string[]>([]);
-  const historyIndex = useRef(-1); 
+  const historyIndex = useRef(-1);
+  // Draft captured when history recall starts, so ↓ past the newest entry
+  // restores what the user was writing instead of wiping the input.
+  const historyDraftRef = useRef("");
 
   
   const persistSettings = useCallback((updates: {
@@ -701,8 +941,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   
   const extraCommands = useMemo(
-    () => [...pluginCommands, ...toCommandDefs(customCommands)],
-    [pluginCommands, customCommands],
+    () => [...pluginCommands, ...workflowCommands, ...toCommandDefs(customCommands)],
+    [pluginCommands, workflowCommands, customCommands],
   );
   const slashInputActive = input.trimStart().startsWith("/");
   const filteredCommands: CommandDef[] = !isLoading && slashInputActive ? filterCommands(input, extraCommands) : [];
@@ -791,7 +1031,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     try {
       setCustomCommands(loadCustomCommands(workingDirectory));
     } catch {
-      
+
+    }
+    try {
+      setWorkflowCommands(
+        listWorkflows().map((wf) => ({
+          name: wf.name,
+          description: `${wf.description} (workflow)`,
+          usage: [`/${wf.name} `],
+          category: "custom" as const,
+          acceptsArgs: true,
+          executionKey: "workflow",
+        })),
+      );
+    } catch {
+
     }
     
     try {
@@ -995,6 +1249,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         setSearchResults(null);
         return;
       }
+      if (commandOverlay) {
+        setCommandOverlay(null);
+        return;
+      }
 
       const now = Date.now();
       if (isLoading) {
@@ -1033,7 +1291,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
 
     
-    if (showHistorySearch || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker) {
+    if (showHistorySearch || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker || commandOverlay) {
       return;
     }
 
@@ -1065,8 +1323,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
     if (key.ctrl && _input === "a") {
       if (showSessionPicker) {
-        setShowSessionPicker(false);
-      } else if (!isLoading) {
+        // The picker owns ctrl+a (this-project ⇄ all-projects scope) while open.
+        return;
+      }
+      if (!isLoading) {
         const list = listSessions();
         setSessionsList(list);
         setSessionPickerIndex(0);
@@ -1077,44 +1337,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (showSessionPicker) {
-      if (key.escape || _input === "q") {
-        setShowSessionPicker(false);
-        return;
-      }
-      if (key.upArrow) {
-        setSessionPickerIndex((prev) => Math.max(0, prev - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setSessionPickerIndex((prev) => Math.min(sessionsList.length - 1, prev + 1));
-        return;
-      }
-      if (key.return) {
-        const selected = sessionsList[sessionPickerIndex];
-        if (selected) {
-          if (selected.workingDirectory === workingDirectory) {
-            
-            const session = loadSession(selected.hash);
-            if (session) {
-              setMessages(session.messages.map((m) => ({ ...m, toolUse: [] })));
-              setTokenCount(session.tokenUsage);
-              setActiveSessionHash(session.hash);
-            }
-            setShowSessionPicker(false);
-          } else {
-            
-            const cmd = `cd ${selected.workingDirectory} && deepseek-code --resume ${selected.hash}`;
-            try {
-              const { execSync } = require("child_process");
-              execSync(`echo "${cmd}" | pbcopy`);
-            } catch {}
-            console.log(`\nTo resume session ${selected.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)`);
-            process.exit(0);
-          }
-        }
-        return;
-      }
-      return; 
+      // SessionPicker is self-contained (navigation, filter, preview, rename,
+      // scope toggle) — pass every key through to it.
+      return;
     }
 
     
@@ -1290,7 +1515,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
       if (pendingPermission) {
         pendingPermission.resolve({ approved: false, feedback: "Cancelled with Esc" });
-        setPendingPermission(null);
+        setPermissionQueue((prev) => prev.slice(1));
       } else if (isLoading) {
         abortRef.current?.abort();
         setIsLoading(false);
@@ -1356,34 +1581,50 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
     
     
-    if (todos.length > 0 && !showCommandPicker && !isLoading) {
+    // ↓ expands the live todo panel (TaskListV2, static display) — but only
+    // when no background tasks are running: their ↓ hint opens the tasks
+    // manager instead (checked below).
+    if (
+      todos.length > 0 &&
+      !showCommandPicker &&
+      !isLoading &&
+      !listTasks().some((t) => t.status === "running")
+    ) {
       if (tasksExpanded) {
-        if (key.upArrow) {
-          setTasksSelectedIndex((i) => Math.max(0, i - 1));
-          return;
-        }
-        if (key.downArrow) {
-          setTasksSelectedIndex((i) => Math.min(todos.length - 1, i + 1));
-          return;
-        }
         if (key.escape || key.return) {
           setTasksExpanded(false);
           return;
         }
       } else if (key.downArrow && input.trim().length === 0) {
-        const activeIdx = todos.findIndex((t) => t.status === "in_progress");
-        setTasksSelectedIndex(activeIdx >= 0 ? activeIdx : 0);
         setTasksExpanded(true);
         return;
       }
     }
 
-    
+
+    // ↓ with an empty input opens the tasks manager while agents / workflows /
+    // shells are running (the footer pill's hint) — works mid-stream too,
+    // so a fanout of foreground subagents can be inspected live.
+    if (
+      !showCommandPicker &&
+      key.downArrow &&
+      input.trim().length === 0 &&
+      listTasks().some((t) => t.status === "running")
+    ) {
+      setCommandOverlay({ view: "tasks" });
+      return;
+    }
+
+    // History recall on ↑/↓ — only when it cannot destroy a draft. In a
+    // multi-line draft the arrows belong to the input (line navigation);
+    // recalling here would clobber the whole draft. Walking past the newest
+    // entry restores the saved draft (readline behavior) instead of clearing.
     if (!showCommandPicker && !isLoading) {
       if (key.upArrow) {
         if (inputHistory.current.length === 0) return;
+        if (input.includes("\n")) return;
         if (historyIndex.current === -1) {
-          
+          historyDraftRef.current = input;
           historyIndex.current = inputHistory.current.length - 1;
         } else if (historyIndex.current > 0) {
           historyIndex.current -= 1;
@@ -1396,6 +1637,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
       if (key.downArrow) {
         if (historyIndex.current === -1) return;
+        if (input.includes("\n")) return;
         if (historyIndex.current < inputHistory.current.length - 1) {
           historyIndex.current += 1;
           const historical = inputHistory.current[historyIndex.current];
@@ -1403,9 +1645,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             setInput(historical);
           }
         } else {
-          
           historyIndex.current = -1;
-          setInput("");
+          setInput(historyDraftRef.current);
         }
         return;
       }
@@ -1458,7 +1699,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           tool: toolName,
           cwd: workingDirectory,
         });
-        setPendingPermission({ toolName, description, input, resolve });
+        setPermissionQueue((prev) => [...prev, { toolName, description, input, resolve }]);
       });
     },
     [sessionRules],
@@ -1586,49 +1827,57 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
   }, [workingDirectory]);
 
+  // Live output streaming for tools that report incremental activity — Bash
+  // command output and Agent subagent progress lines both flow through here
+  // into the running tool block (throttled into ~100ms flushes).
   const handleToolOutput = useCallback((toolName: string, text: string) => {
-    if (toolName !== "Bash") return; 
+    if (toolName !== "Bash" && toolName !== "Agent") return;
 
-    
+
     pendingOutputsRef.current[toolName] = (pendingOutputsRef.current[toolName] || "") + text;
 
-    
+
     if (!outputThrottleTimerRef.current) {
       outputThrottleTimerRef.current = setTimeout(() => {
         outputThrottleTimerRef.current = null;
 
-        
+
         const flushed = pendingOutputsRef.current;
         pendingOutputsRef.current = {};
 
-        setStreamingToolUse((prev) => {
-          const runningIdx = prev.findIndex((b) => b.toolName === "Bash" && b.status === "running");
-          if (runningIdx === -1) return prev;
 
-          const next = [...prev];
-          const block = next[runningIdx]!;
-          const textToAppend = flushed["Bash"] || "";
-          next[runningIdx] = {
-            ...block,
-            output: (block.output || "") + textToAppend,
-          };
-          streamingToolUseRef.current = next;
+        for (const [flushedTool, textToAppend] of Object.entries(flushed)) {
+          if (!textToAppend) continue;
+          setStreamingToolUse((prev) => {
+            const runningIdx = prev.findIndex(
+              (b) => b.toolName === flushedTool && b.status === "running",
+            );
+            if (runningIdx === -1) return prev;
 
-          
-          const blockInListIdx = streamingBlocksRef.current.findIndex(
-            (b) => b.type === "tool" && b.block?.toolName === "Bash" && b.block?.status === "running"
-          );
-          if (blockInListIdx !== -1) {
-            streamingBlocksRef.current[blockInListIdx] = {
-              type: "tool",
-              block: next[runningIdx]!,
+            const next = [...prev];
+            const block = next[runningIdx]!;
+            next[runningIdx] = {
+              ...block,
+              output: (block.output || "") + textToAppend,
             };
-            setStreamingBlocks([...streamingBlocksRef.current]);
-          }
+            streamingToolUseRef.current = next;
 
-          return next;
-        });
-      }, 100); 
+
+            const blockInListIdx = streamingBlocksRef.current.findIndex(
+              (b) => b.type === "tool" && b.block?.toolName === flushedTool && b.block?.status === "running"
+            );
+            if (blockInListIdx !== -1) {
+              streamingBlocksRef.current[blockInListIdx] = {
+                type: "tool",
+                block: next[runningIdx]!,
+              };
+              setStreamingBlocks([...streamingBlocksRef.current]);
+            }
+
+            return next;
+          });
+        }
+      }, 100);
     }
   }, []);
 
@@ -2005,7 +2254,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       recoveryAttemptedRef.current = false;
       retryFallbackRef.current = null;
 
-      
+
+      // ultrathink (Claude Code parity): the keyword in a non-command prompt
+      // bumps this single turn's reasoning effort to high; the next turn
+      // reverts to the configured level.
+      const ultrathink = !trimmedInput.startsWith("/") && hasUltrathinkKeyword(trimmedInput);
+
       const userMessage: Message = {
         role: "user",
         content: trimmedInput,
@@ -2013,6 +2267,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       };
       setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
+
+      if (ultrathink) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content: "⚡ ultrathink — reasoning effort set to high for this turn.",
+            timestamp: Date.now(),
+          },
+        ]);
+      }
 
       
       if (!activeApiKey) {
@@ -2043,7 +2308,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       contextManagerRef.current.setModel(activeModel);
 
       try {
-        const agentConfig = agentManager.getConfig(currentAgent);
+        const agentConfig = agentManager.resolveConfig(currentAgent) ?? agentManager.getConfig("code");
 
         
         const { session } = getOrCreateMemorySession({
@@ -2051,7 +2316,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           agentConfig,
           workingDir: workingDirectory,
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-          maxContextTokens: 1_000_000, 
+          maxContextTokens: 1_000_000,
           requestPermission,
           askUserQuestions,
           mcpServers,
@@ -2059,7 +2324,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           onToolResult: handleToolResult,
           onToolOutput: handleToolOutput,
           onTodosChange: handleTodosChange,
+          onSystemMessage: pushSystem,
           history: messages,
+          effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
         });
 
         const startTime = Date.now();
@@ -2106,7 +2373,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               onToolResult: handleToolResult,
               onToolOutput: handleToolOutput,
               onTodosChange: handleTodosChange,
+              onSystemMessage: pushSystem,
               history: messages,
+              effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
             });
             const retryEvents = query({
               session: fallbackSession,
@@ -2187,7 +2456,27 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     ],
   );
 
-  
+
+  // Workflow launch: registers the run as a background task and notifies via
+  // system messages (progress lives in the task output — /tasks to watch).
+  const launchWorkflow = useCallback(
+    (workflowOrName: Workflow | string, input: string) => {
+      const wf = typeof workflowOrName === "string" ? getWorkflow(workflowOrName) : workflowOrName;
+      if (!wf) {
+        pushSystem(`Workflow not found: ${workflowOrName}. Use /workflows to list available workflows.`);
+        return;
+      }
+      const taskId = startWorkflowRun(wf, input, {
+        providerConfig,
+        workingDir: workingDirectory,
+        requestPermission,
+        onSystemMessage: pushSystem,
+      });
+      pushSystem(`▶ Workflow "${wf.name}" started (task ${taskId}) — watch it live with /tasks.`);
+    },
+    [providerConfig, workingDirectory, requestPermission, pushSystem],
+  );
+
   const handleCommand = useCallback(
     (cmd: string): boolean => {
       const parsed = parseSlashCommand(cmd);
@@ -2204,34 +2493,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        
+
         case "statusline": {
-          const current = (() => {
-            try {
-              return loadSettings().statusLine;
-            } catch {
-              return undefined;
-            }
-          })();
-
-          const usage = [
-            "Usage:",
-            "  /statusline <command>   Set the status-line command — its trimmed stdout",
-            "                          renders right-aligned on the status bar",
-            "  /statusline off         Clear the custom status line",
-            "",
-            "The command runs after each finished turn and every ~20s (5s timeout,",
-            "trust-gated like hooks — untrusted workspaces skip it).",
-          ];
-
           if (!arg) {
-            const content = current
-              ? ["Custom status line is configured:", `  ${current.command}`, "", ...usage].join("\n")
-              : ["Custom status line is not configured.", "", ...usage].join("\n");
-            setMessages((prev) => [
-              ...prev,
-              { role: "system", content, timestamp: Date.now() },
-            ]);
+            setCommandOverlay({ view: "statusline" });
             return true;
           }
 
@@ -2335,29 +2600,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        
+
         case "model": {
           if (!arg) {
-            
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: [
-                  `Provider: ${activeProvider}`,
-                  `Model:    ${activeModel}`,
-                  `Base URL: ${activeBaseURL || "(default)"}`,
-                  `API Key:  ${activeApiKey ? activeApiKey.slice(0, 8) + "…" + activeApiKey.slice(-4) : "(not set)"}`,
-                  "",
-                  "Switch model:  /model <model-name>",
-                  "Use profile:   /model <profile-name>",
-                  "Set API key:   /apikey <key>",
-                  "",
-                  "Available models: deepseek-chat, deepseek-reasoner",
-                ].join("\n"),
-                timestamp: Date.now(),
-              },
-            ]);
+            setCommandOverlay({ view: "model" });
             return true;
           }
 
@@ -2385,55 +2631,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        
+
         case "models": {
-          const profileEntries = Object.entries(config.profiles || {});
-
-          const lines: string[] = [];
-
-          if (profileEntries.length === 0) {
-            lines.push("No profiles configured.");
-            lines.push("");
-            lines.push("Add profiles to .deepseek-code.json under \"profiles\".");
-            lines.push("Or use /model set <provider> <model> [baseurl].");
-          } else {
-            lines.push("━━━ Your Profiles ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            lines.push(`  ${"Name".padEnd(18)} ${"Provider".padEnd(12)} Model`);
-            lines.push("  " + "─".repeat(60));
-            for (const [name, p] of profileEntries) {
-              const active = (p.model === activeModel && p.provider === activeProvider) ? " ◂" : "";
-              lines.push(
-                `  ${name.padEnd(18)} ${p.provider.padEnd(12)} ${p.model}${p.baseURL ? `  (${p.baseURL})` : ""}${active}`,
-              );
-            }
-            lines.push("");
-            lines.push("Switch: /model <profile-name>  •  Custom: /model set <provider> <model> [baseurl]");
-          }
-
-          setMessages((prev) => [
-            ...prev,
-            { role: "system", content: lines.join("\n"), timestamp: Date.now() },
-          ]);
+          setCommandOverlay({ view: "model" });
           return true;
         }
 
-        
+
         case "apikey": {
-          const key = restArgs.join(""); 
+          const key = restArgs.join("");
           if (!key) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `Current API key: ${activeApiKey ? activeApiKey.slice(0, 8) + "…" + activeApiKey.slice(-4) : "(not set)"}\n\n` +
-                  "Usage: /apikey <your-api-key>\n\n" +
-                  "Tip: use /setup for one-command setup of provider/model/key.\n\n" +
-                  "This sets the key for the active provider. The key is kept in memory only\n" +
-                  "and is NOT persisted to disk.",
-                timestamp: Date.now(),
-              },
-            ]);
+            setCommandOverlay({ view: "apikey" });
             return true;
           }
           setActiveApiKey(key);
@@ -2449,22 +2657,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        
+
         case "baseurl": {
           const url = restArgs.join(" ").trim();
           if (!url) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `Current base URL: ${activeBaseURL || "(default provider URL)"}\n\n` +
-                  "Usage:\n" +
-                  "  /baseurl <url>    Set OpenAI-compatible endpoint\n" +
-                  "  /baseurl clear    Clear custom endpoint",
-                timestamp: Date.now(),
-              },
-            ]);
+            setCommandOverlay({ view: "baseurl" });
             return true;
           }
 
@@ -2485,26 +2682,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           return true;
         }
 
-        
+
         case "agent": {
           if (!arg) {
-            const agents = agentManager.listAgents();
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  `Current agent: ${currentAgent}\n\nAvailable agents:\n` +
-                  agents
-                    .map(
-                      (a) =>
-                        `  ${a.name === currentAgent ? "▸" : " "} ${a.name.padEnd(8)} — ${a.description}`,
-                    )
-                    .join("\n") +
-                  `\n\nUsage: /agent <name>`,
-                timestamp: Date.now(),
-              },
-            ]);
+            setCommandOverlay({ view: "agent" });
             return true;
           }
           const name = arg as AgentName;
@@ -2588,7 +2769,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
         case "tools": {
           const tools = getToolDescriptions();
-          const agentConfig = agentManager.getConfig(currentAgent);
+          const agentConfig = agentManager.resolveConfig(currentAgent) ?? agentManager.getConfig("code");
           const perms = agentConfig.permissions;
           setMessages((prev) => [
             ...prev,
@@ -2614,38 +2795,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
         case "hooks": {
-          const hooks = loadHooks();
-          const events = Object.keys(hooks) as Array<keyof typeof hooks>;
-          const lines: string[] = ["── Lifecycle Hooks ──", ""];
-          if (events.length === 0) {
-            lines.push("  No hooks configured.");
-            lines.push("");
-            lines.push("  Configure in ~/.deepseek-code/settings.json:");
-            lines.push('  {');
-            lines.push('    "hooks": {');
-            lines.push('      "PreToolUse": [');
-            lines.push('        { "matcher": "Bash", "hooks": [ { "type": "command", "command": "your-script.sh" } ] }');
-            lines.push('      ]');
-            lines.push('    }');
-            lines.push('  }');
-            lines.push("");
-            lines.push("  Events: PreToolUse · PostToolUse · UserPromptSubmit · Stop · Notification");
-            lines.push('  PreToolUse can block a tool: exit code 2, or JSON {"decision":"block","reason":"..."}.');
-          } else {
-            for (const ev of events) {
-              const groups = hooks[ev] || [];
-              lines.push(`  ${String(ev)}:`);
-              for (const g of groups) {
-                for (const h of g.hooks || []) {
-                  lines.push(`    [${g.matcher || "*"}] ${h.command}`);
-                }
-              }
-            }
-          }
-          setMessages((prev) => [
-            ...prev,
-            { role: "system", content: lines.join("\n"), timestamp: Date.now() },
-          ]);
+          setCommandOverlay({ view: "hooks" });
+          return true;
+        }
+
+        case "workflows": {
+          setCommandOverlay({ view: "workflows" });
+          return true;
+        }
+
+        case "teams": {
+          setCommandOverlay({ view: "teams" });
           return true;
         }
 
@@ -2659,41 +2819,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           const serverName = restArgs[1];
 
           if (!action || action === "list") {
-            if (mcpEntries.length === 0) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content:
-                    "No MCP servers configured.\n\n" +
-                    "Add \"mcpServers\" to your .deepseek-code.json, e.g.:\n" +
-                    "  \"mcpServers\": {\n" +
-                    "    \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"] }\n" +
-                    "  }",
-                  timestamp: Date.now(),
-                },
-              ]);
-              return true;
-            }
-
-            const lines = [
-              "MCP Servers:",
-              "",
-              ...mcpEntries.map(([name, s]) => {
-                const enabled = s.enabled !== false;
-                const args = (s.args || []).join(" ");
-                return `  ${enabled ? "✓" : "✗"} ${name.padEnd(16)} ${s.command}${args ? ` ${args}` : ""}`;
-              }),
-              "",
-              "Commands:",
-              "  /mcp enable <name>",
-              "  /mcp disable <name>",
-            ];
-
-            setMessages((prev) => [
-              ...prev,
-              { role: "system", content: lines.join("\n"), timestamp: Date.now() },
-            ]);
+            setCommandOverlay({ view: "mcp" });
             return true;
           }
 
@@ -2968,8 +3094,17 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           handleExit();
           return true;
 
-        
+
         case "sessions": {
+          if (arg === "clear" || arg === "new") {
+            setMessages([]);
+            resetMemorySession();
+            setSessionRules({ allow: [], deny: [] });
+            setTokenCount(0);
+            setActiveSessionHash(null);
+            setMessages([{ role: "system", content: "✓ Started a new session.", timestamp: Date.now() }]);
+            return true;
+          }
           const sessions = listSessions();
           if (sessions.length === 0) {
             setMessages((prev) => [
@@ -2978,37 +3113,28 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             ]);
             return true;
           }
-          const lines = [
-            "Saved sessions (newest first):",
-            "",
-            ...sessions.slice(0, 20).map((s, i) => {
-              const date = new Date(s.updatedAt).toLocaleString();
-              const msgCount = s.messages.filter((m) => m.role === "user").length;
-              const active = s.hash === activeSessionHash ? " ◂ active" : "";
-              return `  ${String(i + 1).padStart(2)}. ${s.hash}  ${date}  ${msgCount} msgs  ${s.model}${active}`;
-            }),
-            "",
-            "Resume: /resume <hash>",
-            "Clear:  /sessions clear",
-          ];
-          setMessages((prev) => [
-            ...prev,
-            { role: "system", content: lines.join("\n"), timestamp: Date.now() },
-          ]);
+          
+          
+          setSessionsList(sessions);
+          setSessionPickerIndex(0);
+          setShowSessionPicker(true);
           return true;
         }
 
-        
+
         case "resume": {
           if (!arg) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: "Usage: /resume <session-hash>\n\nUse /sessions to list available sessions.",
-                timestamp: Date.now(),
-              },
-            ]);
+            const sessions = listSessions();
+            if (sessions.length === 0) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "system", content: "No saved sessions.", timestamp: Date.now() },
+              ]);
+              return true;
+            }
+            setSessionsList(sessions);
+            setSessionPickerIndex(0);
+            setShowSessionPicker(true);
             return true;
           }
           if (arg === "clear" || arg === "new") {
@@ -3215,7 +3341,7 @@ Based on the above changes:
           return true;
         }
 
-        
+
         case "copy": {
           const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isError && m.content);
           if (assistantMsgs.length === 0) {
@@ -3230,12 +3356,31 @@ Based on the above changes:
             return true;
           }
 
-          let N = 1;
-          if (arg) {
-            N = parseInt(arg, 10);
-            if (isNaN(N) || N <= 0) {
-              N = 1;
+          let bypass = false;
+          try {
+            bypass = loadSettings().copyFullResponse === true;
+          } catch {}
+
+          if (!arg) {
+            if (bypass) {
+              copyToClipboard(assistantMsgs[assistantMsgs.length - 1]!.content);
+              return true;
             }
+            setCommandOverlay({ view: "copy" });
+            return true;
+          }
+
+          const N = parseInt(arg, 10);
+          if (isNaN(N) || N <= 0) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `Usage: /copy [N] where N is 1 (latest), 2, 3, … Got: "${arg}"`,
+                timestamp: Date.now(),
+              },
+            ]);
+            return true;
           }
 
           if (N > assistantMsgs.length) {
@@ -3250,30 +3395,7 @@ Based on the above changes:
             return true;
           }
 
-          const targetMsg = assistantMsgs[assistantMsgs.length - N]!;
-          const contentToCopy = targetMsg.content;
-
-          try {
-            const { execSync } = require("child_process");
-            execSync("pbcopy", { input: contentToCopy });
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: `✓ Copied assistant response to clipboard (${contentToCopy.length} characters, ${contentToCopy.split("\n").length} lines).`,
-                timestamp: Date.now(),
-              },
-            ]);
-          } catch (e) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: `✗ Failed to copy to clipboard: ${(e as Error).message}`,
-                timestamp: Date.now(),
-              },
-            ]);
-          }
+          copyToClipboard(assistantMsgs[assistantMsgs.length - N]!.content);
           return true;
         }
 
@@ -3360,40 +3482,13 @@ Based on the above changes:
           return true;
         }
 
-        
+
         case "skills": {
           const skills = listSkills();
 
           if (!arg) {
-            if (skills.length === 0) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "system",
-                  content:
-                    "No skills available.\n\n" +
-                    "Add SKILL.md files to .claude/skills/<name>/ in this project\n" +
-                    "or ~/.claude/skills/<name>/ for user-wide skills.",
-                  timestamp: Date.now(),
-                },
-              ]);
-              return true;
-            }
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: [
-                  `━━━ Skills (${skills.length}) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-                  ...skills.map(
-                    (s) => `  ${s.name.padEnd(20)} ${s.description}  (${s.source})`,
-                  ),
-                  "",
-                  "Usage: /skills <name> to view a skill's full instructions.",
-                ].join("\n"),
-                timestamp: Date.now(),
-              },
-            ]);
+            
+            setCommandOverlay({ view: "skills" });
             return true;
           }
 
@@ -3518,14 +3613,14 @@ Based on the above changes:
         
         case "rewind": {
           if (!arg) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: "Usage: /rewind <message-number>\n\nUse /history to view message numbers.",
-                timestamp: Date.now(),
-              },
-            ]);
+            if (messages.length === 0) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "system", content: "Nothing to rewind — the conversation is empty.", timestamp: Date.now() },
+              ]);
+              return true;
+            }
+            setCommandOverlay({ view: "rewind" });
             return true;
           }
           const idx = parseInt(arg, 10) - 1;
@@ -3540,162 +3635,13 @@ Based on the above changes:
             ]);
             return true;
           }
-          const targetDepth = idx + 1;
-          const oldDepth = messages.length;
-          const truncated = messages.slice(0, targetDepth);
-          setMessages(truncated);
-
-          
-          
-          
-          
-          
-          
-          
-          void (async () => {
-            const restored: string[] = [];
-            if (hasSnapshot(targetDepth)) {
-              try {
-                const entries = await restoreSnapshot(targetDepth, workingDirectory);
-                for (const entry of entries) {
-                  try {
-                    if (entry.content === null) {
-                      await rm(entry.path, { force: true }); 
-                    } else {
-                      await mkdir(dirname(entry.path), { recursive: true });
-                      await writeFile(entry.path, entry.content, "utf-8");
-                    }
-                    restored.push(entry.path);
-                  } catch {
-                    
-                  }
-                }
-              } catch {
-                
-              }
-            }
-
-            
-            
-            
-            for (let k = targetDepth + 1; k <= oldDepth; k++) {
-              try {
-                await dropSnapshot(k);
-              } catch {
-                
-              }
-            }
-
-            const suffix =
-              restored.length > 0
-                ? `\n✓ Restored ${restored.length} file${restored.length === 1 ? "" : "s"}:\n` +
-                  restored
-                    .map((p) => {
-                      try {
-                        return `    ${relative(workingDirectory, p)}`;
-                      } catch {
-                        return `    ${p}`;
-                      }
-                    })
-                    .join("\n")
-                : "";
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: `✓ Rewound conversation back to message #${targetDepth}.${suffix}`,
-                timestamp: Date.now(),
-              },
-            ]);
-          })();
+          rewindToDepth(idx + 1);
           return true;
         }
 
         
         case "doctor": {
-          const lines: string[] = ["━━━ DeepSeek Code Diagnostic (Doctor) ━━━━━━━━━━━━", ""];
-
-          
-          const isBun = typeof Bun !== "undefined";
-          lines.push(`  ${isBun ? "✓" : "✓"} Runtime:      ${isBun ? `Bun v${Bun.version}` : `Node ${process.version}`}`);
-
-          
-          let bindingsOk = false;
-          let bindingsError = "";
-          try {
-            const { getOrCreateMemorySession } = require("ai-sdk-cpp");
-            bindingsOk = typeof getOrCreateMemorySession === "function";
-          } catch (e) {
-            bindingsError = (e as Error).message;
-          }
-          lines.push(`  ${bindingsOk ? "✓" : "✗"} C++ Native:   ${bindingsOk ? "Loaded successfully" : `Failed to load: ${bindingsError}`}`);
-
-          
-          let gitOk = false;
-          let gitVersion = "";
-          try {
-            const { execSync } = require("child_process");
-            gitVersion = execSync("git --version").toString().trim();
-            gitOk = true;
-          } catch {
-            gitOk = false;
-          }
-          lines.push(`  ${gitOk ? "✓" : "✗"} Git CLI:      ${gitOk ? gitVersion : "Not found or not executable"}`);
-
-          
-          const keySet = !!activeApiKey;
-          lines.push(`  ${keySet ? "✓" : "-"} API Key:      ${keySet ? `Configured (${activeApiKey.slice(0, 8)}…${activeApiKey.slice(-4)})` : "Not set (set with /setup or /apikey)"}`);
-          lines.push(`  ✓ Active Model: ${activeProvider}/${activeModel}`);
-
-          
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "system",
-              content: lines.join("\n") + "\n\n  Checking network connection...",
-              timestamp: Date.now(),
-            },
-          ]);
-
-          
-          setTimeout(async () => {
-            let connOk = false;
-            let timeMs = 0;
-            const start = Date.now();
-            try {
-              const targetUrl = activeBaseURL || "https://api.deepseek.com/v1";
-              const controller = new AbortController();
-              const id = setTimeout(() => controller.abort(), 3000);
-              await fetch(targetUrl, { signal: controller.signal }).catch(() => {});
-              clearTimeout(id);
-              timeMs = Date.now() - start;
-              connOk = true;
-            } catch {
-              connOk = false;
-            }
-
-            setMessages((prev) => {
-              const newLines = [...lines];
-              newLines.push(`  ${connOk ? "✓" : "✗"} Network Connection: ${connOk ? `Connected to DeepSeek API endpoint (${timeMs}ms)` : "Failed to connect to DeepSeek API endpoint"}`);
-              newLines.push("");
-              newLines.push(connOk && bindingsOk && gitOk && keySet
-                ? "  ✓ Everything looks healthy! You are ready to code."
-                : "  Warning: diagnostics finished with warnings. Review the issues above.");
-
-              const last = prev[prev.length - 1];
-              if (last && last.role === "system" && last.content.includes("Diagnostic")) {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, content: newLines.join("\n"), timestamp: Date.now() }
-                ];
-              }
-              return [
-                ...prev,
-                { role: "system", content: newLines.join("\n"), timestamp: Date.now() }
-              ];
-            });
-          }, 50);
-
+          setCommandOverlay({ view: "doctor" });
           return true;
         }
 
@@ -3734,15 +3680,7 @@ Based on the above changes:
         }
 
         case "memory": {
-          const file = resolve(workingDirectory, "CLAUDE.md");
-          if (!existsSync(file)) {
-            writeFileSync(file, "# CLAUDE.md\n\n<!-- Add project guidance here — it is loaded into context automatically. -->\n");
-          }
-          setMessages((prev) => [...prev, {
-            role: "system",
-            content: `CLAUDE.md memory file: ${file}\nEdit it in your editor — its contents are loaded into context for future sessions.`,
-            timestamp: Date.now(),
-          }]);
+          setCommandOverlay({ view: "memory" });
           return true;
         }
 
@@ -3778,24 +3716,7 @@ Based on the above changes:
         }
 
         case "permissions": {
-          const rules = (() => { try { return loadSettings().permissions; } catch { return undefined; } })();
-          const lines = ["Permission rules (settings.permissions):", ""];
-          if (!rules || ((rules.allow?.length ?? 0) === 0 && (rules.deny?.length ?? 0) === 0 && (rules.ask?.length ?? 0) === 0)) {
-            lines.push("  (none configured — tools prompt interactively)");
-          } else {
-            for (const r of rules.allow ?? []) lines.push(`  allow  ${r}`);
-            for (const r of rules.deny ?? []) lines.push(`  deny   ${r}`);
-            for (const r of rules.ask ?? []) lines.push(`  ask    ${r}`);
-          }
-          lines.push(
-            "",
-            "Syntax: Tool(spec:pattern), e.g.",
-            '  "allow": ["Read(**)", "Edit(src/**)"]',
-            '  "deny": ["Bash(rm -rf *)"]',
-            "",
-            "Configure via /settings → permissions.",
-          );
-          setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+          setCommandOverlay({ view: "permissions" });
           return true;
         }
 
@@ -3813,11 +3734,7 @@ Based on the above changes:
         case "output-style": {
           const styles = listOutputStyles();
           if (!arg) {
-            const current = (() => { try { return loadSettings().outputStyle; } catch { return undefined; } })();
-            const lines = [`Current output style: ${current ?? "default"}`, "", "Available:"];
-            for (const s of styles) lines.push(`  ${s.name === (current ?? "default") ? "▸" : " "} ${s.name.padEnd(20)} ${s.description}`);
-            lines.push("", "Usage: /output-style <name>  |  /output-style default  |  /output-style explain <name>");
-            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+            setCommandOverlay({ view: "output-style" });
             return true;
           }
           if (arg === "default") {
@@ -3854,33 +3771,16 @@ Based on the above changes:
         }
 
         case "todos": {
-          const items = todos;
-          if (items.length === 0) {
+          if (todos.length === 0) {
             setMessages((prev) => [...prev, { role: "system", content: "No todos — the TodoWrite tool adds items as the agent works.", timestamp: Date.now() }]);
-          } else {
-            const lines = ["Todos:"];
-            items.forEach((t, i) => {
-              lines.push(`  ${t.status === "completed" ? "✓" : t.status === "in_progress" ? "▸" : "○"} ${t.content}`);
-            });
-            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
+            return true;
           }
+          setTasksExpanded(true);
           return true;
         }
 
         case "context": {
-          const budget = contextManagerRef.current.getBudget();
-          const max = budget?.maxContextTokens ?? 1_000_000;
-          const used = inputTokens + outputTokens;
-          const pct = Math.min(100, Math.round((used / max) * 100));
-          setMessages((prev) => [...prev, {
-            role: "system",
-            content:
-              `Context window usage:\n` +
-              `  ${used.toLocaleString()} / ${max.toLocaleString()} tokens (${pct}%) — reserved ${(budget?.reservedForResponse ?? 4096).toLocaleString()} for response\n` +
-              `  Session messages: ${messages.length}\n` +
-              `  The native session compacts automatically near the limit; /compact forces a summary.`,
-            timestamp: Date.now(),
-          }]);
+          setCommandOverlay({ view: "context" });
           return true;
         }
 
@@ -3908,15 +3808,7 @@ Based on the above changes:
         }
 
         case "bashes": {
-          const tasks = listTasks();
-          if (tasks.length === 0) {
-            setMessages((prev) => [...prev, { role: "system", content: "No background tasks running.", timestamp: Date.now() }]);
-          } else {
-            const lines = ["Background tasks:"];
-            for (const t of tasks) lines.push(`  #${t.id} ${t.status.padEnd(10)} ${t.command.slice(0, 60)}`);
-            lines.push("", "Read output with TaskOutput, kill with TaskStop.");
-            setMessages((prev) => [...prev, { role: "system", content: lines.join("\n"), timestamp: Date.now() }]);
-          }
+          setCommandOverlay({ view: "tasks" });
           return true;
         }
 
@@ -4008,7 +3900,13 @@ Based on the above changes:
         }
 
         default: {
-          
+          // Workflow commands take precedence over custom/plugin commands of
+          // the same name (mirrors Claude Code's load order).
+          const workflow = getWorkflow(command);
+          if (workflow) {
+            launchWorkflow(workflow, parsed.rawArgs.trim());
+            return true;
+          }
           const custom = customCommands.find((c) => c.name.replace(/^\/+/, "").toLowerCase() === command);
           if (custom) {
             void submitUserPrompt(cmd, renderCommand(custom, restArgs));
@@ -4066,6 +3964,9 @@ Based on the above changes:
       workingDirectory,
       submitUserPrompt,
       customCommands,
+      rewindToDepth,
+      copyToClipboard,
+      launchWorkflow,
     ],
   );
 
@@ -4169,10 +4070,300 @@ Based on the above changes:
     void submitUserPrompt(next!);
   }, [isLoading, queuedSubmissions, submitUserPrompt]);
 
+
+
+
   
-  
-  
-  
+  const renderCommandOverlay = () => {
+    switch (commandOverlay?.view) {
+      case "model":
+        return (
+          <ModelPicker
+            currentModel={activeModel}
+            currentProvider={activeProvider}
+            profiles={config.profiles}
+            currentEffort={effortLevel}
+            availableModels={(config as DeepSeekCodeConfig & { availableModels?: string[] }).availableModels}
+            onSelect={(name, effort) => {
+              setCommandOverlay(null);
+              if (effort !== undefined) {
+                try {
+                  saveSettings({ effort });
+                } catch {}
+                setEffortLevel(effort);
+              }
+              const result = switchModel(name);
+              if (result) {
+                persistSettings({ model: name, apiKey: config.profiles?.[name]?.apiKey });
+                pushSystem(`✓ ${result}\n✓ Saved to ~/.deepseek-code/settings.json`);
+              } else {
+                setActiveModel(name);
+                persistSettings({ model: name });
+                pushSystem(`✓ Model changed to: ${name}\n✓ Saved to ~/.deepseek-code/settings.json`);
+              }
+            }}
+            onCancel={() => closeCommandOverlay("Model picker")}
+          />
+        );
+
+      case "agent":
+        return (
+          <AgentPicker
+            agents={agentManager.listSelectableAgents()}
+            currentAgent={currentAgent}
+            onSelect={(name) => {
+              setCommandOverlay(null);
+              setCurrentAgent(name as AgentName);
+              pushSystem(`Switched to ${name} agent.`);
+            }}
+            onCancel={() => closeCommandOverlay("Agent picker")}
+          />
+        );
+
+      case "context":
+        return (
+          <ContextView
+            inputTokens={inputTokens}
+            outputTokens={outputTokens}
+            budget={contextManagerRef.current.getBudget()}
+            messages={messages}
+            model={activeModel}
+            mcpServers={mcpServers}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "doctor":
+        return (
+          <DoctorView
+            provider={activeProvider}
+            model={activeModel}
+            baseURL={activeBaseURL}
+            apiKeyPreview={activeApiKey ? activeApiKey.slice(0, 8) + "…" + activeApiKey.slice(-4) : undefined}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "permissions":
+        return (
+          <PermissionsView
+            persistedRules={(() => {
+              try {
+                return loadSettings().permissions ?? {};
+              } catch {
+                return {};
+              }
+            })()}
+            sessionRules={sessionRules}
+            onPersistRules={(rules) => handleUpdateSetting("permissions", rules)}
+            onSessionRulesChange={(next) => setSessionRules(next)}
+            onPersistProjectRules={(rules) => {
+              try {
+                const fs = require("node:fs") as typeof import("node:fs");
+                const pathMod = require("node:path") as typeof import("node:path");
+                const configPath = pathMod.join(process.cwd(), ".deepseek-code.json");
+                const existing = fs.existsSync(configPath)
+                  ? JSON.parse(fs.readFileSync(configPath, "utf-8"))
+                  : {};
+                fs.writeFileSync(
+                  configPath,
+                  JSON.stringify({ ...existing, permissions: rules }, null, 2) + "\n",
+                );
+              } catch (e) {
+                pushSystem(`✗ Failed to save project permissions: ${(e as Error).message}`);
+              }
+            }}
+            onSummary={(summary) => pushSystem(summary)}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "hooks":
+        return <HooksView onClose={() => setCommandOverlay(null)} />;
+
+      case "workflows":
+        return (
+          <WorkflowsMenu
+            onRun={(workflow) => launchWorkflow(workflow, "")}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "teams":
+        return <TeamsDialog onClose={() => setCommandOverlay(null)} />;
+
+      case "mcp":
+        return (
+          <McpView
+            servers={mcpServers}
+            onToggle={(name, enabled) => {
+              setMcpServers((prev) => prev[name] ? { ...prev, [name]: { ...prev[name]!, enabled } } : prev);
+              pushSystem(`${enabled ? "✓" : "✗"} MCP server ${name} ${enabled ? "enabled" : "disabled"}.`);
+            }}
+            onReconnect={async (name) => {
+              resetMemorySession();
+              pushSystem(
+                name
+                  ? `✓ Session reset — ${name} reconnects on your next message.`
+                  : "✓ Native session reset — MCP servers reconnect on your next message.",
+              );
+            }}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "skills":
+        return <SkillsMenu onClose={() => setCommandOverlay(null)} />;
+
+      case "tasks":
+        return <TasksView onClose={() => setCommandOverlay(null)} />;
+
+      case "rewind":
+        return (
+          <RewindPicker
+            messages={messages}
+            workingDirectory={workingDirectory}
+            onRewind={async (messageNumber, mode) => {
+              await rewindToDepth(messageNumber, mode);
+              // Repopulate the input with the restored user message text.
+              setInput(messages[messageNumber - 1]?.content ?? "");
+            }}
+            onClose={() => setCommandOverlay(null)}
+          />
+        );
+
+      case "copy":
+        return (
+          <CopyPicker
+            messages={messages}
+            onCopy={(content) => {
+              setCommandOverlay(null);
+              copyToClipboard(content);
+            }}
+            onWrite={(result) => {
+              setCommandOverlay(null);
+              pushSystem(result);
+            }}
+            onClose={() => {
+              setCommandOverlay(null);
+              pushSystem("Copy cancelled");
+            }}
+          />
+        );
+
+      case "memory":
+        return (
+          <MemoryPicker
+            workingDirectory={workingDirectory}
+            onOpenInEditor={(path) => {
+              setCommandOverlay(null);
+              openInEditor(path);
+            }}
+            onClose={() => {
+              setCommandOverlay(null);
+              pushSystem("Cancelled memory editing");
+            }}
+          />
+        );
+
+      case "output-style":
+        return (
+          <OutputStylePicker
+            current={(() => {
+              try {
+                return loadSettings().outputStyle;
+              } catch {
+                return undefined;
+              }
+            })()}
+            onSelect={(name) => {
+              setCommandOverlay(null);
+              if (name === "default") {
+                handleUpdateSetting("outputStyle", undefined);
+                pushSystem("Output style reset to default");
+              } else {
+                handleUpdateSetting("outputStyle", name);
+                pushSystem(`✓ Output style set to ${name}`);
+              }
+            }}
+            onCancel={() => closeCommandOverlay("Output style picker")}
+          />
+        );
+
+      case "apikey":
+        return (
+          <InputDialog
+            title="Set API key"
+            subtitle={`Provider: ${activeProvider} · saved to ~/.deepseek-code/settings.json`}
+            masked
+            placeholder="sk-…"
+            onSubmit={(key) => {
+              setCommandOverlay(null);
+              setActiveApiKey(key);
+              persistSettings({ apiKey: key });
+              pushSystem(
+                `✓ API key set (${key.slice(0, 8)}…${key.slice(-4)}) for provider: ${activeProvider}\n✓ Saved to ~/.deepseek-code/settings.json`,
+              );
+            }}
+            onCancel={() => closeCommandOverlay("API key dialog")}
+          />
+        );
+
+      case "baseurl":
+        return (
+          <InputDialog
+            title="Set base URL"
+            subtitle={`Current: ${activeBaseURL || "(default provider URL)"} · empty or "clear" resets`}
+            initial={activeBaseURL ?? ""}
+            allowEmpty
+            placeholder="https://api.deepseek.com/v1"
+            onSubmit={(url) => {
+              setCommandOverlay(null);
+              if (!url || url.toLowerCase() === "clear") {
+                setActiveBaseURL(undefined);
+                pushSystem("✓ Cleared custom base URL.");
+                return;
+              }
+              setActiveBaseURL(url);
+              pushSystem(`✓ Base URL set to: ${url}`);
+            }}
+            onCancel={() => closeCommandOverlay("Base URL dialog")}
+          />
+        );
+
+      case "statusline":
+        return (
+          <InputDialog
+            title="Set status line"
+            subtitle={`Current: ${statusLineSetting?.command ?? "(not configured)"} · trimmed stdout shows right-aligned on the status bar`}
+            initial={statusLineSetting?.command ?? ""}
+            allowEmpty
+            placeholder="git branch --show-current"
+            onSubmit={(command) => {
+              setCommandOverlay(null);
+              if (!command || command.toLowerCase() === "off") {
+                handleUpdateSetting("statusLine", undefined);
+                statusLineTextRef.current = null;
+                setStatusLineText(null);
+                pushSystem("✓ Custom status line cleared.");
+                return;
+              }
+              handleUpdateSetting("statusLine", { type: "command", command });
+              statusLineTextRef.current = null;
+              setStatusLineText(null);
+              pushSystem(
+                `✓ Status line set to: ${command}\n(Runs after each turn and every ~20s — output shows right-aligned on the status bar.)`,
+              );
+            }}
+            onCancel={() => closeCommandOverlay("Status line dialog")}
+          />
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <ThemeProvider
       initialState={themeMode}
@@ -4215,7 +4406,8 @@ Based on the above changes:
           freezeWelcome={
             showSettingsUI || showEffortCallout || showThemePicker || showHelp ||
             exportDialog !== null || searchResults !== null || showHistorySearch ||
-            showPluginOverlay || showSessionPicker || pendingPermission !== null || pendingQuestions !== null
+            showPluginOverlay || showSessionPicker || commandOverlay !== null ||
+            pendingPermission !== null || pendingQuestions !== null
           }
         />
       </Box>
@@ -4228,6 +4420,14 @@ Based on the above changes:
           input={pendingPermission.input}
           isTranscriptMode={isTranscriptMode}
           workingDir={workingDirectory}
+          explanation={[
+            pendingPermission.explanation,
+            permissionQueue.length > 1
+              ? `${permissionQueue.length - 1} more approval request${permissionQueue.length - 1 === 1 ? "" : "s"} queued`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
           onApprove={(value, feedback) => {
             if (value === "__allow_all__") {
               setSessionRules((prev) => ({
@@ -4238,6 +4438,11 @@ Based on the above changes:
               setSessionRules((prev) => ({
                 ...prev,
                 allow: [...new Set([...prev.allow, "Edit", "Write", "NotebookEdit"])],
+              }));
+            } else if (value === "__allow_reads__") {
+              setSessionRules((prev) => ({
+                ...prev,
+                allow: [...new Set([...prev.allow, "FileRead", "Glob", "Grep", "LS"])],
               }));
             } else if (value?.startsWith("__allow_claude_folder__:")) {
               const dir = value.slice("__allow_claude_folder__:".length);
@@ -4252,11 +4457,11 @@ Based on the above changes:
               }));
             }
             pendingPermission.resolve({ approved: true, feedback });
-            setPendingPermission(null);
+            setPermissionQueue((prev) => prev.slice(1));
           }}
           onDeny={(feedback) => {
             pendingPermission.resolve({ approved: false, feedback });
-            setPendingPermission(null);
+            setPermissionQueue((prev) => prev.slice(1));
           }}
         />
       )}
@@ -4281,6 +4486,11 @@ Based on the above changes:
       {isLoading && (
         <Box paddingX={1}>
           <Spinner noun={basename(workingDirectory)} sentiment={spinnerSentiment} />
+        </Box>
+      )}
+      {isLoading && todos.length > 0 && (
+        <Box paddingX={2} marginTop={1}>
+          <TaskListV2 todos={todos} />
         </Box>
       )}
       {showThemePicker ? (
@@ -4343,8 +4553,31 @@ Based on the above changes:
       ) : showSessionPicker ? (
         <SessionPicker
           sessions={sessionsList}
-          selectedIndex={sessionPickerIndex}
           currentDirectory={workingDirectory}
+          onResume={(session) => {
+            if (session.workingDirectory === workingDirectory) {
+              const loaded = loadSession(session.hash);
+              if (loaded) {
+                setMessages(loaded.messages.map((m) => ({ ...m, toolUse: [] })));
+                setTokenCount(loaded.tokenUsage);
+                setActiveSessionHash(loaded.hash);
+              }
+              setShowSessionPicker(false);
+            } else {
+              const cmd = `cd ${session.workingDirectory} && deepseek-code --resume ${session.hash}`;
+              try {
+                const { execSync } = require("child_process");
+                execSync(`echo "${cmd}" | pbcopy`);
+              } catch {}
+              console.log(`\nTo resume session ${session.hash}, change directory to the project folder:\n\n  ${cmd}\n\n(This command has been copied to your clipboard!)`);
+              process.exit(0);
+            }
+          }}
+          onRename={(hash, title) => {
+            updateSession(hash, { title });
+            setSessionsList(listSessions());
+          }}
+          onClose={() => setShowSessionPicker(false)}
         />
       ) : showSettingsUI ? (
         <Settings defaultTab={settingsTab} onClose={() => setShowSettingsUI(false)} />
@@ -4353,6 +4586,8 @@ Based on the above changes:
           onClose={() => setShowPluginOverlay(false)}
           onRefreshPlugins={refreshPlugins}
         />
+      ) : commandOverlay ? (
+        renderCommandOverlay()
       ) : isTranscriptMode ? (
         
         <Box
@@ -4390,7 +4625,10 @@ Based on the above changes:
           )}
 
           {}
-          {tasksExpanded && <TodoList todos={todos} selectedIndex={tasksSelectedIndex} />}
+          <TasksStatusPill />
+
+          {}
+          {tasksExpanded && <TaskListV2 todos={todos} isStandalone />}
 
           {}
           {mention && !mentionSuppressed && mentionMatches.length > 0 && (
@@ -4440,6 +4678,7 @@ Based on the above changes:
             permissionMode={permissionMode}
             tokenBudget={contextManagerRef.current.getBudget()}
             statusLineOutput={statusLineText}
+            statusLinePadding={statusLineSetting?.padding}
             tasks={{
               done: todos.filter((t) => t.status === "completed").length,
               total: todos.length,
@@ -4474,6 +4713,8 @@ function formatToolInput(toolName: string, args: Record<string, unknown>): strin
       return `"${args.pattern || ""}"${args.path ? ` in ${args.path}` : ""}`;
     case "LS":
       return String(args.path || ".");
+    case "Agent":
+      return String(args.description || (args.prompt ? String(args.prompt).slice(0, 60) : ""));
     default:
       return JSON.stringify(args);
   }

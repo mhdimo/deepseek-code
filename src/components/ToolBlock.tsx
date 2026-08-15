@@ -2,6 +2,7 @@ import React, { useSyncExternalStore } from "react";
 import { Box, Text } from "ink";
 import type { ToolUseBlock } from "../types/index.js";
 import { resolveColor, type Theme } from "../utils/theme.js";
+import { redactSecrets } from "../utils/redact.js";
 import stringWidth from "string-width";
 import {
   buildDiffModel,
@@ -172,7 +173,9 @@ export function buildToolBlockSpans(
   const width = Math.max(1, contentWidth - TOOL_OUT_LEFT);
   const expanded = block.isExpanded || isTranscriptMode;
   const isError = block.status === "error";
-  const outputText = block.output || "";
+  // Render-time secret masking — the model still sees the raw output; only
+  // the screen redacts API keys (Claude Code parity).
+  const outputText = redactSecrets(block.output || "");
 
   if (outputText && (expanded || isError)) {
     const maxOutputLines = isError && !expanded ? 12 : expanded ? (isTranscriptMode ? 1000 : 200) : 0;

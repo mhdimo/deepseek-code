@@ -57,8 +57,16 @@ export interface PersistedSettings {
   env?: Record<string, string>;
   
   permissions?: { allow?: string[]; deny?: string[]; ask?: string[] };
-  
-  statusLine?: { type: "command"; command: string };
+
+  /** Lifecycle hook configuration (see services/hooks.ts). */
+  hooks?: import("../services/hooks.js").HooksConfig;  
+  statusLine?: { type: "command"; command: string; padding?: number };
+
+  /** /copy picker: always copy the full response, skipping the picker. */
+  copyFullResponse?: boolean;
+
+  /** Agent teams (teammates + per-agent colors) managed via /teams. */
+  teams?: import("../types/index.js").TeamConfig[];
   
   lsp?: LspSettings;
 }
@@ -105,6 +113,10 @@ export interface SessionData {
   workingDirectory: string;
   createdAt: number;
   updatedAt: number;
+  /** User-assigned session title (Ctrl+R rename in the session picker). */
+  title?: string;
+  /** Git branch at save time (branch filter in the session picker). */
+  branch?: string;
 }
 
 

@@ -5,11 +5,12 @@
 
 
 
-import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import React from "react";
+import { Box, Text } from "ink";
 import type { StructuredPatchHunk } from "diff";
 import { theme, resolveColor, type ThemeSetting } from "../utils/theme.js";
 import { usePreviewTheme } from "../ui/design-system/ThemeProvider.js";
+import { Select } from "../ui/design-system/Select.js";
 import { StructuredDiff } from "./StructuredDiff.js";
 
 
@@ -44,57 +45,6 @@ export interface ThemePickerProps {
   showIntroText?: boolean;
   helpText?: string;
   initialTheme?: ThemeSetting;
-}
-
-function Select({
-  options,
-  onChange,
-  onCancel,
-  onPreview,
-  defaultValue,
-}: {
-  options: ReadonlyArray<{ label: string; value: string }>;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onPreview?: (value: string) => void;
-  defaultValue?: string;
-}): React.ReactElement {
-  const claude = resolveColor(theme.claude);
-  const [selectedIndex, setSelectedIndex] = useState(() => {
-    const idx = options.findIndex((o) => o.value === defaultValue);
-    return idx >= 0 ? idx : 0;
-  });
-
-  const moveTo = (i: number) => {
-    const next = Math.max(0, Math.min(options.length - 1, i));
-    setSelectedIndex(next);
-    onPreview?.(options[next]!.value);
-  };
-
-  useInput((_input, key) => {
-    if (key.upArrow) {
-      moveTo(selectedIndex - 1);
-    } else if (key.downArrow) {
-      moveTo(selectedIndex + 1);
-    } else if (key.return) {
-      onChange(options[selectedIndex]!.value);
-    } else if (key.escape) {
-      onCancel();
-    }
-  });
-
-  return (
-    <Box flexDirection="column">
-      {options.map((option, i) => (
-        <Box key={option.value}>
-          <Text color={i === selectedIndex ? claude : undefined} bold={i === selectedIndex}>
-            {i === selectedIndex ? "› " : "  "}
-            {option.label}
-          </Text>
-        </Box>
-      ))}
-    </Box>
-  );
 }
 
 export default function ThemePicker({
@@ -136,7 +86,7 @@ export default function ThemePicker({
         options={THEME_OPTIONS}
         onChange={handleChange}
         onCancel={handleCancel}
-        onPreview={(value) => setPreviewTheme(value as ThemeSetting)}
+        onFocus={(value) => setPreviewTheme(value as ThemeSetting)}
         defaultValue={initialTheme}
       />
       {}

@@ -51,11 +51,11 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     usage: ["/setup <api-key> [model]"],
     acceptsArgs: true,
   }),
-  command("model", "Show current model info, or switch model/profile", "model", {
+  command("model", "Select or switch the model (interactive picker)", "model", {
     usage: ["/model <name>"],
     acceptsArgs: true,
   }),
-  command("models", "List configured models and profiles", "model"),
+  command("models", "Select a model or profile (opens the picker)", "model"),
   command("apikey", "Set the API key for the current provider", "model", {
     aliases: ["key"],
     usage: ["/apikey <key>"],
@@ -67,7 +67,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   }),
   command("logout", "Clear the saved DeepSeek API key", "model"),
 
-  command("agent", "Switch agent (code, plan, review)", "agent", {
+  command("agent", "Switch agent with an interactive picker (code, plan, review)", "agent", {
     usage: ["/agent <name>"],
     acceptsArgs: true,
   }),
@@ -83,36 +83,38 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     usage: ["/effort [off|low|medium|high|max]"],
     acceptsArgs: true,
   }),
-  command("skills", "List available skills or show one skill", "agent", {
+  command("skills", "Browse skills and read their instructions", "agent", {
     usage: ["/skills <name>"],
     acceptsArgs: true,
   }),
   command("tools", "List available tools for the current agent", "agent"),
-  command("hooks", "List configured lifecycle hooks", "agent"),
+  command("hooks", "Manage lifecycle hooks (add, toggle, delete)", "agent"),
+  command("workflows", "Browse and run multi-phase agent workflows", "agent"),
+  command("teams", "Create and manage agent teams with per-teammate colors", "agent"),
 
   command("init", "Create a project memory file", "project"),
-  command("memory", "Show or edit the project memory file", "project"),
+  command("memory", "Open a project memory file in your editor", "project"),
   command("files", "List top-level project files and directories", "project", {
     usage: ["/files [path]"],
     acceptsArgs: true,
   }),
-  command("permissions", "Show configured permission rules", "project"),
+  command("permissions", "Manage permission rules (add, delete)", "project"),
   command("workspace", "Show workspace path and trust status", "project"),
   command("branch", "Show the current git branch", "project"),
   command("env", "Show environment variable configuration", "project"),
 
-  command("sessions", "List saved sessions", "session", {
+  command("sessions", "Browse and resume saved sessions", "session", {
     usage: ["/sessions clear"],
     acceptsArgs: true,
   }),
-  command("resume", "Resume a saved session", "session", {
+  command("resume", "Pick a session to resume", "session", {
     usage: ["/resume <hash>"],
     acceptsArgs: true,
   }),
   command("history", "Show conversation history message numbers", "session", {
     aliases: ["messages"],
   }),
-  command("rewind", "Rewind conversation to a specific message", "session", {
+  command("rewind", "Pick a message to rewind the conversation to", "session", {
     usage: ["/rewind <number>"],
     acceptsArgs: true,
   }),
@@ -127,7 +129,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("compact", "Summarize the conversation to save context", "session", {
     acceptsArgs: true,
   }),
-  command("copy", "Copy the last assistant response", "session", {
+  command("copy", "Pick an assistant response to copy to the clipboard", "session", {
     usage: ["/copy [message-number]"],
     acceptsArgs: true,
   }),
@@ -136,7 +138,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("commit", "Create a git commit from changes", "project"),
   command("pr", "Commit, push, and create a GitHub pull request", "project"),
   command("diff", "Show the git diff of current changes", "project"),
-  command("doctor", "Run diagnostics on git, network, and bindings", "general"),
+  command("doctor", "Run interactive diagnostics (runtime, bindings, network)", "general"),
   command("cost", "Show session token usage and cost", "general"),
   command("usage", "Show usage and activity details", "general"),
   command("stats", "Show session statistics", "general"),
@@ -147,7 +149,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("shortcuts", "Toggle the keyboard shortcuts panel", "general", {
     aliases: ["keybindings"],
   }),
-  command("mcp", "Show MCP servers and status", "mcp", {
+  command("mcp", "Manage MCP servers (toggle, reconnect)", "mcp", {
     aliases: ["servers"],
     usage: ["/mcp enable <name>", "/mcp disable <name>"],
     acceptsArgs: true,
@@ -168,15 +170,15 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     usage: ["/theme <setting>"],
     acceptsArgs: true,
   }),
-  command("output-style", "Show or set the output style", "general", {
+  command("output-style", "Pick an output style (interactive)", "general", {
     usage: ["/output-style <name>"],
     acceptsArgs: true,
   }),
-  command("context", "Show context window usage", "session"),
-  command("todos", "Show the agent's todo list", "session", {
+  command("context", "Show context window usage breakdown", "session"),
+  command("todos", "Show the agent's todo list", "session"),
+  command("bashes", "Browse background tasks — shells, agents, workflows (view output, kill)", "session", {
     aliases: ["tasks"],
   }),
-  command("bashes", "List background tasks", "session"),
   command("test", "Run the project's basic test suite", "general", {
     usage: ["/test [typecheck|build]"],
     acceptsArgs: true,
@@ -354,7 +356,7 @@ const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] =
   },
   {
     title: "Sessions & history",
-    names: ["sessions", "resume", "history", "rewind", "search", "export", "compact", "copy", "clear"],
+    names: ["sessions", "resume", "history", "rewind", "search", "export", "compact", "copy", "clear", "workflows", "teams"],
   },
   {
     title: "Git & diagnostics",

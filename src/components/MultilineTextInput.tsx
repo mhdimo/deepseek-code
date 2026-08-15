@@ -20,6 +20,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { isMouseSequence } from "./useMouseWheelScroll.js";
+import { findUltrathinkPositions, type KeywordRange } from "../utils/thinkingKeywords.js";
 
 
 interface MultilineTextInputProps {
@@ -72,6 +73,46 @@ export function skipWordRight(value: string, pos: number): number {
   return i;
 }
 
+/** Zero-based (line, column) of a cursor offset in a multi-line buffer. */
+function lineColOf(value: string, cursorOffset: number): { line: number; col: number } {
+  let line = 0;
+  let col = 0;
+  for (let i = 0; i < cursorOffset && i < value.length; i++) {
+    if (value[i] === "\n") {
+      line++;
+      col = 0;
+    } else {
+      col++;
+    }
+  }
+  return { line, col };
+}
+
+/** Start/end offsets of a zero-based line index (end excludes the newline). */
+function lineBounds(value: string, lineIdx: number): { start: number; end: number } {
+  let line = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === "\n") {
+      if (line === lineIdx) return { start, end: i };
+      line++;
+      start = i + 1;
+    }
+  }
+  return { start, end: value.length };
+}
+
+/** Cursor after moving one visual line up/down, keeping the column (clamped).
+ *  Returns the unchanged offset when already on the first/last line. */
+export function moveCursorVertically(value: string, pos: number, dir: -1 | 1): number {
+  const { line, col } = lineColOf(value, pos);
+  const target = line + dir;
+  const totalLines = value.split("\n").length;
+  if (target < 0 || target >= totalLines) return pos;
+  const { start, end } = lineBounds(value, target);
+  return Math.min(start + col, end);
+}
+
 
 
 
@@ -91,12 +132,59 @@ function renderPlaceholder(placeholder: string, focused: boolean): React.ReactNo
 }
 
 
+// Rainbow palette for the ultrathink keyword (Claude Code parity — the word
+// glows char-by-char while you type it).
+const RAINBOW_COLORS = [
+  theme.rainbow_red,
+  theme.rainbow_orange,
+  theme.rainbow_yellow,
+  theme.rainbow_green,
+  theme.rainbow_blue,
+  theme.rainbow_indigo,
+  theme.rainbow_violet,
+] as const;
+
+/** Render a string slice, coloring chars that fall inside an ultrathink
+ *  range with the cycling rainbow. `absStart` is the slice's offset in the
+ *  full buffer so the rainbow phase stays continuous across lines. */
+function renderRainbowSlice(
+  slice: string,
+  absStart: number,
+  ranges: readonly KeywordRange[],
+): React.ReactNode {
+  if (slice.length === 0 || ranges.length === 0) return slice;
+  const rel: KeywordRange[] = [];
+  for (const r of ranges) {
+    const start = Math.max(0, r.start - absStart);
+    const end = Math.min(slice.length, r.end - absStart);
+    if (end > start) rel.push({ start, end });
+  }
+  if (rel.length === 0) return slice;
+
+  const spans: React.ReactNode[] = [];
+  let cursor = 0;
+  rel.forEach((r, i) => {
+    if (r.start > cursor) spans.push(slice.slice(cursor, r.start));
+    for (let p = r.start; p < r.end; p++) {
+      spans.push(
+        <Text key={`u${i}-${p}`} color={resolveColor(RAINBOW_COLORS[(absStart + p) % RAINBOW_COLORS.length]!)}>
+          {slice[p]}
+        </Text>,
+      );
+    }
+    cursor = r.end;
+  });
+  if (cursor < slice.length) spans.push(slice.slice(cursor));
+  return spans;
+}
+
 function renderTextContent(
   value: string,
   cursorOffset: number,
 ): React.ReactNode {
   if (value === "") return null;
 
+  const ultrathinkRanges = findUltrathinkPositions(value);
   const lines = value.split("\n");
   const elements: React.ReactNode[] = [];
   let charCount = 0;
@@ -113,15 +201,17 @@ function renderTextContent(
       const after = line.slice(colInLine + 1);
       elements.push(
         <Text key={lineIdx}>
-          {before}
+          {renderRainbowSlice(before, lineStartOff, ultrathinkRanges)}
           <Text backgroundColor={resolveColor(theme.promptBorder)} color={resolveColor(theme.inverseText)}>
             {cursorChar}
           </Text>
-          {after}
+          {renderRainbowSlice(after, lineStartOff + colInLine + 1, ultrathinkRanges)}
         </Text>,
       );
     } else {
-      elements.push(<Text key={lineIdx}>{line || " "}</Text>);
+      elements.push(
+        <Text key={lineIdx}>{renderRainbowSlice(line || " ", lineStartOff, ultrathinkRanges)}</Text>,
+      );
     }
 
     charCount += line.length + 1;
@@ -155,11 +245,15 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   useEffect(() => {
     if (internalChange.current) {
       internalChange.current = false;
-      prevExternalValue.current = value;
-      bufferRef.current = value;
+      // A prop commit can lag behind keystrokes already sitting in bufferRef
+      // (the effect fires after a newer key event was handled). Replaying the
+      // stale prop over the buffer silently deletes what was typed in between
+      // — acknowledge up to the LATEST local edit instead.
+      prevExternalValue.current = bufferRef.current;
       return;
     }
-    if (value !== prevExternalValue.current) {
+    if (value !== prevExternalValue.current && value !== bufferRef.current) {
+      // Genuine external change (history recall, picker fill, submit clear).
       bufferRef.current = value;
       cursorRef.current = value.length;
       setCursorOffset(value.length);
@@ -268,6 +362,20 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
+      // Up/down move the cursor between lines of a multi-line draft. On a
+      // single-line draft this is a no-op here; App's handler turns it into
+      // history recall — but it must never fire while a multi-line draft is
+      // being edited, or the draft would be clobbered by a history entry.
+      if (key.upArrow || key.downArrow) {
+        const curVal = bufferRef.current;
+        const nextPos = moveCursorVertically(curVal, Math.min(pos, curVal.length), key.upArrow ? -1 : 1);
+        if (nextPos !== pos) {
+          cursorRef.current = nextPos;
+          setCursorOffset(nextPos);
+        }
+        return;
+      }
+
       
       if (key.home) {
         const curVal = bufferRef.current;
@@ -363,18 +471,28 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      
-      if (input && !key.ctrl && !key.meta && input.charCodeAt(0) >= 32) {
-        const curVal = bufferRef.current;
-        const newValue =
-          curVal.slice(0, pos) + input + curVal.slice(pos);
-        bufferRef.current = newValue;
-        internalChange.current = true;
-        prevExternalValue.current = newValue;
-        const nextPos = pos + input.length;
-        cursorRef.current = nextPos;
-        setCursorOffset(nextPos);
-        onChangeRef.current(newValue);
+
+      if (input && !key.ctrl && !key.meta) {
+        // Terminals wrap pasted text in bracketed-paste markers; ink may
+        // deliver them with the ESC intact or already stripped. Strip both
+        // forms so a paste lands as plain text instead of being dropped.
+        let text = input.replace(/\x1b\[200~|\x1b\[201~|\[200~|\[201~/g, "");
+        // Printable text (paste may carry newlines/tabs mid-chunk; only a
+        // leading control character disqualifies the whole event).
+        const isPrintable =
+          text.length > 0 &&
+          [...text].every((ch) => ch.charCodeAt(0) >= 32 || ch === "\n" || ch === "\r" || ch === "\t");
+        if (isPrintable) {
+          const curVal = bufferRef.current;
+          const newValue = curVal.slice(0, pos) + text + curVal.slice(pos);
+          bufferRef.current = newValue;
+          internalChange.current = true;
+          prevExternalValue.current = newValue;
+          const nextPos = pos + text.length;
+          cursorRef.current = nextPos;
+          setCursorOffset(nextPos);
+          onChangeRef.current(newValue);
+        }
       }
     },
     [], 

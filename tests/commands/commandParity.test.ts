@@ -5,7 +5,8 @@ import { BUILTIN_COMMANDS, resolveCommandName } from "../../src/services/command
 test("supports the useful local aliases from Claude-style command workflows", () => {
   expect(resolveCommandName("/keybindings")).toBe("shortcuts");
   expect(resolveCommandName("/color")).toBe("theme");
-  expect(resolveCommandName("/tasks")).toBe("todos");
+  expect(resolveCommandName("/tasks")).toBe("bashes");
+  expect(resolveCommandName("/todos")).toBe("todos");
   expect(resolveCommandName("/login")).toBe("setup");
   expect(BUILTIN_COMMANDS.map((command) => command.name)).toContain("test");
   expect(BUILTIN_COMMANDS.map((command) => command.name)).toContain("files");
