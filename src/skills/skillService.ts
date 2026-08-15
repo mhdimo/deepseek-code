@@ -30,6 +30,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { estimateTokens } from "../utils/limits.js";
 
 export type SkillSource = "project" | "user" | "bundled" | "plugin";
 
@@ -38,10 +39,16 @@ export interface SkillInfo {
   description: string;
   source: SkillSource;
   path: string;
+  /** `when_to_use` frontmatter, when present (feeds the token estimate). */
+  whenToUse?: string;
+  /** Estimated prompt size in tokens (~4 chars/token), shown in /skills. */
+  estimatedTokens: number;
+  /** Manifest name of the owning plugin (plugin-sourced skills only). */
+  pluginName?: string;
 }
 
 export interface SkillContent extends SkillInfo {
-  
+
   content: string;
 }
 
@@ -52,6 +59,7 @@ interface LoadedSkill extends SkillContent {}
 export interface ParsedSkillMarkdown {
   name: string | undefined;
   description: string | undefined;
+  whenToUse: string | undefined;
   body: string;
 }
 
@@ -59,7 +67,7 @@ export interface ParsedSkillMarkdown {
 export function parseSkillMarkdown(raw: string): ParsedSkillMarkdown {
   const lines = raw.split(/\r?\n/);
   if (!lines[0] || lines[0].trim() !== "---") {
-    return { name: undefined, description: undefined, body: raw };
+    return { name: undefined, description: undefined, whenToUse: undefined, body: raw };
   }
   const meta: Record<string, string> = {};
   let i = 1;
@@ -70,14 +78,43 @@ export function parseSkillMarkdown(raw: string): ParsedSkillMarkdown {
     if (m) meta[m[1]!.toLowerCase()] = (m[2] ?? "").replace(/^["']|["']$/g, "");
   }
   if (i >= lines.length) {
-    
-    return { name: undefined, description: undefined, body: raw };
+
+    return { name: undefined, description: undefined, whenToUse: undefined, body: raw };
   }
   const body = lines
     .slice(i + 1)
     .join("\n")
     .replace(/^\n+/, "");
-  return { name: meta["name"], description: meta["description"], body };
+  return {
+    name: meta["name"],
+    description: meta["description"],
+    whenToUse: meta["when_to_use"],
+    body,
+  };
+}
+
+/** ~4 chars/token — same rough estimate the /skills menu shows per skill. */
+export function estimateSkillTokens(
+  name: string | undefined,
+  description: string | undefined,
+  whenToUse: string | undefined,
+): number {
+  return estimateTokens([name, description, whenToUse].filter(Boolean).join(" "));
+}
+
+/** On-disk directory that `source` skills are discovered from. Project is
+ *  cwd-relative (reference `getSkillsPath` semantics); user/bundled absolute. */
+export function getSkillSourceDir(source: SkillSource): string {
+  switch (source) {
+    case "project":
+      return join(".claude", "skills");
+    case "user":
+      return join(homedir(), ".claude", "skills");
+    case "bundled":
+      return bundledSkillsDir();
+    default:
+      return "plugin";
+  }
 }
 
 
@@ -120,10 +157,14 @@ function loadSkillsFromDir(dir: string, source: SkillSource): LoadedSkill[] {
     } catch {
       continue; 
     }
-    const { name, description, body } = parseSkillMarkdown(raw);
+    const { name, description, whenToUse, body } = parseSkillMarkdown(raw);
+    const resolvedName = name || entry.name;
+    const resolvedDescription = description || fallbackDescription(body);
     out.push({
-      name: name || entry.name,
-      description: description || fallbackDescription(body),
+      name: resolvedName,
+      description: resolvedDescription,
+      whenToUse,
+      estimatedTokens: estimateSkillTokens(resolvedName, resolvedDescription, whenToUse),
       content: body,
       source,
       path: skillFile,
@@ -137,23 +178,18 @@ let cached: LoadedSkill[] | null = null;
 
 function loadAll(): LoadedSkill[] {
   const byName = new Map<string, LoadedSkill>();
-  const sources: Array<[string, SkillSource]> = [
-    [join(process.cwd(), ".claude", "skills"), "project"],
-    [join(homedir(), ".claude", "skills"), "user"],
-    [bundledSkillsDir(), "bundled"],
-  ];
-  for (const [dir, source] of sources) {
-    for (const skill of loadSkillsFromDir(dir, source)) {
+  for (const source of ["project", "user", "bundled"] as const) {
+    for (const skill of loadSkillsFromDir(getSkillSourceDir(source), source)) {
       if (!byName.has(skill.name)) byName.set(skill.name, skill);
     }
   }
-  
+
   try {
     const { loadInstalledPlugins } = require("../services/pluginService.js") as {
       loadInstalledPlugins: () => Array<{
         name: string;
         enabled: boolean;
-        manifest: { skills?: Array<{ name: string; description: string; prompt: string }> };
+        manifest: { name: string; skills?: Array<{ name: string; description: string; prompt: string }> };
       }>;
     };
     for (const plugin of loadInstalledPlugins()) {
@@ -163,6 +199,8 @@ function loadAll(): LoadedSkill[] {
           byName.set(skill.name, {
             name: skill.name,
             description: skill.description,
+            estimatedTokens: estimateSkillTokens(skill.name, skill.description, undefined),
+            pluginName: plugin.manifest.name,
             source: "plugin",
             path: `plugin:${plugin.name}/${skill.name}`,
             content: skill.prompt,
@@ -171,7 +209,7 @@ function loadAll(): LoadedSkill[] {
       }
     }
   } catch {
-    
+
   }
   return [...byName.values()];
 }
@@ -182,7 +220,15 @@ function ensureLoaded(): LoadedSkill[] {
 }
 
 function toSkillInfo(s: LoadedSkill): SkillInfo {
-  return { name: s.name, description: s.description, source: s.source, path: s.path };
+  return {
+    name: s.name,
+    description: s.description,
+    whenToUse: s.whenToUse,
+    estimatedTokens: s.estimatedTokens,
+    pluginName: s.pluginName,
+    source: s.source,
+    path: s.path,
+  };
 }
 
 
