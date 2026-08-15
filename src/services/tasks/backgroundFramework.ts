@@ -15,6 +15,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import {
+  appendFileSync,
   openSync,
   closeSync,
   mkdirSync,
@@ -22,6 +23,7 @@ import {
   readSync,
   statSync,
   existsSync,
+  writeFileSync,
 } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -58,8 +60,11 @@ function ensureOutputDir(): void {
 
 interface RegistryEntry {
   state: TaskState;
-  
+
   child: ChildProcess | undefined;
+  /** Virtual tasks (agents, workflows) have no child process — killing calls
+   *  this hook instead (e.g. abort the agent's AbortController). */
+  onKill?: () => void;
 }
 
 const registry = new Map<string, RegistryEntry>();
@@ -151,6 +156,60 @@ export function registerTask(
   return entry.state;
 }
 
+
+/** Register an in-process (virtual) task — agents and workflows. No child
+ *  process: the caller drives the work, appends to the output file via
+ *  appendTaskOutput, and provides an onKill hook for TaskStop. */
+export function registerVirtualTask(
+  type: TaskType,
+  command: string,
+  opts: {
+    onKill?: () => void;
+    name?: string;
+    description?: string;
+    prompt?: string;
+  } = {},
+): TaskState {
+  ensureOutputDir();
+  const id = generateTaskId(type);
+  const outputPath = getTaskOutputPath(id);
+  try {
+    writeFileSync(outputPath, "", "utf-8");
+  } catch {
+
+  }
+
+  const entry: RegistryEntry = {
+    state: {
+      id,
+      type,
+      status: "running",
+      command,
+      name: opts.name,
+      description: opts.description,
+      prompt: opts.prompt,
+      outputPath,
+      pid: undefined,
+      startedAt: Date.now(),
+    },
+    child: undefined,
+    onKill: opts.onKill,
+  };
+  registry.set(id, entry);
+  return entry.state;
+}
+
+/** Append a chunk to a registered task's output file (virtual tasks' live
+ *  transcript — readable via TaskOutput and the /tasks view). */
+export function appendTaskOutput(id: string, text: string): void {
+  const task = registry.get(id)?.state;
+  if (!task) return;
+  try {
+    appendFileSync(task.outputPath, text, "utf-8");
+  } catch {
+    
+  }
+}
 
 export function updateTaskState(
   id: string,
@@ -258,6 +317,21 @@ export function killTask(id: string): KillResult {
       killed: false,
       message: `Task '${id}' is not running (status: ${state.status}).`,
     };
+  }
+  // Virtual task (agent / workflow): no process to signal — invoke the
+  // registered kill hook (aborts the driver) and mark it terminated.
+  if (!child && entry.onKill) {
+    try {
+      entry.onKill();
+    } catch {
+      
+    }
+    updateTaskState(id, {
+      status: "error",
+      endedAt: Date.now(),
+      error: "Terminated by user.",
+    });
+    return { id, killed: true, message: `Terminated task '${id}'.` };
   }
   if (!child || state.pid === undefined) {
     updateTaskState(id, {

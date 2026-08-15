@@ -15,7 +15,7 @@ import { randomBytes } from "crypto";
 
 
 
-export type TaskType = "shell";
+export type TaskType = "shell" | "agent" | "workflow";
 
 export type TaskStatus = "running" | "done" | "error";
 
@@ -28,15 +28,22 @@ export function isTerminalTaskStatus(status: TaskStatus): boolean {
 
 
 export interface TaskStateBase {
-  
+
   id: string;
-  
+
   type: TaskType;
-  
+
   status: TaskStatus;
-  
+
   command: string;
-  
+
+  /** Virtual tasks only (agents/workflows): the agent/workflow name. */
+  name?: string;
+  /** Virtual tasks only: human-readable description of the work. */
+  description?: string;
+  /** Virtual tasks only: the prompt that launched the task. */
+  prompt?: string;
+
   outputPath: string;
   
   pid: number | undefined;
@@ -80,8 +87,10 @@ export type TaskState = RunningTaskState | DoneTaskState | ErrorTaskState;
 
 
 const TASK_ID_PREFIXES: Record<TaskType, string> = {
-  
+
   shell: "b",
+  agent: "a",
+  workflow: "w",
 };
 
 
