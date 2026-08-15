@@ -60,7 +60,15 @@ export type Theme = {
   
   diffAddedWord: string
   diffRemovedWord: string
-  
+
+  /** Text color for add/remove lines (white on the dark green/red line
+   *  backgrounds; syntax-highlighted tokens override it per-run). */
+  diffAddedText?: string
+  diffRemovedText?: string
+  /** Gutter (line number + sigil) text color for add/remove rows. */
+  diffAddedGutter: string
+  diffRemovedGutter: string
+
   red_FOR_SUBAGENTS_ONLY: string
   blue_FOR_SUBAGENTS_ONLY: string
   green_FOR_SUBAGENTS_ONLY: string
@@ -168,26 +176,30 @@ const lightTheme: Theme = {
   warning: 'rgb(150,108,30)', 
   merged: 'rgb(135,0,255)', 
   warningShimmer: 'rgb(200,158,80)', 
-  diffAdded: 'rgb(105,219,124)', 
-  diffRemoved: 'rgb(255,168,180)', 
-  diffAddedDimmed: 'rgb(199,225,203)', 
-  diffRemovedDimmed: 'rgb(253,210,216)', 
-  diffAddedWord: 'rgb(47,157,68)', 
-  diffRemovedWord: 'rgb(209,69,75)', 
-  
-  red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)', 
-  blue_FOR_SUBAGENTS_ONLY: 'rgb(37,99,235)', 
-  green_FOR_SUBAGENTS_ONLY: 'rgb(22,163,74)', 
-  yellow_FOR_SUBAGENTS_ONLY: 'rgb(202,138,4)', 
-  purple_FOR_SUBAGENTS_ONLY: 'rgb(147,51,234)', 
-  orange_FOR_SUBAGENTS_ONLY: 'rgb(234,88,12)', 
-  pink_FOR_SUBAGENTS_ONLY: 'rgb(219,39,119)', 
-  cyan_FOR_SUBAGENTS_ONLY: 'rgb(8,145,178)', 
-  
+  diffAdded: '#022900',
+  diffRemoved: '#3D0100',
+  diffAddedDimmed: 'rgb(199,225,203)',
+  diffRemovedDimmed: 'rgb(253,210,216)',
+  diffAddedWord: '#054601',
+  diffRemovedWord: '#5C0100',
+  diffAddedText: 'rgb(255,255,255)',
+  diffRemovedText: 'rgb(255,255,255)',
+  diffAddedGutter: '#50c850',
+  diffRemovedGutter: '#db5b5a',
+
+  red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)',
+  blue_FOR_SUBAGENTS_ONLY: 'rgb(37,99,235)',
+  green_FOR_SUBAGENTS_ONLY: 'rgb(22,163,74)',
+  yellow_FOR_SUBAGENTS_ONLY: 'rgb(202,138,4)',
+  purple_FOR_SUBAGENTS_ONLY: 'rgb(147,51,234)',
+  orange_FOR_SUBAGENTS_ONLY: 'rgb(234,88,12)',
+  pink_FOR_SUBAGENTS_ONLY: 'rgb(219,39,119)',
+  cyan_FOR_SUBAGENTS_ONLY: 'rgb(8,145,178)',
+
   professionalBlue: 'rgb(106,155,204)',
-  
-  chromeYellow: 'rgb(251,188,4)', 
-  
+
+  chromeYellow: 'rgb(251,188,4)',
+
   clawd_body: 'rgb(215,119,87)',
   clawd_background: 'rgb(0,0,0)',
   userMessageBackground: 'rgb(240, 240, 240)', 
@@ -253,7 +265,9 @@ const lightAnsiTheme: Theme = {
   diffRemovedDimmed: 'ansi:red',
   diffAddedWord: 'ansi:greenBright',
   diffRemovedWord: 'ansi:redBright',
-  
+  diffAddedGutter: 'ansi:greenBright',
+  diffRemovedGutter: 'ansi:redBright',
+
   red_FOR_SUBAGENTS_ONLY: 'ansi:red',
   blue_FOR_SUBAGENTS_ONLY: 'ansi:blue',
   green_FOR_SUBAGENTS_ONLY: 'ansi:green',
@@ -331,7 +345,9 @@ const darkAnsiTheme: Theme = {
   diffRemovedDimmed: 'ansi:red',
   diffAddedWord: 'ansi:greenBright',
   diffRemovedWord: 'ansi:redBright',
-  
+  diffAddedGutter: 'ansi:greenBright',
+  diffRemovedGutter: 'ansi:redBright',
+
   red_FOR_SUBAGENTS_ONLY: 'ansi:redBright',
   blue_FOR_SUBAGENTS_ONLY: 'ansi:blueBright',
   green_FOR_SUBAGENTS_ONLY: 'ansi:greenBright',
@@ -403,14 +419,18 @@ const darkTheme: Theme = {
   warning: 'rgb(255,193,7)', 
   merged: 'rgb(175,135,255)', 
   warningShimmer: 'rgb(255,223,57)', 
-  diffAdded: 'rgb(34,92,43)', 
-  diffRemoved: 'rgb(122,41,54)', 
-  diffAddedDimmed: 'rgb(71,88,74)', 
-  diffRemovedDimmed: 'rgb(105,72,77)', 
-  diffAddedWord: 'rgb(56,166,96)', 
-  diffRemovedWord: 'rgb(179,89,107)', 
-  
-  red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)', 
+  diffAdded: '#022900',
+  diffRemoved: '#3D0100',
+  diffAddedDimmed: 'rgb(71,88,74)',
+  diffRemovedDimmed: 'rgb(105,72,77)',
+  diffAddedWord: '#054601',
+  diffRemovedWord: '#5C0100',
+  diffAddedText: 'rgb(255,255,255)',
+  diffRemovedText: 'rgb(255,255,255)',
+  diffAddedGutter: '#50c850',
+  diffRemovedGutter: '#db5b5a',
+
+  red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)',
   blue_FOR_SUBAGENTS_ONLY: 'rgb(37,99,235)', 
   green_FOR_SUBAGENTS_ONLY: 'rgb(22,163,74)', 
   yellow_FOR_SUBAGENTS_ONLY: 'rgb(202,138,4)', 
@@ -505,9 +525,11 @@ const darkDaltonizedTheme: Theme = {
   diffRemoved: 'rgb(102,0,0)', 
   diffAddedDimmed: 'rgb(62,81,91)', 
   diffRemovedDimmed: 'rgb(62,44,44)', 
-  diffAddedWord: 'rgb(0,119,179)', 
-  diffRemovedWord: 'rgb(179,0,0)', 
-  rate_limit_fill: 'rgb(153,204,255)', 
+  diffAddedWord: 'rgb(0,119,179)',
+  diffRemovedWord: 'rgb(179,0,0)',
+  diffAddedText: 'rgb(153,204,255)',
+  diffRemovedText: 'rgb(255,204,204)',
+  rate_limit_fill: 'rgb(153,204,255)',
   rate_limit_empty: 'rgb(23,46,114)', 
   fastMode: 'rgb(255,178,102)', 
   fastModeShimmer: 'rgb(255,204,153)', 
@@ -625,6 +647,8 @@ const themeBase = {
   diffRemovedWord: "rgb(179, 89, 107)",
   diffAddedText: "rgb(56, 166, 96)",
   diffRemovedText: "rgb(179, 89, 107)",
+  diffAddedGutter: "rgb(56, 166, 96)",
+  diffRemovedGutter: "rgb(179, 89, 107)",
 
   
   toolLabel: {

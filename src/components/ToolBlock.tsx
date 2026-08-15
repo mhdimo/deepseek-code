@@ -1,10 +1,18 @@
 import React, { useSyncExternalStore } from "react";
 import { Box, Text } from "ink";
 import type { ToolUseBlock } from "../types/index.js";
-import { theme, resolveColor } from "../utils/theme.js";
-import { StructuredDiff, parseDiffTextToHunk } from "./StructuredDiff.js";
-
-
+import { resolveColor, type Theme } from "../utils/theme.js";
+import stringWidth from "string-width";
+import {
+  buildDiffModel,
+  DiffRow,
+  parseDiffTextToHunks,
+  type DiffRowModel,
+} from "./StructuredDiff.js";
+import { RowText, rowSelection } from "./Markdown.js";
+import type { TextRow, StyledRun } from "../services/selection/lineModel.js";
+import { wrapTextRuns, wrapLineRuns } from "../services/selection/lineModel.js";
+import type { ContentSelection } from "./useMouseSelection.js";
 
 let blinkState = true;
 const listeners = new Set<() => void>();
@@ -31,13 +39,7 @@ export function useBlink() {
   return useSyncExternalStore(blinkStore.subscribe, blinkStore.getSnapshot);
 }
 
-
-export const BLACK_CIRCLE = process.platform === "darwin" ? "⏺" : "●";
-
-
-
-
-
+export const BLACK_CIRCLE = "●";
 
 function BlinkingDot({ color }: { color: string }): React.ReactElement {
   const show = useBlink();
@@ -52,7 +54,6 @@ function StatusIcon({ status, color }: { status: "running" | "done" | "error"; c
     </Text>
   );
 }
-
 
 const TOOL_LABELS: Record<string, string> = {
   Read: "Read",
@@ -92,8 +93,6 @@ function relPath(p: string): string {
   if (cwd && (p.startsWith(cwd + "/") || p === cwd)) return p.slice(cwd.length + 1) || ".";
   return p;
 }
-
-
 
 function formatToolArgs(toolName: string, input: unknown): string {
   let obj: Record<string, unknown> | undefined;
@@ -138,13 +137,176 @@ function formatToolArgs(toolName: string, input: unknown): string {
   }
 }
 
-interface ToolBlockProps {
-  block: ToolUseBlock;
-  isHighlighted?: boolean;
-  isTranscriptMode?: boolean;
+/** Column where the tool's output area begins (its marginLeft). */
+export const TOOL_OUT_LEFT = 3;
+
+/** One model span of a tool block: selectable rows at a known column
+ *  origin. MessageView owns the model (buildToolBlockSpans) so the row
+ *  accumulator and the rendered rows can never drift; ToolBlock renders
+ *  exactly these spans. */
+export interface ToolBlockSpan {
+  key: string;
+  rowCount: number;
+  /** Content model rows (copy/highlight). Diff rows carry the content
+   *  runs only — the gutter lives outside the model. */
+  rows: TextRow[];
+  /** Column where the span's content starts (within the content area). */
+  leftOffset: number;
+  /** Width of the content area (selection column math). */
+  width: number;
+  kind: "text" | "plain" | "opaque";
+  /** When set, rows render via DiffRow (gutter + diff background). */
+  diff?: DiffRowModel[];
 }
 
-function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
+/** Build the selectable model spans for a tool block. The head row is NOT
+ *  part of this list — MessageView reports it separately (always 1 row). */
+export function buildToolBlockSpans(
+  block: ToolUseBlock,
+  contentWidth: number,
+  isTranscriptMode: boolean,
+  theme: Theme,
+): ToolBlockSpan[] {
+  if (block.status === "rejected" || block.status === "interrupted") return [];
+  const spans: ToolBlockSpan[] = [];
+  const width = Math.max(1, contentWidth - TOOL_OUT_LEFT);
+  const expanded = block.isExpanded || isTranscriptMode;
+  const isError = block.status === "error";
+  const outputText = block.output || "";
+
+  if (outputText && (expanded || isError)) {
+    const maxOutputLines = isError && !expanded ? 12 : expanded ? (isTranscriptMode ? 1000 : 200) : 0;
+    const isDiffTool = block.toolName === "Edit" || block.toolName === "Write";
+    const hunks = isDiffTool ? parseDiffTextToHunks(outputText) : [];
+    const pushTextSpan = (key: string, runs: StyledRun[]) => {
+      const rows = wrapTextRuns(runs, width);
+      spans.push({ key, rowCount: rows.length, rows, leftOffset: TOOL_OUT_LEFT, width, kind: "text" });
+    };
+
+    if (hunks.length > 0) {
+      // Header = the first non-empty line before the first hunk (the tool
+      // result's "Edited src/foo.ts" line), dim like a result summary.
+      const firstAt = outputText.indexOf("@@");
+      const header = firstAt === -1 ? "" : outputText.slice(0, firstAt).trim().split("\n")[0] ?? "";
+      if (header) {
+        pushTextSpan("header", [{ text: header, style: { dim: true } }]);
+      }
+
+      // Stats line ("Added N lines, Removed M lines", bold numbers — the
+      // reference renders it above the diff, normal color).
+      let added = 0;
+      let removed = 0;
+      for (const h of hunks) {
+        for (const l of h.lines) {
+          if (l.startsWith("+")) added++;
+          else if (l.startsWith("-")) removed++;
+        }
+      }
+      if (added > 0 || removed > 0) {
+        const statsRuns: StyledRun[] = [];
+        if (added > 0) {
+          statsRuns.push({ text: "Added " });
+          statsRuns.push({ text: String(added), style: { bold: true } });
+          statsRuns.push({ text: ` line${added > 1 ? "s" : ""}` });
+        }
+        if (added > 0 && removed > 0) statsRuns.push({ text: ", " });
+        if (removed > 0) {
+          statsRuns.push({ text: `${added === 0 ? "R" : "r"}emoved ` });
+          statsRuns.push({ text: String(removed), style: { bold: true } });
+          statsRuns.push({ text: ` line${removed > 1 ? "s" : ""}` });
+        }
+        pushTextSpan("stats", statsRuns);
+      }
+
+      // Diff rows per hunk, truncated to the output budget, with "…"
+      // separators between hunks (StructuredDiffList semantics).
+      let budget = maxOutputLines;
+      let dropped = 0;
+      hunks.forEach((hunk, hi) => {
+        if (budget <= 0) {
+          dropped += hunk.lines.length;
+          return;
+        }
+        if (hi > 0) {
+          const sepRows = wrapTextRuns([{ text: "...", style: { dim: true } }], width);
+          spans.push({ key: `sep-${hi}`, rowCount: sepRows.length, rows: sepRows, leftOffset: TOOL_OUT_LEFT, width, kind: "text" });
+        }
+        const take = Math.min(hunk.lines.length, budget);
+        const kept = { ...hunk, lines: hunk.lines.slice(0, take) };
+        const model = buildDiffModel(kept.lines, kept.oldStart, width, false, theme);
+        const gutterWidth = model.length > 0 ? stringWidth(model[0]!.gutter) : 0;
+        const spanWidth = Math.max(1, width - gutterWidth);
+        spans.push({
+          key: `diff-${hi}`,
+          rowCount: model.length,
+          rows: model.map((r) => ({ runs: r.runs, softWrapped: false })),
+          leftOffset: TOOL_OUT_LEFT + gutterWidth,
+          width: spanWidth,
+          kind: "text",
+          diff: model,
+        });
+        budget -= take;
+        dropped += hunk.lines.length - take;
+      });
+
+      if (dropped > 0) {
+        pushTextSpan("truncated", [{ text: `… (${dropped} more lines)`, style: { dim: true } }]);
+      }
+    } else {
+      // Raw output: one wrapped Text per source line; error lines red,
+      // +/- first tokens colored like diff markers, the rest dim.
+      const allLines = outputText.split("\n");
+      const showLines = allLines.slice(0, maxOutputLines);
+      const rows: TextRow[] = [];
+      for (const line of showLines) {
+        let style: StyledRun["style"] = { dim: true };
+        if (isError) {
+          style = { color: resolveColor(theme.error) };
+        } else {
+          const trimmed = line.trimStart();
+          if (trimmed.startsWith("+")) style = { color: resolveColor(theme.diffAddedWord) };
+          else if (trimmed.startsWith("-")) style = { color: resolveColor(theme.diffRemovedWord) };
+        }
+        rows.push(...wrapLineRuns([{ text: line, style }], width));
+      }
+      spans.push({ key: "raw", rowCount: rows.length, rows, leftOffset: TOOL_OUT_LEFT, width, kind: "text" });
+      if (allLines.length > maxOutputLines) {
+        pushTextSpan("truncated", [{ text: `… (${allLines.length - maxOutputLines} more lines)`, style: { dim: true } }]);
+      }
+    }
+  }
+
+  // Collapsed summary line (done tools).
+  if (block.status === "done" && outputText && !expanded) {
+    const outputLines = outputText.trim() ? outputText.replace(/\n+$/, "").split("\n").length : 0;
+    let text: string;
+    if (["Read", "Write", "Edit", "NotebookEdit"].includes(block.toolName)) {
+      text = `${outputLines > 0 ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "done"} (ctrl+o to expand)`;
+    } else {
+      const firstLines = outputText.trim().split("\n").slice(0, 4).join("\n");
+      text = outputLines > 4 ? `${firstLines}\n  ... (+${outputLines - 4} lines, ctrl+o to expand)` : firstLines;
+    }
+    const rows = wrapTextRuns([{ text, style: { dim: true } }], width);
+    spans.push({ key: "summary", rowCount: rows.length, rows, leftOffset: TOOL_OUT_LEFT, width, kind: "text" });
+  }
+
+  return spans;
+}
+
+interface ToolBlockProps {
+  block: ToolUseBlock;
+  /** Model spans (MessageView owns them; renders exactly these rows). */
+  spans: ToolBlockSpan[];
+  isHighlighted?: boolean;
+  /** Active selection (content coords) or null. */
+  selection?: ContentSelection | null;
+  /** Content row where the block's content area begins (head + 1). */
+  startRow: number;
+  contentWidth: number;
+  theme: Theme;
+}
+
+function ToolBlock({ block, spans, isHighlighted, selection = null, startRow, contentWidth, theme }: ToolBlockProps) {
   const label = TOOL_LABELS[block.toolName] || block.toolName;
   const argPreviewRaw = formatToolArgs(block.toolName, block.input);
   const argPreview = argPreviewRaw ? `(${argPreviewRaw})` : "";
@@ -163,75 +325,43 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
   }
 
   const isRunning = block.status === "running";
-  const isError = block.status === "error";
   const isDone = block.status === "done";
+  const isError = block.status === "error";
 
-  
   const statusColor = isRunning
     ? resolveColor(theme.inactive)
     : isDone
       ? resolveColor(theme.success)
       : resolveColor(theme.error);
 
-  
-  const expanded = block.isExpanded || isTranscriptMode;
-  const maxOutputLines = expanded ? (isTranscriptMode ? 1000 : 200) : 12;
-  const outputText = block.output || "";
-  const allLines = outputText.split("\n");
-  const showLines = allLines.slice(0, maxOutputLines);
-  const truncated = allLines.length > maxOutputLines;
-  const outputLines = outputText.trim() ? outputText.replace(/\n+$/, "").split("\n").length : 0;
-
-  
-  const lineColor = (line: string): string | undefined => {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("+")) return resolveColor(theme.diffAddedWord);
-    if (trimmed.startsWith("-")) return resolveColor(theme.diffRemovedWord);
-    return undefined;
-  };
-
-  
-  
-  const cols = process.stdout.columns || 80;
-  const diffWidth = Math.max(20, cols - 12);
-  const isDiffTool = block.toolName === "Edit" || block.toolName === "Write";
-  const hunk = isDiffTool && outputText ? parseDiffTextToHunk(outputText) : null;
-
-  
-  const diffStats = hunk ? (() => {
-    let added = 0, removed = 0;
-    for (const line of hunk.lines) {
-      if (line.startsWith("+")) added++;
-      else if (line.startsWith("-")) removed++;
-    }
-    return { added, removed };
-  })() : null;
-
-  let headerText = "";
-  let displayHunk = hunk;
-
-  if (hunk && outputText) {
-    const firstHunkLine = hunk.lines[0];
-    if (firstHunkLine) {
-      const idx = outputText.indexOf(firstHunkLine);
-      if (idx !== -1) {
-        headerText = outputText.slice(0, idx).trim();
+  // Content spans at exact model rows. Each rendered row is one model row
+  // (Box height=1), so the screen always matches the selection model.
+  const fragments: React.ReactNode[] = [];
+  let acc = 0;
+  for (const span of spans) {
+    for (let i = 0; i < span.rowCount; i++) {
+      const sel = rowSelection(selection, startRow + acc + i, span.leftOffset, contentWidth);
+      const key = `${span.key}-${i}`;
+      if (span.diff && span.diff[i]) {
+        fragments.push(
+          <Box key={key} height={1} flexShrink={0} minWidth={0}>
+            <DiffRow row={span.diff[i]!} dim={false} theme={theme} contentWidth={span.width} selCols={sel} />
+          </Box>,
+        );
       } else {
-        headerText = outputText.split("\n")[0] || "";
+        fragments.push(
+          <Box key={key} height={1} flexShrink={0} minWidth={0}>
+            <RowText row={span.rows[i]!} selCols={sel} rowWidth={span.width} />
+          </Box>,
+        );
       }
     }
-
-    if (hunk.lines.length > maxOutputLines) {
-      displayHunk = {
-        ...hunk,
-        lines: hunk.lines.slice(0, maxOutputLines),
-      };
-    }
+    acc += span.rowCount;
   }
 
   return (
     <Box flexDirection="column" marginY={0}>
-      {}
+      {/* Head — always exactly 1 row (all texts truncate-end). */}
       <Box flexDirection="row">
         {isHighlighted && <Text color={theme.warning} bold>▶ </Text>}
         <StatusIcon status={isRunning ? "running" : isDone ? "done" : "error"} color={statusColor} />
@@ -241,7 +371,7 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
           </Text>
         </Box>
         {argPreviewRaw && (
-          <Box flexShrink={0} flexWrap="nowrap">
+          <Box flexShrink={1} flexWrap="nowrap" minWidth={0}>
             <Text wrap="truncate-end">{argPreview}</Text>
           </Box>
         )}
@@ -255,89 +385,9 @@ function ToolBlock({ block, isHighlighted, isTranscriptMode }: ToolBlockProps) {
         )}
       </Box>
 
-      {}
-      {outputText && (expanded || isError) && (
-        <Box flexDirection="column" marginLeft={3}>
-          {displayHunk ? (
-            <Box flexDirection="column">
-              {headerText ? (
-                <Box marginBottom={1}>
-                  <Text dimColor>{headerText}</Text>
-                </Box>
-              ) : null}
-              <Box
-                borderStyle={{
-                  top: "╌",
-                  left: "╎",
-                  right: "╎",
-                  bottom: "╌",
-                  topLeft: " ",
-                  topRight: " ",
-                  bottomLeft: " ",
-                  bottomRight: " ",
-                }}
-                borderLeft={false}
-                borderRight={false}
-                borderTop={true}
-                borderBottom={true}
-                borderColor="gray"
-                paddingX={1}
-              >
-                <StructuredDiff patch={displayHunk} width={diffWidth} />
-              </Box>
-              {diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
-                <Box marginTop={1}>
-                  <Text dimColor>
-                    {diffStats.added > 0 && (
-                      <Text>Added <Text bold>{diffStats.added}</Text> {diffStats.added === 1 ? "line" : "lines"}</Text>
-                    )}
-                    {diffStats.added > 0 && diffStats.removed > 0 && <Text>, </Text>}
-                    {diffStats.removed > 0 && (
-                      <Text>
-                        {diffStats.added === 0 ? "R" : "r"}emoved <Text bold>{diffStats.removed}</Text> {diffStats.removed === 1 ? "line" : "lines"}
-                      </Text>
-                    )}
-                  </Text>
-                </Box>
-              )}
-            </Box>
-          ) : (
-            showLines.map((line, i) => {
-              const c = lineColor(line);
-              return (
-                <Text
-                  key={`${block.toolCallId}-out-${i}`}
-                  color={isError ? resolveColor(theme.error) : c}
-                  dimColor={!isError && !c}
-                  wrap="wrap"
-                >
-                  {line || " "}
-                </Text>
-              );
-            })
-          )}
-          {truncated && (
-            <Text dimColor>
-              … ({allLines.length - maxOutputLines} more lines)
-            </Text>
-          )}
-        </Box>
-      )}
-
-      {}
-      {isDone && outputText && !expanded && (
-        <Box marginLeft={3}>
-          {["Read", "Write", "Edit", "NotebookEdit"].includes(block.toolName) ? (
-            <Text dimColor>
-              {outputLines > 0 ? `${outputLines} line${outputLines === 1 ? "" : "s"}` : "done"}
-              {" "}(ctrl+o to expand)
-            </Text>
-          ) : (
-            <Text dimColor>
-              {outputText.trim().split("\n").slice(0, 4).join("\n")}
-              {outputLines > 4 ? `\n  ... (+${outputLines - 4} lines, ctrl+o to expand)` : ""}
-            </Text>
-          )}
+      {fragments.length > 0 && (
+        <Box flexDirection="column" marginLeft={TOOL_OUT_LEFT} flexShrink={0} minWidth={0}>
+          {fragments}
         </Box>
       )}
     </Box>
