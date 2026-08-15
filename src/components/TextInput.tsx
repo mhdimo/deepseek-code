@@ -117,7 +117,7 @@ export default function Input({
       {}
       <Box flexDirection="row" paddingX={1}>
         <Text bold={!isLoading} dimColor={isLoading} color={resolveColor(color)}>
-          {isLoading ? "⏳ " : "❯ "}
+          {"❯ "}
         </Text>
         <MultilineTextInput
           value={value}

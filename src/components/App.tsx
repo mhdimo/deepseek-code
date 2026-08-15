@@ -9,14 +9,19 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import ChatPanel from "./ChatPanel.js";
+import { basename } from "node:path";
+import ChatPanel, { type ChatPanelHandle } from "./ChatPanel.js";
+import { useMouseWheelScroll, isMouseSequence } from "./useMouseWheelScroll.js";
+import { useMouseSelection, type ContentSelection } from "./useMouseSelection.js";
 import CommandPicker, { filterCommands, ALL_COMMANDS } from "./CommandPicker.js";
 import type { CommandDef } from "./CommandPicker.js";
 import ShortcutOverlay from "./ShortcutOverlay.js";
 import SessionPicker from "./SessionPicker.js";
 import StatusBar from "./StatusBar.js";
 import TextInput from "./TextInput.js";
+import Spinner from "./Spinner.js";
 import PermissionPrompt from "./PermissionPrompt.js";
+import AskUserQuestionsPrompt from "./AskUserQuestionsPrompt.js";
 import QueuePreview from "./QueuePreview.js";
 import HelpView from "./HelpView.js";
 import ExportView from "./ExportView.js";
@@ -55,6 +60,7 @@ import type {
   MCPServerConfig,
   MessageBlock,
   TodoItem,
+  AskUserQuestion,
 } from "../types/index.js";
 import {
   saveSettings,
@@ -93,6 +99,7 @@ import { searchMessages } from "../utils/transcriptSearch.js";
 import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../utils/fileHistory.js";
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
+import { matchDecision, parsePermissionSettings, escapeRuleContent } from "../services/permissions.js";
 import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
 import { safeTerminalRows } from "./terminalLayout.js";
 import { formatDirectoryTree } from "../tools/LS/LSTool.js";
@@ -116,6 +123,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Spinner sentiment — if the last user message was frustrated, the working
+  // indicator spins a tongue-in-cheek verb list instead of the normal one.
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  const spinnerSentiment = lastUserMessage
+    ? /\b(fuck|shit|bitch|asshole|bastard|damn|crap|cunt|dick|piss|bollocks|bugger|ass)\b/i.test(lastUserMessage.content)
+      ? "frustrated"
+      : "neutral"
+    : "neutral";
   const [streamingText, setStreamingText] = useState("");
   const [streamingToolUse, setStreamingToolUse] = useState<ToolUseBlock[]>([]);
   const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
@@ -128,9 +143,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [pendingPermission, setPendingPermission] = useState<{
     toolName: string;
     description: string;
+    /** Tool input — the dialog renders a faithful diff from it. */
+    input?: unknown;
     resolve: (decision: { approved: boolean; feedback?: string }) => void;
   } | null>(null);
-  const [sessionAllowAll, setSessionAllowAll] = useState(false);
+  const [pendingQuestions, setPendingQuestions] = useState<{
+    questions: AskUserQuestion[];
+    resolve: (answers: Record<string, string>) => void;
+    reject: (reason?: unknown) => void;
+  } | null>(null);
+  const [sessionRules, setSessionRules] = useState<{ allow: string[]; deny: string[] }>({ allow: [], deny: [] });
 
   
   const [activeProvider, setActiveProvider] = useState<ProviderType>(config.provider);
@@ -301,6 +323,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   
   const flushDirtyRef = useRef({ text: false, blocks: false, toolUse: false });
+  const chatRef = useRef<ChatPanelHandle>(null);
+  useMouseWheelScroll(chatRef);
+  const [selection, setSelection] = useState<ContentSelection | null>(null);
+  useMouseSelection(chatRef, setSelection);
 
   
   
@@ -922,11 +948,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   
+  // Leaving transcript mode collapses the expanded thinking blocks: the old
+  // scrollTop (often far up the transcript) points past the new content
+  // height and the viewport goes blank. Snap back to the bottom —
+  // synchronously, against the last-known collapsed content height, so the
+  // very first frame after exit is already correct (no blank flash); the
+  // deferred scrollToBottom re-pins once ink has re-laid-out the shrunken
+  // content.
+  const exitTranscriptMode = () => {
+    chatRef.current?.snapBackAfterCollapse();
+    setIsTranscriptMode(false);
+    setTimeout(() => chatRef.current?.scrollToBottom(), 0);
+  };
+
   useInput((_input, key) => {
-    
+    // Terminal mouse sequences reach every useInput handler as a raw string
+    // like `[<64;10;15M` with an empty key name — never treat them as keys.
+    if (isMouseSequence(_input)) return;
     if (key.ctrl && _input === "c") {
+      if (pendingQuestions) {
+        pendingQuestions.reject(new Error("Questions cancelled by user."));
+        setPendingQuestions(null);
+        return;
+      }
       if (isTranscriptMode) {
-        setIsTranscriptMode(false);
+        exitTranscriptMode();
         return;
       }
       if (showSessionPicker) {
@@ -988,6 +1034,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (showHistorySearch || showPluginOverlay || exportDialog || searchResults || showEffortCallout || showThemePicker) {
+      return;
+    }
+
+    if (pendingQuestions) {
       return;
     }
 
@@ -1071,17 +1121,56 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
     
     if ((key.ctrl && _input === "o") || _input === "\x0f") {
-      setIsTranscriptMode((prev) => !prev);
+      if (isTranscriptMode) {
+        exitTranscriptMode();
+      } else {
+        setIsTranscriptMode(true);
+      }
       return;
     }
 
-    
+
     if (isTranscriptMode) {
       if (key.escape || _input === "q") {
-        setIsTranscriptMode(false);
+        exitTranscriptMode();
         return;
       }
-      return; 
+      // Transcript mode scroll keys (input is unmounted here, so the full
+      // modal pager set is free — Claude Code parity: arrows = line,
+      // pgup/pgdn + ctrl+b/f = page, ctrl+u/d = half page, g/G = top/bottom).
+      if (key.upArrow) {
+        chatRef.current?.scrollBy(-1);
+        return;
+      }
+      if (key.downArrow) {
+        chatRef.current?.scrollBy(1);
+        return;
+      }
+      if (key.pageUp || (key.ctrl && _input === "b")) {
+        chatRef.current?.scrollPage(-1);
+        return;
+      }
+      if (key.pageDown || (key.ctrl && _input === "f")) {
+        chatRef.current?.scrollPage(1);
+        return;
+      }
+      if (key.ctrl && _input === "u") {
+        chatRef.current?.scrollHalf(-1);
+        return;
+      }
+      if (key.ctrl && _input === "d") {
+        chatRef.current?.scrollHalf(1);
+        return;
+      }
+      if (key.home || _input === "g") {
+        chatRef.current?.scrollToTop();
+        return;
+      }
+      if (key.end || _input === "G") {
+        chatRef.current?.scrollToBottom();
+        return;
+      }
+      return;
     }
 
     
@@ -1129,10 +1218,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
         return;
       }
-      return; 
+      return;
     }
 
-    
+    // Normal mode scroll: page keys only (arrows/home/end/ctrl belong to
+    // the text input; MultilineTextInput ignores pageUp/pageDown).
+    if (key.pageUp) {
+      chatRef.current?.scrollPage(-1);
+      return;
+    }
+    if (key.pageDown) {
+      chatRef.current?.scrollPage(1);
+      return;
+    }
+
+
     if (key.ctrl && _input === "r" && !isLoading) {
       setHistorySnapshot(inputHistory.current);
       setShowHistorySearch(true);
@@ -1183,6 +1283,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (key.escape) {
+      if (selection) {
+        // Esc clears an active mouse selection first (Claude Code parity).
+        setSelection(null);
+        return;
+      }
       if (pendingPermission) {
         pendingPermission.resolve({ approved: false, feedback: "Cancelled with Esc" });
         setPendingPermission(null);
@@ -1321,9 +1426,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   
   const requestPermission = useCallback(
-    (toolName: string, description: string): Promise<{ approved: boolean; feedback?: string }> => {
+    (toolName: string, description: string, input?: unknown): Promise<{ approved: boolean; feedback?: string }> => {
       const mode = permissionModeRef.current;
-      if (mode === "bypassPermissions" || sessionAllowAll) {
+      if (mode === "bypassPermissions") {
         return Promise.resolve({ approved: true });
       }
       if (mode === "plan") {
@@ -1331,6 +1436,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           approved: false,
           feedback: "Plan mode is read-only. Press Shift+Tab to switch to a write-enabled mode.",
         });
+      }
+      const sessionDecision = matchDecision(
+        parsePermissionSettings(sessionRules),
+        toolName,
+        input,
+        workingDirectory,
+      );
+      if (sessionDecision.decision === "allow") {
+        return Promise.resolve({ approved: true });
+      }
+      if (sessionDecision.decision === "deny") {
+        return Promise.resolve({ approved: false, feedback: "Denied by a session rule." });
       }
       if (mode === "acceptEdits" && ["Write", "Edit", "NotebookEdit"].includes(toolName)) {
         return Promise.resolve({ approved: true });
@@ -1341,10 +1458,20 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           tool: toolName,
           cwd: workingDirectory,
         });
-        setPendingPermission({ toolName, description, resolve });
+        setPendingPermission({ toolName, description, input, resolve });
       });
     },
-    [sessionAllowAll],
+    [sessionRules],
+  );
+
+  const askUserQuestions = useCallback(
+    (questions: AskUserQuestion[]): Promise<Record<string, string>> => {
+      if (questions.length === 0) return Promise.resolve({});
+      return new Promise((resolve, reject) => {
+        setPendingQuestions({ questions, resolve, reject });
+      });
+    },
+    [],
   );
 
   const handleInputChange = useCallback(
@@ -1523,10 +1650,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       for await (const event of events) {
         switch (event.type) {
           case "thinking-start":
-            
-            
+
+
             {
-              const block: MessageBlock = { type: "thinking", content: "" };
+              const block: MessageBlock = { type: "thinking", content: "", thinkingStart: Date.now() };
               streamingBlocksRef.current.push(block);
               thinkingOpenRef.current = block;
               flushDirtyRef.current.blocks = true;
@@ -1535,10 +1662,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
 
           case "thinking-delta": {
-            
-            
+
+
             if (!thinkingOpenRef.current) {
-              const block: MessageBlock = { type: "thinking", content: "" };
+              const block: MessageBlock = { type: "thinking", content: "", thinkingStart: Date.now() };
               streamingBlocksRef.current.push(block);
               thinkingOpenRef.current = block;
               flushDirtyRef.current.blocks = true;
@@ -1549,11 +1676,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
           }
 
-          case "thinking-end":
+          case "thinking-end": {
+            const block = thinkingOpenRef.current;
+            if (block) block.thinkingEnd = Date.now();
             thinkingOpenRef.current = null;
             flushDirtyRef.current.blocks = true;
             scheduleStreamingFlush();
             break;
+          }
 
           case "text-delta":
             streamingTextRef.current += event.text;
@@ -1923,6 +2053,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
           maxContextTokens: 1_000_000, 
           requestPermission,
+          askUserQuestions,
           mcpServers,
           abortController,
           onToolResult: handleToolResult,
@@ -1969,6 +2100,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               memoryDir: `${os.homedir()}/.deepseek-code/memory`,
               maxContextTokens: 1_000_000,
               requestPermission,
+              askUserQuestions,
               mcpServers,
               abortController,
               onToolResult: handleToolResult,
@@ -2047,6 +2179,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       messages,
       workingDirectory,
       requestPermission,
+      askUserQuestions,
       processAgentStream,
       activeModel,
       activeProvider,
@@ -2401,7 +2534,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         case "clear":
           setMessages([]);
           resetMemorySession();
-          setSessionAllowAll(false);
+          setSessionRules({ allow: [], deny: [] });
           setTokenCount(0);
           setInputTokens(0);
           setOutputTokens(0);
@@ -2881,7 +3014,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           if (arg === "clear" || arg === "new") {
             setMessages([]);
             resetMemorySession();
-            setSessionAllowAll(false);
+            setSessionRules({ allow: [], deny: [] });
             setTokenCount(0);
             setActiveSessionHash(null);
             setMessages([{ role: "system", content: "✓ Started a new session.", timestamp: Date.now() }]);
@@ -3948,8 +4081,13 @@ Based on the above changes:
       lastSubmittedPromptRef.current = trimmedInput;
     }
     setInput("");
+    // A new prompt supersedes any in-progress mouse selection.
+    setSelection(null);
 
-    
+    // A new prompt was sent — snap the transcript back to the bottom.
+    chatRef.current?.scrollToBottom();
+
+
     if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== trimmedInput) {
       try {
         inputHistory.current = appendHistory(trimmedInput);
@@ -4058,6 +4196,7 @@ Based on the above changes:
       {}
       <Box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
         <ChatPanel
+          ref={chatRef}
           messages={messages}
           isLoading={isLoading}
           streamingText={streamingText}
@@ -4072,10 +4211,11 @@ Based on the above changes:
           selectedToolCallId={selectedToolCallId}
           streamingBlocks={streamingBlocks}
           isTranscriptMode={isTranscriptMode}
+          selection={selection}
           freezeWelcome={
             showSettingsUI || showEffortCallout || showThemePicker || showHelp ||
             exportDialog !== null || searchResults !== null || showHistorySearch ||
-            showPluginOverlay || showSessionPicker || pendingPermission !== null
+            showPluginOverlay || showSessionPicker || pendingPermission !== null || pendingQuestions !== null
           }
         />
       </Box>
@@ -4085,10 +4225,31 @@ Based on the above changes:
         <PermissionPrompt
           toolName={pendingPermission.toolName}
           description={pendingPermission.description}
+          input={pendingPermission.input}
           isTranscriptMode={isTranscriptMode}
-          onApprove={(feedback) => {
-            if (feedback === "__allow_all__") {
-              setSessionAllowAll(true);
+          workingDir={workingDirectory}
+          onApprove={(value, feedback) => {
+            if (value === "__allow_all__") {
+              setSessionRules((prev) => ({
+                ...prev,
+                allow: [...new Set([...prev.allow, "Bash", "PowerShell"])],
+              }));
+            } else if (value === "__allow_edits__") {
+              setSessionRules((prev) => ({
+                ...prev,
+                allow: [...new Set([...prev.allow, "Edit", "Write", "NotebookEdit"])],
+              }));
+            } else if (value?.startsWith("__allow_claude_folder__:")) {
+              const dir = value.slice("__allow_claude_folder__:".length);
+              setSessionRules((prev) => ({
+                ...prev,
+                allow: [
+                  ...prev.allow,
+                  `Edit(${escapeRuleContent(dir)}/**)`,
+                  `Write(${escapeRuleContent(dir)}/**)`,
+                  `NotebookEdit(${escapeRuleContent(dir)}/**)`,
+                ],
+              }));
             }
             pendingPermission.resolve({ approved: true, feedback });
             setPendingPermission(null);
@@ -4100,8 +4261,28 @@ Based on the above changes:
         />
       )}
 
+      {pendingQuestions && (
+        <AskUserQuestionsPrompt
+          questions={pendingQuestions.questions}
+          onSubmit={(answers) => {
+            pendingQuestions.resolve(answers);
+            setPendingQuestions(null);
+          }}
+          onCancel={() => {
+            pendingQuestions.reject(new Error("Questions cancelled by user."));
+            setPendingQuestions(null);
+          }}
+        />
+      )}
+
       {}
       <Box flexShrink={0} flexDirection="column">
+      {}
+      {isLoading && (
+        <Box paddingX={1}>
+          <Spinner noun={basename(workingDirectory)} sentiment={spinnerSentiment} />
+        </Box>
+      )}
       {showThemePicker ? (
         <ThemePicker
           helpText="Esc to cancel"
@@ -4181,14 +4362,14 @@ Based on the above changes:
           borderLeft={false}
           borderRight={false}
           borderDimColor
+          marginTop={1}
           paddingLeft={2}
           paddingRight={2}
           width="100%"
-          height={3}
           alignItems="center"
         >
           <Text dimColor>
-            Showing detailed transcript · <Text bold color="cyan">ctrl+o</Text> or <Text bold color="cyan">esc</Text> or <Text bold color="cyan">q</Text> to exit
+            Showing detailed transcript · ↑↓ scroll · <Text bold color="cyan">pgup/pgdn</Text> page · <Text bold color="cyan">g/G</Text> top/bottom · <Text bold color="cyan">ctrl+o</Text>/<Text bold color="cyan">esc</Text>/<Text bold color="cyan">q</Text> to exit
           </Text>
         </Box>
       ) : (
@@ -4225,7 +4406,7 @@ Based on the above changes:
             agentName={currentAgent}
             workingDirectory={workingDirectory}
             recentFiles={currentFile ? [currentFile] : []}
-            isBlocked={!!pendingPermission}
+            isBlocked={!!pendingPermission || !!pendingQuestions}
             waitingPermission={!!pendingPermission}
             queueCount={queuedSubmissions.length}
             isPickerActive={showCommandPicker}

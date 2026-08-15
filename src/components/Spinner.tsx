@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
-import { useBlink, BLACK_CIRCLE } from "./ToolBlock.js";
 
-
-
-
-
-
+// Claude Code's spinner glyph cycle — text chars only, no emoji.
+const SPINNER_CHARS = ["·", "✢", "✳", "✶", "✻", "✽"];
+const SPINNER_CYCLE = [...SPINNER_CHARS, ...SPINNER_CHARS.slice(1, -1).reverse()];
+const SPINNER_INTERVAL = 80;
 
 
 const SPINNER_VERBS = [
@@ -36,9 +34,7 @@ const FRUSTRATED_SPINNER_VERBS = [
 ];
 
 interface SpinnerProps {
-  
   label?: string;
-  
   noun?: string;
   sentiment?: "neutral" | "frustrated";
 }
@@ -54,13 +50,20 @@ function shuffle<T>(arr: readonly T[]): T[] {
 }
 
 export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerProps) {
-  const show = useBlink();
+  const [charIdx, setCharIdx] = useState(0);
   const [verb, setVerb] = useState("Thinking");
   const [elapsed, setElapsed] = useState(0);
   const orderRef = useRef<string[]>([]);
   const idxRef = useRef(0);
 
-  
+  // Glyph animation — fast cycle so motion is unmistakable while working.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCharIdx((i) => (i + 1) % SPINNER_CYCLE.length);
+    }, SPINNER_INTERVAL);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const verbs = sentiment === "frustrated" ? FRUSTRATED_SPINNER_VERBS : SPINNER_VERBS;
     orderRef.current = shuffle(verbs);
@@ -75,19 +78,19 @@ export default function Spinner({ label, noun, sentiment = "neutral" }: SpinnerP
     return () => clearInterval(interval);
   }, [sentiment]);
 
-  
+
   useEffect(() => {
     setElapsed(0);
     const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  
+
   const text = label ?? (noun ? `${verb} ${noun}…` : `${verb}…`);
 
   return (
     <Box minWidth={2}>
-      <Text color={resolveColor(theme.claude)}>{show ? BLACK_CIRCLE : " "}</Text>
+      <Text color={resolveColor(theme.claude)}>{SPINNER_CYCLE[charIdx]}</Text>
       {text && (
         <Text dimColor>
           {" "}
