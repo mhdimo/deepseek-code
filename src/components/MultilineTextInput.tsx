@@ -19,6 +19,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
+import { isMouseSequence } from "./useMouseWheelScroll.js";
 
 
 interface MultilineTextInputProps {
@@ -42,6 +43,33 @@ function lineEnd(value: string, cursorOffset: number): number {
   let pos = cursorOffset;
   while (pos < value.length && value[pos] !== "\n") pos++;
   return pos;
+}
+
+function isWordSpace(ch: string): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+}
+
+/** Cursor at the start of the previous word: skip trailing whitespace, then
+ *  the word chars before it (readline backward-word). */
+export function skipWordLeft(value: string, pos: number): number {
+  let i = Math.min(pos, value.length);
+  while (i > 0 && isWordSpace(value[i - 1]!)) i--;
+  while (i > 0 && !isWordSpace(value[i - 1]!)) i--;
+  return i;
+}
+
+/** Cursor at the start of the next word: from inside a word, skip the word
+ *  and the whitespace after it; from whitespace, skip to the next word. */
+export function skipWordRight(value: string, pos: number): number {
+  const len = value.length;
+  let i = Math.min(pos, len);
+  if (i < len && isWordSpace(value[i]!)) {
+    while (i < len && isWordSpace(value[i]!)) i++;
+    return i;
+  }
+  while (i < len && !isWordSpace(value[i]!)) i++;
+  while (i < len && isWordSpace(value[i]!)) i++;
+  return i;
 }
 
 
@@ -153,9 +181,13 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
 
   const handleInput = useCallback(
     (input: string, key: import("ink").Key) => {
-      const pos = cursorRef.current; 
+      // Terminal mouse sequences reach every useInput handler as a raw string
+      // like `[<64;10;15M` with an empty key name — never type them into the
+      // prompt buffer.
+      if (isMouseSequence(input)) return;
+      const pos = cursorRef.current;
 
-      
+
       if (key.return && !key.meta) {
         if (!isPickerActiveRef.current) {
           onSubmitRef.current();
@@ -197,7 +229,26 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      
+      // Word-jump cursor movement: Option/Alt+Left/Right (macOS; xterm
+      // modifier form `\x1b[1;3D/C`), Ctrl+Left/Right (Windows Terminal
+      // `\x1b[1;5D/C`), and the readline bindings ESC+b / ESC+f (iTerm's
+      // default Option+arrow form, delivered as meta + 'b'/'f').
+      let wordDir = 0;
+      if (key.leftArrow && (key.meta || key.ctrl)) wordDir = -1;
+      else if (key.rightArrow && (key.meta || key.ctrl)) wordDir = 1;
+      else if (key.meta && (input === "b" || input === "B")) wordDir = -1;
+      else if (key.meta && (input === "f" || input === "F")) wordDir = 1;
+      if (wordDir !== 0) {
+        const curVal = bufferRef.current;
+        const nextPos = wordDir < 0 ? skipWordLeft(curVal, pos) : skipWordRight(curVal, pos);
+        if (nextPos !== pos) {
+          cursorRef.current = nextPos;
+          setCursorOffset(nextPos);
+        }
+        return;
+      }
+
+
       if (key.leftArrow) {
         if (pos > 0) {
           const nextPos = pos - 1;
@@ -207,7 +258,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         return;
       }
 
-      
+
       if (key.rightArrow) {
         if (pos < bufferRef.current.length) {
           const nextPos = pos + 1;
