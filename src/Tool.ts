@@ -8,19 +8,26 @@
 
 
 import type { z } from "zod";
-import type { PermissionRuleset, ProviderConfig } from "./types/index.js";
+import type { AskUserQuestion, PermissionRuleset, ProviderConfig } from "./types/index.js";
 
 
 
 export type PermissionCallback = (
   toolName: string,
   description: string,
+  /** Tool input (when the tool provides one) — the permission UI renders
+   *  a faithful diff from it (file_path/old_string/new_string/content). */
+  input?: unknown,
 ) => Promise<PermissionDecision>;
 
 export interface PermissionDecision {
   approved: boolean;
   feedback?: string;
 }
+
+export type AskUserQuestionsCallback = (
+  questions: AskUserQuestion[],
+) => Promise<Record<string, string>>;
 
 
 
@@ -63,9 +70,7 @@ export interface ToolUseContext {
   getPlanMode(): boolean;
   setPlanMode(mode: boolean): void;
   
-  askUserQuestions?: (
-    questions: import("./types/index.js").AskUserQuestion[],
-  ) => Promise<Record<string, string>>;
+  askUserQuestions?: AskUserQuestionsCallback;
   
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
   

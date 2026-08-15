@@ -10,7 +10,7 @@
 import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-sdk-cpp";
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
-import type { ToolUseContext, PermissionCallback } from "../../Tool.js";
+import type { AskUserQuestionsCallback, ToolUseContext, PermissionCallback } from "../../Tool.js";
 import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem, Message } from "../../types/index.js";
 import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -34,6 +34,7 @@ export function getOrCreateMemorySession(opts: {
   memoryDir: string;
   maxContextTokens?: number;
   requestPermission?: PermissionCallback;
+  askUserQuestions?: AskUserQuestionsCallback;
   mcpServers?: Record<string, MCPServerConfig>;
   abortController?: AbortController;
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
@@ -41,7 +42,7 @@ export function getOrCreateMemorySession(opts: {
   onTodosChange?: (todos: TodoItem[]) => void;
   history?: Message[];
 }): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, askUserQuestions, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
 
   
   
@@ -57,6 +58,7 @@ export function getOrCreateMemorySession(opts: {
     if (requestPermission) {
       cache.context.requestPermission = requestPermission;
     }
+    cache.context.askUserQuestions = askUserQuestions;
     if (abortController) {
       cache.context.abortController = abortController;
     }
@@ -86,6 +88,7 @@ export function getOrCreateMemorySession(opts: {
     permissions: agentConfig.permissions,
     abortController: abortController ?? new AbortController(),
     requestPermission: requestPermission ?? (() => Promise.resolve({ approved: true })),
+    askUserQuestions,
     messages: [],
     getTodos: () => todos,
     setTodos: (t) => { todos = t; },
