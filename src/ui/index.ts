@@ -27,3 +27,9 @@ export type { StatusIconProps } from "./design-system/StatusIcon.js";
 
 export { ProgressBar } from "./design-system/ProgressBar.js";
 export type { ProgressBarProps } from "./design-system/ProgressBar.js";
+
+export { Select } from "./design-system/Select.js";
+export type { SelectOption, SelectProps } from "./design-system/Select.js";
+
+export { Dialog } from "./design-system/Dialog.js";
+export type { DialogProps } from "./design-system/Dialog.js";
