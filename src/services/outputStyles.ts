@@ -16,7 +16,12 @@
 
 
 
-export type OutputStyleSource = "built-in" | "custom";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { parseSkillMarkdown } from "../skills/skillService.js";
+
+export type OutputStyleSource = "built-in" | "custom" | "project" | "user";
 
 
 export interface OutputStyleConfig {
@@ -189,12 +194,101 @@ export function composeWithSystemPrompt(
   if (!section) return systemPrompt;
 
   if (config.keepIdentity === false) {
-    
-    
+
+
     return section;
   }
 
   const base = (systemPrompt ?? "").trim();
   if (!base) return section;
   return `${base}\n\n${section}`;
+}
+
+// ── Custom style discovery ──────────────────────────────────────────────
+
+function fallbackStyleDescription(body: string, styleName: string): string {
+  const line = body.split(/\r?\n/).find((l) => {
+    const t = l.trim();
+    return t.length > 0 && !t.startsWith("#");
+  });
+  if (!line) return `Custom ${styleName} output style`;
+  const trimmed = line.trim().replace(/^[-*+]\s+/, "");
+  return trimmed.length > 200 ? `${trimmed.slice(0, 199)}…` : trimmed;
+}
+
+function loadOutputStylesFromDir(dir: string, source: "project" | "user"): OutputStyleConfig[] {
+  if (!existsSync(dir)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: OutputStyleConfig[] = [];
+  for (const entry of entries) {
+    if (!entry.toLowerCase().endsWith(".md")) continue;
+    const filePath = join(dir, entry);
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    const styleName = entry.replace(/\.md$/i, "");
+    const { name, description, body } = parseSkillMarkdown(raw);
+    out.push({
+      name: name || styleName,
+      description: description || fallbackStyleDescription(body, styleName),
+      prompt: body.trim(),
+      source,
+    });
+  }
+  return out;
+}
+
+/**
+ * Discovers custom output styles from `.claude/output-styles/*.md` in the
+ * project and `~/.claude/output-styles` user dirs (project wins on name
+ * collisions), registers them so listOutputStyles() merges them after the
+ * built-ins, and returns them. Mirrors Claude Code's discovery; async so
+ * pickers can show a loading state while the scan resolves.
+ */
+export async function loadCustomOutputStyles(
+  projectRoot?: string,
+  userRoot?: string,
+): Promise<OutputStyleConfig[]> {
+  const sources: Array<[string, "user" | "project"]> = [
+    [join(userRoot ?? homedir(), ".claude", "output-styles"), "user"],
+    [join(projectRoot ?? process.cwd(), ".claude", "output-styles"), "project"],
+  ];
+  const byName = new Map<string, OutputStyleConfig>();
+  for (const [dir, source] of sources) {
+    for (const style of loadOutputStylesFromDir(dir, source)) {
+      byName.set(style.name.toLowerCase(), style);
+    }
+  }
+  const discovered = [...byName.values()];
+  for (const style of discovered) registerOutputStyle(style);
+  return discovered;
+}
+
+/** Synchronous variant for callers that can't await (e.g. the session
+ *  builder) — scans the same dirs and registers custom styles in place. */
+export function loadCustomOutputStylesSync(
+  projectRoot?: string,
+  userRoot?: string,
+): OutputStyleConfig[] {
+  const sources: Array<[string, "user" | "project"]> = [
+    [join(userRoot ?? homedir(), ".claude", "output-styles"), "user"],
+    [join(projectRoot ?? process.cwd(), ".claude", "output-styles"), "project"],
+  ];
+  const byName = new Map<string, OutputStyleConfig>();
+  for (const [dir, source] of sources) {
+    for (const style of loadOutputStylesFromDir(dir, source)) {
+      byName.set(style.name.toLowerCase(), style);
+    }
+  }
+  const discovered = [...byName.values()];
+  for (const style of discovered) registerOutputStyle(style);
+  return discovered;
 }
