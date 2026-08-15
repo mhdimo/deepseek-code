@@ -82,7 +82,7 @@ export default function WelcomeScreen({
   void frozen;
   const mascot = MASCOT_FRAMES[0];
   const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
-  const color = (token: keyof Theme): string => resolveColor(theme[token]);
+  const color = (token: keyof Theme): string => resolveColor(theme[token]!);
 
   const cwdDisplay = useMemo(() => {
     if (!workingDirectory) return "~";

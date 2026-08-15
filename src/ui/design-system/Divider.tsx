@@ -66,7 +66,7 @@ export function Divider({
   
   const [themeName] = useTheme();
   const theme = getTheme(themeName);
-  const resolvedColor = color ? resolveColor(theme[color]) : undefined;
+  const resolvedColor = color ? resolveColor(theme[color]!) : undefined;
 
   if (title) {
     const titleWidth = displayWidth(title) + 2; 

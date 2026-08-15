@@ -86,7 +86,7 @@ export default function ThemedText({
       : dimColor
         ? resolveColor(theme.inactive)
         : resolveColorValue(color, theme);
-  const resolvedBackgroundColor = backgroundColor ? resolveColor(theme[backgroundColor]) : undefined;
+  const resolvedBackgroundColor = backgroundColor ? resolveColor(theme[backgroundColor]!) : undefined;
 
   return (
     <Text

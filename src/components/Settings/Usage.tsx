@@ -74,7 +74,7 @@ interface LimitBarProps {
 
 function LimitBar({ title, utilization, subtext }: LimitBarProps): React.ReactElement {
   const theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
-  const color = (token: keyof Theme): string => resolveColor(theme[token]);
+  const color = (token: keyof Theme): string => resolveColor(theme[token]!);
   const usedText = `${Math.floor(utilization)}% used`;
   const fullSubtext = subtext ? `Resets ${subtext}` : undefined;
   return (

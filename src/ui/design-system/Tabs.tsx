@@ -205,7 +205,7 @@ export function Tabs({
   
   const [themeName] = useTheme();
   const theme = getTheme(themeName);
-  const resolvedColor = color ? resolveColor(theme[color]) : undefined;
+  const resolvedColor = color ? resolveColor(theme[color]!) : undefined;
   const resolvedInverseText = resolveColor(theme.inverseText);
 
   return (

@@ -18,6 +18,7 @@ import type { DeepSeekCodeConfig, ProviderConfig } from "../types/index.js";
 
 export type ErrorClass = "overload" | "prompt-too-long" | null;
 
+// Match API error codes/messages: 429 (rate-limit/overload) and 413 (context too long).
 const OVERLOAD_RE = /429|overload/i;
 const PROMPT_TOO_LONG_RE = /413|prompt is too long|maximum context length/i;
 

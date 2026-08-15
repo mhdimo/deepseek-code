@@ -32,6 +32,11 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
 }
 
 
+/**
+ * Maps UI-level effort tiers to the closest provider-supported level.
+ * The OpenAI-compatible API only accepts off|low|medium|high|max, so the
+ * extra UI tier "xhigh" collapses into "high".
+ */
 export function mapEffortToProvider(effort: EffortLevel): EffortLevel {
   switch (effort) {
     case "medium":

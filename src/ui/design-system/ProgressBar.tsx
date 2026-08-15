@@ -52,8 +52,8 @@ export function ProgressBar({
 
   return (
     <Text
-      color={fillColor ? resolveColor(theme[fillColor]) : undefined}
-      backgroundColor={emptyColor ? resolveColor(theme[emptyColor]) : undefined}
+      color={fillColor ? resolveColor(theme[fillColor]!) : undefined}
+      backgroundColor={emptyColor ? resolveColor(theme[emptyColor]!) : undefined}
     >
       {segments.join("")}
     </Text>

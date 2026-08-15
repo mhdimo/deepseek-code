@@ -35,7 +35,7 @@ const NAME_WIDTH = 14;
 
 export default function HelpView({ version }: HelpViewProps) {
   const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
-  const color = (token: keyof Theme): string => resolveColor(theme[token]);
+  const color = (token: keyof Theme): string => resolveColor(theme[token]!);
 
   const renderCommand = (cmd: HelpCommand) => (
     <Box key={cmd.name} flexDirection="column" marginLeft={2}>
