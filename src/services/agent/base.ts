@@ -5,12 +5,15 @@
 
 
 
-import { streamText as bindingStreamText, type Model as BindingModel } from "ai-sdk-cpp";
+import { type Model as BindingModel } from "ai-sdk-cpp";
+import { getOrCreateMemorySession, releaseMemorySession } from "./agentSession.js";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentConfig, AgentEvent, Message, ProviderConfig } from "../../types/index.js";
 import { createModel } from "../provider/registry.js";
-import { getTools, toolsToBindingFormat } from "../../tools.js";
-import type { PermissionCallback, ToolUseContext } from "../../Tool.js";
-import { buildSystemInstructions } from "../../utils/toolUtils.js";
+import type { PermissionCallback } from "../../Tool.js";
 
 
 
@@ -66,7 +69,7 @@ export class Agent {
     this.abortController?.abort();
   }
 
-  
+
   async *run(
     userMessage: string,
     history: Message[],
@@ -76,44 +79,40 @@ export class Agent {
     const runAbortController = new AbortController();
     this.abortController = runAbortController;
 
-    const context: ToolUseContext = {
+    // Drive the native Agent + Session loop through the SAME construction the
+    // main chat uses (getOrCreateMemorySession) so the C++ side owns tool
+    // execution, retries, and step limits. A unique sessionKey gives each
+    // subagent run its own session (concurrent-safe); the throwaway memoryDir
+    // keeps subagent memory isolated from the main session's. Direct
+    // Agent/Session construction here crashed the native tool callback, while
+    // this exact path is stable — reuse it rather than mirror it.
+    const subagentMemoryDir = join(tmpdir(), "dsc-subagents", randomUUID());
+    try {
+      mkdirSync(subagentMemoryDir, { recursive: true });
+    } catch {
+      // best-effort — an unwritable dir only skips memory features
+    }
+
+    const ms = getOrCreateMemorySession({
       providerConfig: this.providerConfig,
+      agentConfig: this.config,
       workingDir,
-      permissions: this.config.permissions,
+      memoryDir: subagentMemoryDir,
+      requestPermission: requestPermission ?? undefined,
       abortController: runAbortController,
-      requestPermission: requestPermission ?? (() => Promise.resolve({ approved: true })),
-      messages: history,
-      getTodos: () => [],
-      setTodos: () => {},
-      getTasks: () => [],
-      setTasks: () => {},
-      getPlanMode: () => false,
-      setPlanMode: () => {},
-      lastPermissionWaitMs: 0,
-      recordPermissionWait: () => {},
-      consumePermissionWaitMs: () => 0,
-    };
-    const tools = toolsToBindingFormat(getTools(this.config.permissions), context);
+      history: history.slice(-30),
+      sessionKey: `subagent-${randomUUID().slice(0, 8)}`,
+    });
+    // Hold the whole MemorySession (not just .session): the JS Agent wrapper
+    // owns the native ToolSet — dropping it mid-run lets GC free the toolset
+    // under the native loop's feet (SIGTRAP). Released in the finally below.
+    const session = ms.session;
 
-    const apiMessages: Array<{ role: string; content: string }> = history
-      .filter((m) => m.role !== "system")
-      .slice(-30)
-      .map((m) => ({ role: m.role, content: m.content }));
-    apiMessages.push({ role: "user", content: userMessage });
 
-    
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     try {
-      for await (const ev of bindingStreamText({
-        model: this.model,
-        system: buildSystemInstructions(this.config.systemPrompt, workingDir),
-        messages: apiMessages,
-        tools,
-        maxSteps: this.config.maxSteps || 25,
-        temperature: this.config.temperature,
-        maxOutputTokens: this.config.maxTokens,
-      })) {
+      for await (const ev of session.sendStream(userMessage)) {
         if (runAbortController.signal.aborted) break;
         switch (ev.type) {
           case "text_delta":
@@ -162,6 +161,10 @@ export class Agent {
       if (this.abortController === runAbortController) {
         this.abortController = null;
       }
+      // The run is done — drop the cache entry so this subagent's native
+      // session can be collected (ms stays referenced by this frame's scope
+      // until the generator is closed, covering late tool callbacks).
+      releaseMemorySession(session);
     }
   }
 }

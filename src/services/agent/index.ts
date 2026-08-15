@@ -7,6 +7,14 @@
 
 import { Agent } from "./base.ts";
 import type { AgentConfig, AgentName, ProviderConfig } from "../../types/index.js";
+import {
+  getDiscoveredAgent,
+  listDiscoveredAgents,
+  toolGrantsExecute,
+  toolGrantsWrite,
+  type DiscoveredAgentDef,
+} from "../agents/agentDiscovery.js";
+import { colorForAgent } from "../teams/teamService.js";
 
 
 
@@ -127,12 +135,19 @@ Review guidelines:
 
 
 export class AgentManager {
-  createAgent(name: AgentName, provider: ProviderConfig): Agent {
-    const config = AGENTS[name];
+  createAgent(name: string, provider: ProviderConfig): Agent {
+    const config = this.resolveConfig(name);
     if (!config) {
-      throw new Error(`Unknown agent: ${name}. Available: ${Object.keys(AGENTS).join(", ")}`);
+      throw new Error(`Unknown agent: ${name}. Available: ${this.listAgentNames().join(", ")}`);
     }
     return new Agent(config, provider);
+  }
+
+  /** Built-in or discovered custom agent (`.claude/agents/*.md`). */
+  resolveConfig(name: string): AgentConfig | undefined {
+    if (name in AGENTS) return AGENTS[name as AgentName];
+    const def = getDiscoveredAgent(name);
+    return def ? configFromDiscovered(def) : undefined;
   }
 
   getConfig(name: AgentName): AgentConfig {
@@ -142,8 +157,64 @@ export class AgentManager {
   listAgents(): AgentConfig[] {
     return Object.values(AGENTS);
   }
+
+  listAgentNames(): string[] {
+    return [...Object.keys(AGENTS), ...listDiscoveredAgents().map((d) => d.name)];
+  }
+
+  /** The /agent picker feed: built-ins plus discovered custom agents. */
+  listSelectableAgents(): {
+    name: string;
+    displayName: string;
+    description: string;
+    maxSteps?: number;
+    permissions: { allowWrite: boolean; allowExecute: boolean };
+    /** Teammate color name when one is assigned via /teams. */
+    color?: string;
+  }[] {
+    const builtIns = Object.values(AGENTS).map((c) => ({
+      name: c.name,
+      displayName: c.displayName,
+      description: c.description,
+      maxSteps: c.maxSteps,
+      permissions: { allowWrite: c.permissions.allowWrite, allowExecute: c.permissions.allowExecute },
+      color: colorForAgent(c.name),
+    }));
+    const discovered = listDiscoveredAgents().map((d) => {
+      const config = configFromDiscovered(d);
+      return {
+        name: d.name,
+        displayName: d.name,
+        description: d.description || "Custom agent",
+        maxSteps: config.maxSteps,
+        permissions: { allowWrite: config.permissions.allowWrite, allowExecute: config.permissions.allowExecute },
+        color: colorForAgent(d.name) ?? d.color,
+      };
+    });
+    return [...builtIns, ...discovered];
+  }
 }
 
 export const agentManager = new AgentManager();
+
+/** Turn a discovered `.claude/agents` def into a runnable AgentConfig: the
+ *  prompt body becomes the systemPrompt; frontmatter tools decide write and
+ *  execute access (default read-only). */
+function configFromDiscovered(def: DiscoveredAgentDef): AgentConfig {
+  return {
+    name: def.name,
+    displayName: def.name,
+    description: def.description || "Custom agent",
+    systemPrompt: def.prompt || def.description || "Custom agent",
+    temperature: 0.3,
+    maxSteps: 25,
+    permissions: {
+      allowRead: true,
+      allowWrite: toolGrantsWrite(def.tools),
+      allowExecute: toolGrantsExecute(def.tools),
+      allowNetwork: false,
+    },
+  };
+}
 
 export { Agent } from "./base.ts";

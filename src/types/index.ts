@@ -114,11 +114,25 @@ export interface ToolResult {
 
 export type AgentName = "code" | "plan" | "review";
 
+/** Agent color names (Claude Code agentColorManager parity). */
+export type AgentColorName =
+  | "red" | "blue" | "green" | "yellow"
+  | "purple" | "orange" | "pink" | "cyan";
+
+/** A named team of agents with per-teammate colors, persisted in settings. */
+export interface TeamConfig {
+  name: string;
+  description?: string;
+  teammates: string[];
+  colors: Record<string, AgentColorName>;
+}
+
 
 export type ThinkingMode = "off" | "whale";
 
 export interface AgentConfig {
-  name: AgentName;
+  /** Built-in name or a discovered custom-agent name (`.claude/agents/*.md`). */
+  name: AgentName | (string & {});
   displayName: string;
   description: string;
   systemPrompt: string;
