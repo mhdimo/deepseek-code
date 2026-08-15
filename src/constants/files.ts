@@ -168,6 +168,49 @@ export function hasBinaryExtension(filePath: string): boolean {
   return BINARY_EXTENSIONS.has(getExtension(filePath));
 }
 
+/** Extensions whose comments start with '#' (the code highlighter branches
+ *  on these; everything else is treated as a C-like language). */
+const HASH_COMMENT_EXTENSIONS = new Set<string>([
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "py",
+  "rb",
+  "yml",
+  "yaml",
+  "toml",
+  "pl",
+  "r",
+  "ps1",
+  "ini",
+  "conf",
+  "properties",
+  "gitignore",
+]);
+
+const HASH_COMMENT_FILENAMES = new Set<string>([
+  "makefile",
+  "dockerfile",
+  "gemfile",
+  "rakefile",
+  ".gitignore",
+  ".dockerignore",
+  ".zshrc",
+  ".bashrc",
+  ".bash_profile",
+  ".profile",
+]);
+
+/** Map a file path to a syntax-highlighting language name ("" = C-like
+ *  fallback, matching Markdown's code-block rendering). */
+export function getLanguageFromPath(filePath: string): string {
+  const base = (filePath.split("/").pop() ?? filePath).toLowerCase();
+  if (HASH_COMMENT_FILENAMES.has(base)) return base;
+  const ext = getExtension(filePath);
+  return HASH_COMMENT_EXTENSIONS.has(ext) ? ext : "";
+}
+
 
 export function isDeviceOrProcPath(normalizedPath: string): boolean {
   if (!normalizedPath.startsWith("/")) return false;

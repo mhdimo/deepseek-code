@@ -14,6 +14,7 @@ import {
   asAddedLines,
   previewRawBlock,
 } from "../../utils/toolUtils.js";
+import { getPatchFromContents, hunksToDiffText } from "../../utils/diff.js";
 import { FILE_WRITE_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
 
@@ -74,7 +75,7 @@ export const FileWriteTool = buildTool({
         : asAddedLines(input.content, 20),
     ].join("\n");
 
-    return context.requestPermission("Write", preview);
+    return context.requestPermission("Write", preview, input);
   },
 
   call: async (input, context) => {
@@ -96,15 +97,17 @@ export const FileWriteTool = buildTool({
       await ensureDir(fullPath);
       await writeFile(fullPath, content, "utf-8");
 
-      const diffPreview = exists
-        ? buildSimpleDiffPreview(previousContent, content, 80)
-        : asAddedLines(content, 80);
+      // Real hunks against the previous content for overwrites; plain
+      // added-lines preview for brand-new files.
+      const diffHunks = exists
+        ? getPatchFromContents({ filePath: relPath, oldContent: previousContent, newContent: content })
+        : null;
 
       const result = [
         `Wrote ${relPath} (${content.split("\n").length} lines)`,
         "",
-        exists ? "Diff preview:" : "Added lines:",
-        previewRawBlock(diffPreview, 80, 2500),
+        diffHunks && diffHunks.length > 0 ? "Diff preview:" : "Added lines:",
+        diffHunks && diffHunks.length > 0 ? hunksToDiffText(diffHunks) : asAddedLines(content, 80),
       ].join("\n");
 
       return { data: result };

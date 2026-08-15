@@ -12,6 +12,7 @@ import {
   buildSimpleDiffPreview,
   previewRawBlock,
 } from "../../utils/toolUtils.js";
+import { getPatchForDisplay, hunksToDiffText } from "../../utils/diff.js";
 import { FILE_EDIT_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
 
@@ -69,7 +70,7 @@ export const FileEditTool = buildTool({
       ),
     ].join("\n");
 
-    return context.requestPermission("Edit", preview);
+    return context.requestPermission("Edit", preview, input);
   },
 
   call: async (input, context) => {
@@ -107,12 +108,18 @@ export const FileEditTool = buildTool({
 
       await writeFile(fullPath, newContent, "utf-8");
 
-      const diffPreview = buildSimpleDiffPreview(old_string, new_string, 80);
+      // Real hunks against the actual file (line numbers + context), the
+      // way Claude Code renders its tool-result diffs.
+      const hunks = getPatchForDisplay({
+        filePath: relPath,
+        fileContents: content,
+        edits: [{ old_string, new_string, replace_all: replaceAll }],
+      });
       const result = [
         `Edited ${relPath}`,
         "",
         "Diff preview:",
-        previewRawBlock(diffPreview, 80, 2500),
+        hunksToDiffText(hunks),
       ].join("\n");
 
       return { data: result };
