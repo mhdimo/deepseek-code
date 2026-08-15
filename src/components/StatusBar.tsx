@@ -10,6 +10,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
+import { parseAnsi } from "../utils/statusline.js";
 import type { AgentName, ThinkingMode, TokenBudget } from "../types/index.js";
 import type { EffortLevel } from "../state/storage.js";
 
@@ -39,7 +40,9 @@ interface StatusBarProps {
   tokenBudget?: TokenBudget;
   
   statusLineOutput?: string | null;
-  
+  /** settings.statusLine.padding — spacing for the bar when a statusline is configured. */
+  statusLinePadding?: number;
+
   tasks?: { done: number; total: number; inProgress: number; expanded: boolean };
 }
 
@@ -83,6 +86,28 @@ function estimateCost(model: string, tokens: number): number {
   return (tokens / 1_000_000) * perMillion;
 }
 
+/** Render statusline stdout ANSI-aware; unsupported escapes were stripped by parseAnsi. */
+function StatusLineText({ text }: { text: string }) {
+  return (
+    <>
+      {parseAnsi(text).map((seg, i) => (
+        <Text
+          key={i}
+          color={seg.color}
+          backgroundColor={seg.backgroundColor}
+          bold={seg.bold}
+          dimColor={seg.dim}
+          underline={seg.underline}
+          inverse={seg.inverse}
+          strikethrough={seg.strikethrough}
+        >
+          {seg.text}
+        </Text>
+      ))}
+    </>
+  );
+}
+
 export default function StatusBar({
   model,
   agentName,
@@ -102,6 +127,7 @@ export default function StatusBar({
   permissionMode = "default",
   tokenBudget,
   statusLineOutput,
+  statusLinePadding,
   tasks,
 }: StatusBarProps) {
   const cols = process.stdout.columns || 80;
@@ -157,7 +183,7 @@ export default function StatusBar({
         : "? for shortcuts · ↑/↓ for history";
 
   return (
-    <Box paddingX={2} flexDirection="row" justifyContent="space-between">
+    <Box paddingX={statusLinePadding ?? 2} flexDirection="row" justifyContent="space-between">
       {}
       <Box flexShrink={1}>
         <Text wrap="truncate-end">
@@ -217,7 +243,7 @@ export default function StatusBar({
       {}
       <Box flexShrink={1}>
         <Text dimColor wrap="truncate-end">
-          {statusLineOutput ? statusLineOutput : ` · ${rightHints}`}
+          {statusLineOutput ? <StatusLineText text={statusLineOutput} /> : ` · ${rightHints}`}
         </Text>
       </Box>
     </Box>
