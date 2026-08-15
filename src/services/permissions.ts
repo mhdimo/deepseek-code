@@ -18,6 +18,8 @@
 
 
 
+import { loadSettings, saveSettings } from "../state/storage.js";
+
 export type PermissionBehavior = "allow" | "deny" | "ask";
 
 
@@ -343,12 +345,25 @@ function extractSubjects(
   toolName: string,
   input: Record<string, unknown>,
   workingDir: string,
-): { kind: "path" | "shell" | "generic"; values: string[] } {
+): { kind: "path" | "shell" | "domain" | "generic"; values: string[] } {
   const tn = toolName.toLowerCase();
 
   if (tn === "bash" || tn === "bashoutput") {
     const cmd = pickString(input, ["command", "cmd"]) ?? "";
     return { kind: "shell", values: [cmd] };
+  }
+
+  // WebFetch rules match on the URL's hostname (rule content "domain:<host>").
+  if (tn === "webfetch") {
+    const url = pickString(input, ["url"]);
+    if (url) {
+      try {
+        const hostname = new URL(url).hostname;
+        if (hostname) return { kind: "domain", values: [hostname] };
+      } catch {
+        // Malformed URL — fall through to the generic matcher.
+      }
+    }
   }
 
   
@@ -449,14 +464,22 @@ export function matchToolInput(
     if (kind === "shell") {
       if (matchShellCommand(pat, v)) return true;
     } else if (kind === "path") {
-      
+
       const expandedPat =
         pat === "~" || pat.startsWith("~/")
           ? resolveAgainst(workingDir, pat)
           : pat;
       if (matchGlob(expandedPat, v)) return true;
+    } else if (kind === "domain") {
+      // Rule content is "domain:<host>" (optionally a wildcard like "*.example.com").
+      const domain = pat.startsWith("domain:") ? pat.slice("domain:".length) : pat;
+      if (hasUnescapedWildcard(domain) || domain.includes("*")) {
+        if (matchWildcardPattern(domain, v)) return true;
+      } else if (v === domain) {
+        return true;
+      }
     } else {
-      
+
       if (hasUnescapedWildcard(pat) || pat.includes("*")) {
         if (matchWildcardPattern(pat, v)) return true;
       } else if (v.includes(pat)) {
@@ -555,4 +578,119 @@ export function parsePermissionSettings(permissions: {
     ...parseRules(permissions.ask ?? [], "ask"),
     ...parseRules(permissions.deny ?? [], "deny"),
   ];
+}
+
+/* ------------------------------------------------------------------ */
+/* Prompt-facing helpers (persist, explanation, path + bash utilities) */
+/* ------------------------------------------------------------------ */
+
+/** Best-effort persist of a `ToolName(content)` allow rule into the user
+ *  settings (deduped). A failed persist must not crash the caller. */
+export function persistAllowRule(rule: string): void {
+  try {
+    const settings = loadSettings();
+    const allow = settings.permissions?.allow ?? [];
+    if (!allow.includes(rule)) {
+      saveSettings({
+        ...settings,
+        permissions: {
+          ...settings.permissions,
+          allow: [...allow, rule],
+        },
+      });
+    }
+  } catch {
+    // A failed persist must not crash the prompt dialog.
+  }
+}
+
+/** Format a parsed rule for display, e.g. `Bash(npm run:*)`. */
+export function formatRuleForDisplay(rule: ParsedRule): string {
+  return rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName;
+}
+
+/** Dim explanation line for a prompt raised by a matched ask rule, or null
+ *  when the decision came from elsewhere (no rule, deny/allow). */
+export function permissionRuleExplanation(decision: MatchDecision): string | null {
+  if (decision.decision !== "ask" || !decision.rule) return null;
+  return `Permission rule ${formatRuleForDisplay(decision.rule)} requires confirmation for this tool. /permissions to update rules`;
+}
+
+/** Case-insensitive "path is inside folder" check with a separator boundary
+ *  (macOS/Windows filesystems are case-insensitive, so `.cLauDe/Settings.json`
+ *  must count as inside `.claude/`). The folder itself is NOT inside. */
+export function isPathInFolder(path: string, folder: string): boolean {
+  const p = path.toLowerCase();
+  const f = folder.toLowerCase();
+  return p.startsWith(f + "/") || p.startsWith(f + "\\");
+}
+
+/** True when `path` is the working path itself or lives underneath it.
+ *  Normalizes the macOS /var -> /private/var and /tmp -> /private/tmp
+ *  symlinks and compares case-insensitively so resolved input paths match
+ *  an unresolved working directory. */
+export function pathInWorkingPath(path: string, workingPath: string): boolean {
+  const normalize = (p: string) =>
+    p
+      .replace(/^\/private\/var\//, "/var/")
+      .replace(/^\/private\/tmp(\/|$)/, "/tmp$1")
+      .toLowerCase();
+  const p = normalize(path);
+  const w = normalize(workingPath);
+  if (p === w) return true;
+  if (p.startsWith(w + "/") || p.startsWith(w + "\\")) return true;
+  return false;
+}
+
+/** Clamp multi-line text to `maxLines`, appending an ellipsis when truncated. */
+export function clampLines(text: string, maxLines: number): string {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return `${lines.slice(0, maxLines).join("\n")}\n…`;
+}
+
+const REDIRECTION_RE = /\s*[12]?>>?(\s*&[12]|\s*[^\s|;&]*)/g;
+
+/** Strip output redirections (`> f`, `2>&1`, `>> log`) so filenames don't
+ *  show up as part of a suggested command prefix. */
+export function stripBashRedirections(command: string): string {
+  return command.replace(REDIRECTION_RE, "").trim();
+}
+
+/** Command-name shape: lowercase letters/digits with optional `-` segments
+ *  (e.g. `npm`, `git`, `docker-compose`). */
+const COMMAND_NAME_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** Shells/wrappers a bare one-word prefix rule would over-permit (a `bash:*`
+ *  rule auto-approves arbitrary code via `bash -c`, `sudo:*` any sudo call). */
+const BARE_SHELL_PREFIXES = new Set([
+  "sh", "bash", "zsh", "fish", "csh", "tcsh", "ksh", "dash", "cmd",
+  "powershell", "pwsh", "env", "xargs", "nice", "stdbuf", "nohup",
+  "timeout", "time", "sudo", "doas", "pkexec",
+]);
+
+/** Suggest a stable command prefix for a "don't ask again" Bash rule.
+ *  Strips redirections first; prefers the two-word subcommand form
+ *  (`npm run`), falls back to the bare command (`git`), and declines for
+ *  paths, flags, bare shells, and empty input. */
+export function suggestBashPrefix(command: string): string | null {
+  const tokens = stripBashRedirections(command).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  // Skip leading env-var assignments (NODE_ENV=prod npm run build).
+  let i = 0;
+  while (i < tokens.length && ENV_ASSIGN_RE.test(tokens[i]!)) i++;
+  const rest = tokens.slice(i);
+  if (rest.length === 0) return null;
+
+  // Two words when the second looks like a subcommand ("commit", "run", ...).
+  if (rest.length >= 2 && COMMAND_NAME_RE.test(rest[1]!)) {
+    return `${rest[0]} ${rest[1]}`;
+  }
+
+  const first = rest[0]!;
+  if (!COMMAND_NAME_RE.test(first)) return null;
+  if (BARE_SHELL_PREFIXES.has(first)) return null;
+  return first;
 }
