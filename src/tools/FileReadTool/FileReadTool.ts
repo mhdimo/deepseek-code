@@ -158,7 +158,15 @@ async function readTextResult(
     };
   }
 
-  
+  // Ranged reads of very large files used to slurp the ENTIRE file into
+  // memory (the size guard above only applies to whole-file reads) — a
+  // paginated read of a multi-GB file could OOM the process. Above this
+  // size, stream the file and keep only the requested line window.
+  const rangeRequested = offset !== undefined || limit !== undefined;
+  if (rangeRequested && sizeBytes > 4 * 1024 * 1024) {
+    return readRangedBounded(fullPath, offset, limit, limits);
+  }
+
   const buf = await readFile(fullPath);
 
   
@@ -321,4 +329,79 @@ async function readImageResult(
     return { data: `Error: image file is empty: ${fullPath}` };
   }
   return { data: buildImageSummary({ filePath: fullPath, sizeBytes, buf }) };
+}
+
+
+/**
+ * Chunked ranged read: streams the file and keeps only the requested line
+ * window, bounding memory to the window plus a 64KB buffer (plus a hard
+ * 64MB scan cap so pathological files still terminate).
+ */
+async function readRangedBounded(
+  fullPath: string,
+  offset: number | undefined,
+  limit: number | undefined,
+  limits: { maxTokens: number; maxSizeBytes: number },
+): Promise<ToolResult<string>> {
+  const { open } = await import("fs/promises");
+  const MAX_SCAN_BYTES = 64 * 1024 * 1024;
+  const startIdx = offset !== undefined ? Math.max(0, offset - 1) : 0;
+  const endIdx = limit !== undefined ? startIdx + Math.max(0, limit) : startIdx + MAX_LINES_TO_READ;
+  const want = Math.max(1, endIdx - startIdx);
+  const fh = await open(fullPath, "r");
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    let carried = "";
+    let lineNo = 0;
+    let total = 0;
+    let bytes = 0;
+    let reachedEnd = false;
+    let capped = false;
+    const out: string[] = [];
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+      if (bytesRead === 0) {
+        reachedEnd = true;
+        break;
+      }
+      bytes += bytesRead;
+      const chunk = carried + buf.toString("utf-8", 0, bytesRead);
+      let idx = 0;
+      for (;;) {
+        const nl = chunk.indexOf("\n", idx);
+        if (nl === -1) break;
+        const line = chunk.slice(idx, nl);
+        total++;
+        if (lineNo >= startIdx && lineNo < endIdx && out.length < want) out.push(line);
+        lineNo++;
+        idx = nl + 1;
+      }
+      carried = chunk.slice(idx);
+      if (lineNo >= endIdx) break;
+      if (bytes >= MAX_SCAN_BYTES) {
+        capped = true;
+        break;
+      }
+    }
+    if (reachedEnd && carried) {
+      total++;
+      if (lineNo >= startIdx && lineNo < endIdx && out.length < want) out.push(carried);
+    }
+    if (startIdx >= total && reachedEnd) {
+      return { data: `Warning: the file exists but is shorter than the provided offset (${offset}). The file has ${total} lines.` };
+    }
+    const rendered = out
+      .map((line, i) => renderLine(startIdx + i + 1, line))
+      .join("\n");
+    let result = rendered || "(empty file)";
+    const trunc = truncateToTokenBudget(result, limits.maxTokens);
+    if (trunc.truncated) {
+      result = trunc.content + `\n... [Truncated: content is ~${estimateTokens(result)} tokens, over the ${limits.maxTokens}-token budget. File has ${total} lines; continue with offset=${startIdx + trunc.keptLines + 1} to read the rest]`;
+    } else if (capped) {
+      result += `\n... [scan capped at ${Math.floor(MAX_SCAN_BYTES / 1024 / 1024)}MB — the file continues beyond this window]`;
+    }
+    return { data: result };
+  } finally {
+    await fh.close();
+  }
 }
