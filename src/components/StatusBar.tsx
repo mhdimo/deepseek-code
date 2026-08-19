@@ -46,9 +46,12 @@ interface StatusBarProps {
   tasks?: { done: number; total: number; inProgress: number; expanded: boolean };
 }
 
+// Token NAMES, resolved against the LIVE legacy theme at render time —
+// snapshotting theme.claude here kept the agent color stale after a
+// mid-session /theme switch (setThemeMode keeps the mutable palette in sync).
 const AGENT_COLORS: Record<string, string> = {
-  code: theme.claude,
-  plan: theme.warning,
+  code: "claude",
+  plan: "warning",
   review: "magenta",
 };
 
@@ -130,9 +133,10 @@ export default React.memo(function StatusBar({
   statusLinePadding,
   tasks,
 }: StatusBarProps) {
-  const cols = process.stdout.columns || 80;
-  const separator = "─".repeat(cols);
-  const agentColor = AGENT_COLORS[agentName] || theme.claude;
+  const agentColor =
+    agentName === "review"
+      ? "magenta"
+      : ((theme as Record<string, unknown>)[AGENT_COLORS[agentName] ?? "claude"] as string) ?? theme.claude;
   const dim = theme.inactive;
 
   const displayFile = currentFile
