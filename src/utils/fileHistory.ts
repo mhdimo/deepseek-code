@@ -300,6 +300,31 @@ export async function dropSnapshot(messageIndex: number): Promise<void> {
 }
 
 
+/**
+ * Drop EVERY snapshot (used on /clear): the message index restarts, so old
+ * manifests would otherwise be orphaned — new snapshots overwrite the same
+ * manifest filenames while the previously referenced blobs (full file
+ * copies, sha256-deduped) are never garbage-collected, growing
+ * ~/.deepseek-code/filehistory without bound.
+ */
+export async function dropAllSnapshots(): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(MANIFESTS_DIR);
+  } catch (e: unknown) {
+    if (isENOENT(e)) return;
+    throw e;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const idx = Number(name.replace(/\.json$/, ""));
+    if (Number.isInteger(idx) && idx >= 0) {
+      await dropSnapshot(idx);
+    }
+  }
+}
+
+
 async function collectReferencedDigests(): Promise<Set<string>> {
   const refs = new Set<string>();
   let names: string[];

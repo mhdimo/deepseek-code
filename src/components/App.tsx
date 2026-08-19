@@ -117,7 +117,7 @@ import type { EffortLevel } from "../state/storage.js";
 import { listSkills, getSkill } from "../skills/skillService.js";
 import { writeToFile } from "../utils/exportConversation.js";
 import { searchMessages } from "../utils/transcriptSearch.js";
-import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot } from "../utils/fileHistory.js";
+import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot, dropAllSnapshots } from "../utils/fileHistory.js";
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
 import { matchDecision, parsePermissionSettings, escapeRuleContent } from "../services/permissions.js";
@@ -172,7 +172,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [isLoading, setIsLoading] = useState(false);
   // Spinner sentiment — if the last user message was frustrated, the working
   // indicator spins a tongue-in-cheek verb list instead of the normal one.
-  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  // Backward scan without the [...messages].reverse() copy — that allocated
+  // a full array on EVERY render (incl. every ~80ms streaming flush).
+  let lastUserMessage: Message | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") {
+      lastUserMessage = messages[i];
+      break;
+    }
+  }
   const spinnerSentiment = lastUserMessage
     ? /\b(fuck|shit|bitch|asshole|bastard|damn|crap|cunt|dick|piss|bollocks|bugger|ass)\b/i.test(lastUserMessage.content)
       ? "frustrated"
@@ -257,7 +265,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [showSettingsUI, setShowSettingsUI] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"Status" | "Config" | "Usage" | "Stats">("Status");
 
-  const getFlatToolBlocks = useCallback(() => {
+  // Flat tool-block index, memoized on messages: it used to be recomputed
+  // from scratch during every render (incl. each ~80ms streaming flush) AND
+  // again inside the effect below — O(messages x tools) per frame.
+  const flatBlocks = useMemo(() => {
     const flat: Array<{ messageIdx: number; toolIdx: number; block: ToolUseBlock }> = [];
     messages.forEach((msg, messageIdx) => {
       if (msg.toolUse) {
@@ -269,19 +280,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     return flat;
   }, [messages]);
 
-  const flatBlocks = getFlatToolBlocks();
   const selectedBlock = flatBlocks[inspectIndex];
   const selectedToolCallId = (inspectMode && selectedBlock) ? selectedBlock.block.toolCallId || null : null;
 
   useEffect(() => {
-    const flatCount = getFlatToolBlocks().length;
+    const flatCount = flatBlocks.length;
     if (flatCount === 0) {
       setInspectMode(false);
       setInspectIndex(0);
     } else if (inspectIndex >= flatCount) {
       setInspectIndex(Math.max(0, flatCount - 1));
     }
-  }, [messages, inspectIndex, getFlatToolBlocks]);
+  }, [messages, inspectIndex, flatBlocks]);
 
   
   useEffect(() => {
@@ -358,6 +368,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   /** Length of argsJson at the last full JSON.parse attempt (throttles
    *  per-delta parsing of large tool arguments — see tool-call-delta). */
   const lastArgsParseLenRef = useRef(0);
+  /** Retention cap for tool outputs kept in the transcript (see
+   *  handleToolResult / handleToolOutput). */
+  const MAX_RETAINED_OUTPUT = 200_000;
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
   const streamingBlocksRef = useRef<MessageBlock[]>([]);
   
@@ -1434,7 +1447,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (key.ctrl && _input === "e") {
-      const flatCount = getFlatToolBlocks().length;
+      const flatCount = flatBlocks.length;
       if (flatCount > 0) {
         setInspectMode((prev) => {
           const next = !prev;
@@ -1831,10 +1844,25 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       const next = [...prev];
       const target = next[bestIndex]!;
+      // Cap retained output: tool-level caps (Bash 50KB, fetch 50KB, the
+      // maxResultSizeChars enforcement) bound single results, but a long
+      // session still holds every tool output in React state forever. The
+      // renderer only ever shows ~200 lines anyway; /export uses message
+      // content. Keep a generous head + tail so transcripts stay usable
+      // without unbounded RAM growth.
+      const cappedOutput =
+        output.length > MAX_RETAINED_OUTPUT
+          ? output.slice(0, MAX_RETAINED_OUTPUT) +
+            "\n\n... [retained output truncated at " +
+            Math.floor(MAX_RETAINED_OUTPUT / 1024) +
+            "KB — full result was " +
+            Math.ceil(output.length / 1024) +
+            "KB]"
+          : output;
       next[bestIndex] = {
         ...target,
         status: isError ? "error" : "done",
-        output,
+        output: cappedOutput,
         isExpanded: isError || toolName === "Write" || toolName === "Edit",
       };
       nextToolUse = next;
@@ -1890,9 +1918,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
             const next = [...prev];
             const block = next[runningIdx]!;
+            const grown = (block.output || "") + textToAppend;
             next[runningIdx] = {
               ...block,
-              output: (block.output || "") + textToAppend,
+              // Live Bash/Agent output accumulates at ~100ms flush cadence —
+              // cap it so a chatty process can't grow the retained string
+              // without bound (the completed result is capped separately).
+              output:
+                grown.length > MAX_RETAINED_OUTPUT
+                  ? grown.slice(0, MAX_RETAINED_OUTPUT) +
+                    "\n\n... [live output truncated at " +
+                    Math.floor(MAX_RETAINED_OUTPUT / 1024) +
+                    "KB]"
+                  : grown,
             };
             streamingToolUseRef.current = next;
 
@@ -2782,6 +2820,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           setOutputTokens(0);
           setTodos([]);
           contextManagerRef.current.reset();
+          // Indices restart on /clear — GC the rewind snapshots so old
+          // manifests don't orphan their blobs (fileHistory blob GC only
+          // ran on rewind before).
+          void dropAllSnapshots().catch(() => {});
           return true;
 
         case "compact": {
@@ -4610,8 +4652,7 @@ Based on the above changes:
           onJump={(messageIndex) => {
             
             
-            const blocks = getFlatToolBlocks();
-            const idx = blocks.findIndex((b) => b.messageIdx === messageIndex);
+            const idx = flatBlocks.findIndex((b) => b.messageIdx === messageIndex);
             if (idx >= 0) {
               setInspectMode(true);
               setInspectIndex(idx);

@@ -43,6 +43,10 @@ const DEFAULT_STATS: GlobalStats = {
   dailyUsage: {},
 };
 
+/** Sessions kept in stats.json — one record per session, capped so the file
+ *  (rewritten on every session save) can't grow without bound. */
+const MAX_STATS_SESSIONS = 100;
+
 function ensureDir(): void {
   const fs = require("fs");
   if (!fs.existsSync(DATA_DIR)) {
@@ -67,7 +71,9 @@ export function loadGlobalStats(): GlobalStats {
 export function saveGlobalStats(stats: GlobalStats): void {
   try {
     ensureDir();
-    writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), "utf-8");
+    // Compact JSON: this file is rewritten on every session save and pretty
+    // printing roughly doubled the I/O.
+    writeFileSync(STATS_FILE, JSON.stringify(stats), "utf-8");
   } catch {
     
   }
@@ -81,6 +87,10 @@ export function recordSessionStats(record: SessionRecord): void {
     stats.sessions[index] = record;
   } else {
     stats.sessions.push(record);
+    // One record per session, forever, with no cap — keep the most recent.
+    if (stats.sessions.length > MAX_STATS_SESSIONS) {
+      stats.sessions = stats.sessions.slice(-MAX_STATS_SESSIONS);
+    }
   }
 
   

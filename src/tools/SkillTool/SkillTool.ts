@@ -19,13 +19,26 @@ const inputSchema = z.object({
   name: z.string().describe("The exact name of the skill to invoke"),
 }) satisfies z.ZodType;
 
+// The skill listing does a synchronous readdir + SKILL.md scan across
+// project/user/bundled skill dirs — it used to run at MODULE LOAD, before
+// the first frame painted. Defer it: the tool definition is only needed
+// when a session is built (first message), and listSkills/getSkill stay
+// cached by skillService.
+let skillDescription: string | null = null;
+function getSkillDescription(): string {
+  if (skillDescription === null) {
+    skillDescription = buildSkillToolDescription(DESCRIPTION_PREFIX);
+  }
+  return skillDescription;
+}
+
 export const SkillTool = buildTool({
   name: SKILL_TOOL_NAME,
   
   
   
   
-  description: buildSkillToolDescription(DESCRIPTION_PREFIX),
+  description: getSkillDescription,
   inputSchema,
 
   async call(

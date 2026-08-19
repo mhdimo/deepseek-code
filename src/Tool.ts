@@ -87,8 +87,10 @@ export interface Tool<
   Output = unknown,
 > {
   readonly name: string;
-  
-  description: string | ((input: z.infer<Input>) => Promise<string>);
+  /** Static text, a per-input promise (dynamic tools), or a zero-arg thunk
+   *  (lazy tools like Skill, whose listing does a filesystem scan — the
+   *  thunk is evaluated on first READ via a getter, not at build time). */
+  description: string | (() => string) | ((input: z.infer<Input>) => Promise<string>);
   
   readonly inputSchema: Input;
   
@@ -134,13 +136,29 @@ type AnyToolDef = ToolDef<any, any>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildTool<D extends AnyToolDef>(def: D): Tool {
-  return {
+  // Pull description out of the spread: object spread EVALUATES accessors,
+  // which would defeat lazy (thunk) descriptions. A zero-arg thunk becomes a
+  // getter — first read (session build / tool listing) evaluates it; plain
+  // strings and (input) => Promise functions keep their existing semantics.
+  const { description, ...rest } = def as unknown as {
+    description?: Tool["description"];
+    [k: string]: unknown;
+  };
+  const tool = {
     isEnabled: () => true,
     isConcurrencySafe: () => false,
     isReadOnly: () => false,
     checkPermissions: async () => ({ approved: true }),
     userFacingName: () => def.name,
     maxResultSizeChars: 100_000,
-    ...def,
-  } as Tool;
+    ...rest,
+  } as unknown as Tool;
+  if (typeof description === "function" && description.length === 0) {
+    Object.defineProperty(tool, "description", {
+      get: () => (description as () => string)(),
+    });
+  } else if (description !== undefined) {
+    tool.description = description as string;
+  }
+  return tool;
 }
