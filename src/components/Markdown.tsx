@@ -14,7 +14,7 @@
 
 
 
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import { Text, Box } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { highlightLine } from "./codeHighlight.js";
@@ -198,9 +198,15 @@ function mergeTextTokens(tokens: Token[]): Token[] {
 
 
 
-function parseBlocks(input: string): Block[] {
-  const lines = input.split("\n");
+/**
+ * Parse a list of source lines into blocks, recording the source line index
+ * of each block's first line (blockLineIdx). Line-accurate offsets make the
+ * streaming incremental re-parse possible: appending text only ever changes
+ * the LAST block, so the tail can be re-parsed from that block's first line.
+ */
+function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] } {
   const blocks: Block[] = [];
+  const blockLineIdx: number[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -214,6 +220,7 @@ function parseBlocks(input: string): Block[] {
 
     
     if (/^(?:[-*_]){3,}\s*$/.test(line) && !/[^-*_\s]/.test(line)) {
+      blockLineIdx.push(i);
       blocks.push({ type: "hr" });
       i++;
       continue;
@@ -224,6 +231,7 @@ function parseBlocks(input: string): Block[] {
     if (fenceMatch) {
       const lang = fenceMatch[1] || "";
       const codeLines: string[] = [];
+      blockLineIdx.push(i);
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i]!)) {
         codeLines.push(lines[i]!);
@@ -239,14 +247,20 @@ function parseBlocks(input: string): Block[] {
     }
 
     
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
+    // (.*) not (.+): a marker-only line like "## " arrives mid-stream while
+    // the model is still typing the heading text — it must be CONSUMED,
+    // not left for the paragraph branch to deadlock on (the paragraph
+    // terminator matches the marker but the heading pattern didn't, so
+    // neither branch advanced = infinite loop).
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch && /^#{1,6}\s+/.test(line)) {
       const level = headingMatch[1]!.length;
       const content = headingMatch[2]!.replace(/\s*#+\s*$/, "");
+      blockLineIdx.push(i);
       blocks.push({
         type: "heading",
         level,
-        tokens: tokenizeInline(content),
+        tokens: content ? tokenizeInline(content) : [],
       });
       i++;
       continue;
@@ -254,15 +268,17 @@ function parseBlocks(input: string): Block[] {
 
     
     if (/^>\s?/.test(line)) {
+      const quoteStart = i;
       const quoteLines: string[] = [];
       while (i < lines.length && /^>\s?/.test(lines[i]!)) {
         quoteLines.push(lines[i]!.replace(/^>\s?/, ""));
         i++;
       }
-      for (const ql of quoteLines) {
+      for (let k = 0; k < quoteLines.length; k++) {
+        blockLineIdx.push(quoteStart + k);
         blocks.push({
           type: "blockquote",
-          tokens: tokenizeInline(ql),
+          tokens: tokenizeInline(quoteLines[k]!),
         });
       }
       continue;
@@ -270,16 +286,23 @@ function parseBlocks(input: string): Block[] {
 
     
     if (/^\s*([-*+])\s+/.test(line)) {
+      const listStart = i;
+      let itemIdx = 0;
       while (i < lines.length) {
-        const liMatch = lines[i]?.match(/^(\s*)([-*+])\s+(.+)$/);
+        // (.*) not (.+): a marker-only line like "- " arrives mid-stream
+        // while the model types the item text — consume it as an empty
+        // item instead of deadlocking (see heading branch comment).
+        const liMatch = lines[i]?.match(/^(\s*)([-*+])\s+(.*)$/);
         if (!liMatch) break;
         const indentLevel = Math.floor(liMatch[1]!.length / 2);
+        blockLineIdx.push(listStart + itemIdx);
         blocks.push({
           type: "list-item",
           indent: indentLevel,
           ordered: false,
-          tokens: tokenizeInline(liMatch[3]!),
+          tokens: liMatch[3] ? tokenizeInline(liMatch[3]!) : [],
         });
+        itemIdx++;
         i++;
       }
       continue;
@@ -287,19 +310,25 @@ function parseBlocks(input: string): Block[] {
 
     
     if (/^\s*\d+\.\s+/.test(line)) {
-      let idx = 1;
+      const listStart = i;
+      let itemIdx = 0;
       while (i < lines.length) {
-        const liMatch = lines[i]?.match(/^(\s*)(\d+)\.\s+(.+)$/);
+        // Marker-only lines ("1. ") consumed as empty items (see heading).
+        const liMatch = lines[i]?.match(/^(\s*)(\d+)\.\s+(.*)$/);
         if (!liMatch) break;
         const indentLevel = Math.floor(liMatch[1]!.length / 2);
+        blockLineIdx.push(listStart + itemIdx);
         blocks.push({
           type: "list-item",
           indent: indentLevel,
           ordered: true,
-          index: idx,
-          tokens: tokenizeInline(liMatch[3]!),
+          // The SOURCE number, not a group counter — a counter restarts at
+          // 1 when the incremental re-parse starts mid-group, and standard
+          // markdown renders the numbers as typed anyway.
+          index: parseInt(liMatch[2]!, 10),
+          tokens: liMatch[3] ? tokenizeInline(liMatch[3]!) : [],
         });
-        idx++;
+        itemIdx++;
         i++;
       }
       continue;
@@ -322,6 +351,7 @@ function parseBlocks(input: string): Block[] {
         });
       const header = splitRow(line);
       const align = parseAlign(splitRow(lines[i + 1]!));
+      blockLineIdx.push(i);
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length && lines[i]!.trim() !== "" && lines[i]!.includes("|")) {
@@ -347,6 +377,7 @@ function parseBlocks(input: string): Block[] {
       i++;
     }
     if (paraLines.length > 0) {
+      blockLineIdx.push(i - paraLines.length);
       blocks.push({
         type: "paragraph",
         tokens: tokenizeInline(paraLines.join(" ")),
@@ -354,7 +385,12 @@ function parseBlocks(input: string): Block[] {
     }
   }
 
-  return blocks;
+  return { blocks, blockLineIdx };
+}
+
+/** Parse a markdown string into blocks (full parse — no line tracking). */
+function parseBlocks(input: string): Block[] {
+  return parseLines(input.split("\n")).blocks;
 }
 
 
@@ -502,62 +538,156 @@ export interface MarkdownBlockRows {
 
 /** Parse + wrap a markdown string into the exact rows ink renders for it
  *  (used by Markdown for rendering and by ChatPanel for copy extraction). */
+/** Wrap one parsed block into its row model. */
+function wrapBlockRows(
+  block: Block,
+  width: number,
+  dim: boolean | undefined,
+  permissionColor: string | undefined,
+): MarkdownBlockRows {
+  let rows: TextRow[];
+  switch (block.type) {
+    case "paragraph":
+      rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
+      break;
+    case "heading": {
+      const level = block.level ?? 1;
+      const style: TextStyle = level >= 2 ? { bold: true } : { italic: true, underline: true };
+      if (dim) style.dim = true;
+      const runs = (block.tokens ?? []).map((t) => ({ text: t.content, style }));
+      rows = wrapTextRuns(runs, width);
+      break;
+    }
+    case "code-block":
+      rows = codeBlockRows(block, width);
+      break;
+    case "list-item": {
+      const indent = block.indent ?? 0;
+      const leftPad = indent * 2;
+      const bullet = block.ordered ? `${getListNumber(indent, block.index ?? 1)}.` : "-";
+      const runs: StyledRun[] = [
+        { text: `${bullet} ` },
+        ...tokensToRuns(block.tokens ?? [], dim, permissionColor),
+      ];
+      rows = wrapBlock(runs, width, leftPad);
+      break;
+    }
+    case "blockquote": {
+      const runs = tokensToRuns(block.tokens ?? [], dim, permissionColor);
+      for (const r of runs) r.style = { italic: true, ...(r.style ?? {}) };
+      rows = wrapBlock(runs, width, 2);
+      break;
+    }
+    case "hr":
+      rows = [{ runs: [{ text: "---" }], softWrapped: false }];
+      break;
+    case "table":
+      rows = tableRows(block, width);
+      break;
+    default:
+      rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
+    }
+    // heading's marginBottom={1} plus the flex gap between blocks = 2
+    // spacer rows after it; other blocks contribute 1 gap row each.
+    return { block, rows, spacersAfter: block.type === "heading" ? 2 : 0 };
+}
+
+/**
+ * Streaming markdown state: the parsed+wrapped model plus the source line
+ * index of each block's first line. Because parseBlocks only ever changes
+ * the LAST block when text is appended, consecutive renders of a growing
+ * stream re-parse just the tail — turning the naive O(n^2) full re-parse
+ * per 80ms flush into O(appended tail).
+ */
+export interface MarkdownModelState {
+  /** Source content the model was parsed from (append-only during streaming). */
+  content: string;
+  width: number;
+  dim?: boolean;
+  permissionColor?: string;
+  /** Wrapped blocks. Unchanged blocks keep object identity across updates
+   *  so memoized per-block rendering can bail out. */
+  model: MarkdownBlockRows[];
+  /** Source line index of each block's first line. */
+  blockLineIdx: number[];
+}
+
+/**
+ * Update (or build) a markdown model for `content`. Pass the previous state
+ * to reuse the parse when the content only grew; pass null for a full parse.
+ * Idempotent for repeated calls with the same content (returns the state
+ * unchanged) — safe to call during render.
+ */
+export function updateMarkdownModel(
+  content: string,
+  width: number,
+  dim: boolean | undefined,
+  permissionColor: string | undefined,
+  state: MarkdownModelState | null,
+): MarkdownModelState {
+  if (
+    state &&
+    state.content === content &&
+    state.width === width &&
+    state.dim === dim &&
+    state.permissionColor === permissionColor
+  ) {
+    return state;
+  }
+  const lines = content.split("\n");
+
+  if (
+    state &&
+    state.width === width &&
+    state.dim === dim &&
+    state.permissionColor === permissionColor &&
+    state.model.length > 0 &&
+    content.startsWith(state.content)
+  ) {
+    // Append-only: re-parse from the last block's first source line. The
+    // previous blocks are untouched (their line offsets stay valid because
+    // appending never shifts earlier lines).
+    const lastIdx = state.model.length - 1;
+    const tailLine = state.blockLineIdx[lastIdx]!;
+    const { blocks, blockLineIdx } = parseLines(lines.slice(tailLine));
+    if (blocks.length > 0) {
+      const model = state.model.slice(0, lastIdx);
+      const newBlockLineIdx = state.blockLineIdx.slice(0, lastIdx);
+      for (let i = 0; i < blocks.length; i++) {
+        newBlockLineIdx.push(tailLine + (blockLineIdx[i] ?? 0));
+        model.push(wrapBlockRows(blocks[i]!, width, dim, permissionColor));
+      }
+      state.model = model;
+      state.blockLineIdx = newBlockLineIdx;
+    }
+    // else: trailing blank lines only — the model is already correct.
+    state.content = content;
+    return state;
+  }
+
+  const parsed = parseLines(lines);
+  const model: MarkdownBlockRows[] = [];
+  for (const block of parsed.blocks) {
+    model.push(wrapBlockRows(block, width, dim, permissionColor));
+  }
+  return {
+    content,
+    width,
+    dim,
+    permissionColor,
+    model,
+    blockLineIdx: parsed.blockLineIdx,
+  };
+}
+
+/** Full parse + wrap (no incremental state) — convenience wrapper. */
 export function markdownRows(
   content: string,
   width: number,
   dim?: boolean,
   permissionColor?: string,
 ): MarkdownBlockRows[] {
-  const blocks = parseBlocks(content);
-  const out: MarkdownBlockRows[] = [];
-  for (const block of blocks) {
-    let rows: TextRow[];
-    switch (block.type) {
-      case "paragraph":
-        rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
-        break;
-      case "heading": {
-        const level = block.level ?? 1;
-        const style: TextStyle = level >= 2 ? { bold: true } : { italic: true, underline: true };
-        if (dim) style.dim = true;
-        const runs = (block.tokens ?? []).map((t) => ({ text: t.content, style }));
-        rows = wrapTextRuns(runs, width);
-        break;
-      }
-      case "code-block":
-        rows = codeBlockRows(block, width);
-        break;
-      case "list-item": {
-        const indent = block.indent ?? 0;
-        const leftPad = indent * 2;
-        const bullet = block.ordered ? `${getListNumber(indent, block.index ?? 1)}.` : "-";
-        const runs: StyledRun[] = [
-          { text: `${bullet} ` },
-          ...tokensToRuns(block.tokens ?? [], dim, permissionColor),
-        ];
-        rows = wrapBlock(runs, width, leftPad);
-        break;
-      }
-      case "blockquote": {
-        const runs = tokensToRuns(block.tokens ?? [], dim, permissionColor);
-        for (const r of runs) r.style = { italic: true, ...(r.style ?? {}) };
-        rows = wrapBlock(runs, width, 2);
-        break;
-      }
-      case "hr":
-        rows = [{ runs: [{ text: "---" }], softWrapped: false }];
-        break;
-      case "table":
-        rows = tableRows(block, width);
-        break;
-      default:
-        rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
-    }
-    // heading's marginBottom={1} plus the flex gap between blocks = 2
-    // spacer rows after it; other blocks contribute 1 gap row each.
-    out.push({ block, rows, spacersAfter: block.type === "heading" ? 2 : 0 });
-  }
-  return out;
+  return updateMarkdownModel(content, width, dim, permissionColor, null).model;
 }
 
 /** Total rendered rows of a markdownRows() result (rows + spacers). */
@@ -743,7 +873,98 @@ interface MarkdownProps {
   /** Column offset of this box's left edge within the content area
    *  ("● " / "❯ " prefix or padding shifts the markdown right). */
   leftOffset?: number;
+  /** Pre-built model (from MessageView's shared incremental state). When
+   *  provided, parsing is skipped entirely — the caller guarantees it
+   *  matches `children`. */
+  model?: MarkdownBlockRows[];
 }
+
+/**
+ * One markdown block rendered from pre-wrapped rows. Memoized on the block
+ * object + row array identity: during streaming, blocks before the last one
+ * keep their identity (see updateMarkdownModel), so unchanged blocks skip
+ * re-rendering entirely on every 80ms flush.
+ */
+const MemoBlock = React.memo(function MemoBlock({
+  block,
+  rows,
+  spacersAfter,
+  width,
+  dim,
+  leftOffset,
+  blockStart,
+  selection,
+}: {
+  block: Block;
+  rows: TextRow[];
+  spacersAfter: number;
+  width: number;
+  dim?: boolean;
+  leftOffset: number;
+  blockStart: number;
+  selection: ContentSelection | null;
+}): React.ReactElement {
+  const selColsAt = (globalRow: number, origin: number): [number, number] | null =>
+    rowSelection(selection, globalRow, origin + leftOffset, width + leftOffset);
+
+  const rowEls = (offsetOrigin: number) =>
+    rows.map((r, i) => (
+      <RowBox
+        key={`r${i}`}
+        row={r}
+        selCols={selColsAt(blockStart + i, r.origin ?? offsetOrigin)}
+        width={width}
+        dim={dim}
+      />
+    ));
+
+  const spacerEls: React.ReactNode[] = [];
+  for (let s = 0; s < spacersAfter; s++) {
+    const sr = blockStart + rows.length + s;
+    spacerEls.push(
+      <RowBox key={`sp${s}`} row={SPACER} selCols={selColsAt(sr, 0)} width={width} dim={dim} />,
+    );
+  }
+
+  let inner: React.ReactNode;
+  switch (block.type) {
+    case "blockquote":
+      inner = (
+        <Box flexDirection="row" minWidth={0}>
+          <Text dimColor>{"▎ "}</Text>
+          <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+            {rowEls(0)}
+          </Box>
+        </Box>
+      );
+      break;
+    case "list-item":
+      inner = (
+        <Box
+          marginLeft={(block.indent ?? 0) * 2}
+          flexDirection="column"
+          flexGrow={1}
+          flexShrink={1}
+          minWidth={0}
+        >
+          {rowEls(0)}
+        </Box>
+      );
+      break;
+    default:
+      inner = (
+        <Box flexDirection="column" minWidth={0}>
+          {rowEls(0)}
+        </Box>
+      );
+  }
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {inner}
+      {spacerEls}
+    </Box>
+  );
+});
 
 export default function Markdown({
   children,
@@ -752,19 +973,25 @@ export default function Markdown({
   selection,
   startRow = 0,
   leftOffset = 0,
+  model: modelProp,
 }: MarkdownProps): React.ReactElement {
   const permissionColor = resolveColor(theme.permission);
-  const model = useMemo(
-    () => markdownRows(children, width, dim, permissionColor),
-    [children, width, dim, permissionColor],
-  );
+  // Incremental parse state: survives renders in a ref so a growing
+  // streaming content only re-parses its tail (updateMarkdownModel is
+  // idempotent for repeated input, so render-time mutation is safe).
+  const stateRef = useRef<MarkdownModelState | null>(null);
+  const model: MarkdownModelState | MarkdownBlockRows[] = modelProp !== undefined
+    ? modelProp
+    : updateMarkdownModel(children, width, dim, permissionColor, stateRef.current);
+  if (modelProp === undefined) stateRef.current = model as MarkdownModelState;
+  const modelRows: MarkdownBlockRows[] = modelProp !== undefined ? modelProp : (model as MarkdownModelState).model;
 
   const selColsAt = (globalRow: number, origin: number): [number, number] | null =>
     rowSelection(selection ?? null, globalRow, origin + leftOffset, width + leftOffset);
 
   const fragments: React.ReactNode[] = [];
   let row = startRow;
-  model.forEach((b, bi) => {
+  modelRows.forEach((b, bi) => {
     if (bi > 0) {
       fragments.push(
         <RowBox key={`sp${bi}`} row={SPACER} selCols={selColsAt(row, 0)} width={width} dim={dim} />,
@@ -772,74 +999,21 @@ export default function Markdown({
       row++;
     }
     const blockStart = row;
-    let inner: React.ReactNode;
-    switch (b.block.type) {
-      case "blockquote":
-        inner = (
-          <Box flexDirection="row" minWidth={0}>
-            <Text dimColor>{"▎ "}</Text>
-            <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-              {b.rows.map((r, i) => (
-                <RowBox
-                  key={`r${i}`}
-                  row={r}
-                  selCols={selColsAt(blockStart + i, r.origin ?? 0)}
-                  width={width}
-                  dim={dim}
-                />
-              ))}
-            </Box>
-          </Box>
-        );
-        break;
-      case "list-item":
-        inner = (
-          <Box
-            marginLeft={(b.block.indent ?? 0) * 2}
-            flexDirection="column"
-            flexGrow={1}
-            flexShrink={1}
-            minWidth={0}
-          >
-            {b.rows.map((r, i) => (
-              <RowBox
-                key={`r${i}`}
-                row={r}
-                selCols={selColsAt(blockStart + i, r.origin ?? 0)}
-                width={width}
-                dim={dim}
-              />
-            ))}
-          </Box>
-        );
-        break;
-      default:
-        inner = (
-          <Box flexDirection="column" minWidth={0}>
-            {b.rows.map((r, i) => (
-              <RowBox
-                key={`r${i}`}
-                row={r}
-                selCols={selColsAt(blockStart + i, r.origin ?? 0)}
-                width={width}
-                dim={dim}
-              />
-            ))}
-          </Box>
-        );
-    }
     fragments.push(
-      <Box key={`b${bi}`} flexDirection="column" flexShrink={0}>
-        {inner}
-      </Box>,
+      <MemoBlock
+        key={`b${bi}`}
+        block={b.block}
+        rows={b.rows}
+        spacersAfter={b.spacersAfter ?? 0}
+        width={width}
+        dim={dim}
+        leftOffset={leftOffset}
+        blockStart={blockStart}
+        selection={selection ?? null}
+      />,
     );
     row = blockStart + b.rows.length;
-    for (let s = 0; s < (b.spacersAfter ?? 0); s++) {
-      fragments.push(
-        <RowBox key={`sp${bi}-${s}`} row={SPACER} selCols={selColsAt(row, 0)} width={width} dim={dim} />,
-      );
-      row++;
-    }
+    for (let s = 0; s < (b.spacersAfter ?? 0); s++) row++;
   });
 
   return <Box flexDirection="column" flexShrink={0}>{fragments}</Box>;

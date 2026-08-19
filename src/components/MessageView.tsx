@@ -3,7 +3,7 @@ import { Box, Text, type DOMElement } from "ink";
 import type { Message, MessageBlock, ToolUseBlock } from "../types/index.js";
 import { theme, resolveColor, getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
-import Markdown, { RowText, rowSelection, markdownRows, flattenMarkdown } from "./Markdown.js";
+import Markdown, { RowText, rowSelection, markdownRows, flattenMarkdown, updateMarkdownModel, type MarkdownModelState, type MarkdownBlockRows } from "./Markdown.js";
 import ToolBlock, { buildToolBlockSpans, BLACK_CIRCLE } from "./ToolBlock.js";
 import { AgentFanout, agentFanoutLineCount } from "./AgentFanout.js";
 import MessageResponse from "./MessageResponse.js";
@@ -49,10 +49,12 @@ interface TextBlockProps {
   width: number;
   selection: ContentSelection | null;
   startRow: number;
+  /** Pre-built markdown model (streaming path) — avoids re-parsing. */
+  model?: MarkdownBlockRows[];
 }
 
 /** Assistant text block: "● " marker + markdown, with the streaming cursor. */
-function TextBlock({ content, isError, isStreaming, width, selection, startRow }: TextBlockProps) {
+function TextBlock({ content, isError, isStreaming, width, selection, startRow, model }: TextBlockProps) {
   if (isError) {
     return (
       <MessageResponse>
@@ -68,7 +70,7 @@ function TextBlock({ content, isError, isStreaming, width, selection, startRow }
         <Text color={resolveColor(theme.text)}>{BLACK_CIRCLE}</Text>
       </Box>
       <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-        <Markdown dim={false} width={width} selection={selection} startRow={startRow} leftOffset={2}>
+        <Markdown dim={false} width={width} selection={selection} startRow={startRow} leftOffset={2} model={model}>
           {content}
         </Markdown>
         {isStreaming && (
@@ -130,8 +132,8 @@ function MessageView({
     reportsRef.current = [];
   });
 
-  // Flattened rows per text content — cached by content+width so drag
-  // frames (selection changes) don't re-parse markdown.
+  // Flattened rows per legacy text content — cached by content+width so
+  // drag frames (selection changes) don't re-parse markdown.
   const rowsCache = useRef(new Map<string, TextRow[]>());
   const textRowsFor = (content: string, width: number): TextRow[] => {
     const k = width + ":" + content;
@@ -142,6 +144,18 @@ function MessageView({
       if (rowsCache.current.size > 300) rowsCache.current.clear();
     }
     return rows;
+  };
+
+  // Streaming text blocks share ONE incremental parse state keyed by the
+  // block object (stable across flushes — App mutates the last text block
+  // in place). Each flush re-parses only the appended tail, and unchanged
+  // blocks keep their wrapped rows so Markdown's MemoBlock can bail out.
+  const modelCacheRef = useRef(new WeakMap<MessageBlock, MarkdownModelState>());
+  const textModelFor = (block: MessageBlock, width: number): MarkdownModelState => {
+    const prev = modelCacheRef.current.get(block);
+    const next = updateMarkdownModel(block.content ?? "", width, false, resolveColor(theme.permission), prev ?? null);
+    modelCacheRef.current.set(block, next);
+    return next;
   };
 
   const userWidth = Math.max(1, contentWidth - 2);
@@ -286,7 +300,8 @@ function MessageView({
       const key = `${blockKeyBase}:b${idx}`;
       if (block.type === "text" && block.content) {
         const textWidth = Math.max(1, contentWidth - 2);
-        const rows = textRowsFor(block.content, textWidth);
+        const model = textModelFor(block, textWidth);
+        const rows = flattenMarkdown(model.model);
         const extra = isStreaming && idx === lastBlockIndex ? 1 : 0;
         const start = row;
         row += rows.length + extra;
@@ -309,7 +324,7 @@ function MessageView({
         });
         return (
           <Box key={key} flexShrink={0} minWidth={0}>
-            <TextBlock content={block.content} isStreaming={isStreaming && idx === lastBlockIndex} width={textWidth} selection={selection} startRow={start} />
+            <TextBlock content={block.content} isStreaming={isStreaming && idx === lastBlockIndex} width={textWidth} selection={selection} startRow={start} model={model.model} />
           </Box>
         );
       }

@@ -355,6 +355,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const handleSubmitRef = useRef<(overrideInput?: string) => void>(() => {});
 
   const streamingTextRef = useRef("");
+  /** Length of argsJson at the last full JSON.parse attempt (throttles
+   *  per-delta parsing of large tool arguments — see tool-call-delta). */
+  const lastArgsParseLenRef = useRef(0);
   const streamingToolUseRef = useRef<ToolUseBlock[]>([]);
   const streamingBlocksRef = useRef<MessageBlock[]>([]);
   
@@ -1935,9 +1938,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           }
 
           case "text-delta":
-            streamingTextRef.current += event.text;
-            flushDirtyRef.current.text = true;
-            
+            // The text lives ONLY in the streaming blocks (append-only to the
+            // last text block). Keeping a second copy in streamingTextRef
+            // doubled the memory of every streamed token; the final message
+            // content is derived from the blocks when the turn ends.
             {
               const lastBlock = streamingBlocksRef.current[streamingBlocksRef.current.length - 1];
               if (lastBlock && lastBlock.type === "text") {
@@ -1981,12 +1985,33 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               block.argsJson = newArgsJson;
 
               
+              // Parsing the WHOLE growing args JSON on every delta is O(n^2)
+              // for large tool arguments (a 50KB Write arg streamed in small
+              // deltas re-parses ~25MB total). Only attempt a full parse
+              // every ~2KB of growth; the regex path below keeps the live
+              // file/command preview cheap between attempts, and tool-call-end
+              // does the final authoritative parse.
               let parsedInput = "";
-              try {
-                const parsed = JSON.parse(newArgsJson);
-                parsedInput = formatToolInput(event.toolName, parsed);
-              } catch {
-                
+              if (newArgsJson.length - (lastArgsParseLenRef.current ?? 0) >= 2048) {
+                lastArgsParseLenRef.current = newArgsJson.length;
+                try {
+                  const parsed = JSON.parse(newArgsJson);
+                  parsedInput = formatToolInput(event.toolName, parsed);
+                } catch {
+                  
+                  const pathMatch = newArgsJson.match(/"file_path"\s*:\s*"([^"]*)/);
+                  const path = pathMatch ? pathMatch[1] : "";
+                  
+                  if (event.toolName === "Read" || event.toolName === "Write" || event.toolName === "Edit") {
+                    if (path) {
+                      parsedInput = path;
+                    }
+                  } else if (event.toolName === "Bash") {
+                    const cmdMatch = newArgsJson.match(/"command"\s*:\s*"([^"]*)/);
+                    if (cmdMatch && cmdMatch[1]) parsedInput = cmdMatch[1];
+                  }
+                }
+              } else {
                 const pathMatch = newArgsJson.match(/"file_path"\s*:\s*"([^"]*)/);
                 const path = pathMatch ? pathMatch[1] : "";
                 
@@ -2197,7 +2222,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       
       
       
-      const remainingText = streamingTextRef.current;
+      // The streamed text lives in the text blocks (see text-delta); derive
+      // the final message content from them instead of a second string copy.
+      const remainingText = streamingBlocksRef.current
+        .filter((b): b is MessageBlock & { type: "text" } => b.type === "text")
+        .map((b) => b.content ?? "")
+        .join("");
       const remainingToolUse = streamingToolUseRef.current.filter(
         (b) => b.status !== "running",
       );
