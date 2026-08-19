@@ -393,7 +393,31 @@ function MessageView({
     }
 
     if (hasBlocks) {
-      fragments.push(...message.blocks!.map((block, idx) => renderBlock(block, idx)));
+      // Consecutive Agent tool blocks collapse into one Claude Code-style
+      // fanout tree (header + per-agent progress lines). Runs of ANY length
+      // group — a single running agent shows the same progress line the
+      // reference renders for it.
+      const blocks = message.blocks!;
+      let idx = 0;
+      while (idx < blocks.length) {
+        const block = blocks[idx]!;
+        if (block.type === "tool" && block.block?.toolName === "Agent") {
+          const run: ToolUseBlock[] = [];
+          const runStart = idx;
+          while (
+            idx < blocks.length &&
+            blocks[idx]!.type === "tool" &&
+            blocks[idx]!.block?.toolName === "Agent"
+          ) {
+            run.push(blocks[idx]!.block!);
+            idx++;
+          }
+          fragments.push(renderAgentFanout(run, `${blockKeyBase}:fanout-${runStart}`));
+        } else {
+          fragments.push(renderBlock(block, idx));
+          idx++;
+        }
+      }
     } else {
       if (hasContent) {
         const textWidth = Math.max(1, contentWidth - 2);
