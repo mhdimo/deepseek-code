@@ -90,58 +90,103 @@ export const BashTool = buildTool({
     const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
 
     return new Promise<{ data: string }>((resolvePromise) => {
+      // detached + own process group so a timeout/cancel can kill the whole
+      // tree (sh -c children survive a bare sh kill otherwise).
       const child = spawn("sh", ["-c", command], {
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, FORCE_COLOR: "0" },
+        detached: true,
       });
 
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      let stderrCapped = false;
+      let stdoutCapped = false;
+
+      const killGroup = () => {
+        try {
+          process.kill(-(child.pid ?? 0), "SIGTERM");
+        } catch {
+          child.kill("SIGTERM");
+        }
+        // Escalate: give the group a moment, then SIGKILL.
+        setTimeout(() => {
+          try {
+            process.kill(-(child.pid ?? 0), "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        }, 1500).unref();
+      };
+
+      const settle = (data: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise({ data });
+      };
 
       child.stdout.on("data", (data: Buffer) => {
         const chunk = data.toString();
-        stdout += chunk;
+        if (!stdoutCapped) {
+          stdout += chunk;
+          if (stdout.length > MAX_OUTPUT_BYTES) {
+            stdoutCapped = true;
+            stdout = stdout.slice(0, MAX_OUTPUT_BYTES);
+            killGroup();
+            settle(`(output truncated at 50KB)\n${stdout}`);
+            return;
+          }
+        }
         if (context.onToolOutput) {
           context.onToolOutput("Bash", chunk);
-        }
-        if (stdout.length > MAX_OUTPUT_BYTES) {
-          child.kill();
-          resolvePromise({
-            data: `(output truncated at 50KB)\n${stdout.slice(0, MAX_OUTPUT_BYTES)}`,
-          });
         }
       });
 
       child.stderr.on("data", (data: Buffer) => {
         const chunk = data.toString();
-        stderr += chunk;
+        // stderr was unbounded before — a chatty command could grow it
+        // without limit. Cap it like stdout (kept for the error summary).
+        if (!stderrCapped) {
+          stderr += chunk;
+          if (stderr.length > MAX_OUTPUT_BYTES) {
+            stderrCapped = true;
+            stderr = stderr.slice(0, MAX_OUTPUT_BYTES) + "\n... (stderr truncated at 50KB)";
+          }
+        }
         if (context.onToolOutput) {
           context.onToolOutput("Bash", chunk);
         }
       });
 
       const timer = setTimeout(() => {
-        child.kill();
+        killGroup();
         const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
-        resolvePromise({
-          data: `Command timed out after ${timeout}ms\n${output}`,
-        });
+        settle(`Command timed out after ${timeout}ms\n${output}`);
       }, timeout);
 
+      // User cancel: abort the whole group instead of orphaning the process.
+      const abortHandler = () => {
+        killGroup();
+        settle("Aborted/Cancelled by user");
+      };
+      context.abortController?.signal.addEventListener("abort", abortHandler);
+
       child.on("close", (code: number | null) => {
-        clearTimeout(timer);
+        context.abortController?.signal.removeEventListener("abort", abortHandler);
         const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
         if (code === 0) {
-          resolvePromise({ data: output || "(no output)" });
+          settle(output || "(no output)");
         } else {
-          resolvePromise({ data: `Exit code ${code}\n${output}` });
+          settle(`Exit code ${code}\n${output}`);
         }
       });
 
       child.on("error", (error: Error) => {
-        clearTimeout(timer);
-        resolvePromise({ data: `Error: ${error.message}` });
+        context.abortController?.signal.removeEventListener("abort", abortHandler);
+        settle(`Error: ${error.message}`);
       });
     });
   },

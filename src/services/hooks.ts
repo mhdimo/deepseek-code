@@ -1,8 +1,6 @@
 
 import { spawn } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { loadSettings } from "../state/storage.js";
 
 export type HookEvent =
   | "PreToolUse"
@@ -95,14 +93,11 @@ export function countHooks(config: HooksConfig): {
   return { perEvent, total };
 }
 
-const DATA_DIR = process.env.DEEPSEEK_CONFIG_DIR ?? join(homedir(), ".deepseek-code");
-const SETTINGS_FILE = join(DATA_DIR, "settings.json");
-
 export function loadHooks(): HooksConfig {
   try {
-    if (!existsSync(SETTINGS_FILE)) return {};
-    const parsed = JSON.parse(readFileSync(SETTINGS_FILE, "utf-8"));
-    const h = (parsed as { hooks?: unknown })?.hooks;
+    // Goes through loadSettings' mtime-keyed cache — this ran a second
+    // synchronous file read+parse on EVERY tool invocation otherwise.
+    const h = loadSettings().hooks;
     return h && typeof h === "object" ? (h as HooksConfig) : {};
   } catch {
     return {};

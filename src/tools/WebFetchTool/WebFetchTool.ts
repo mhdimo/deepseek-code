@@ -50,14 +50,27 @@ export const WebFetchTool = buildTool({
     _context: ToolUseContext,
   ): Promise<ToolResult<string>> {
     try {
-      const response = await fetch(args.url, {
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; DeepSeekCode/1.0; +https://deepseek.com)",
-          Accept: "text/html,application/xhtml+xml,text/plain,*/*",
-        },
-      });
+      // Wire the user abort in (fetch() alone would ignore the cancel and
+      // keep downloading in the background).
+      const signal = _context.abortController?.signal;
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      signal?.addEventListener("abort", onAbort);
+      const timeout = AbortSignal.timeout(30_000);
+      const combined = typeof AbortSignal.any === "function" ? AbortSignal.any([controller.signal, timeout]) : controller.signal;
+      let response: Response;
+      try {
+        response = await fetch(args.url, {
+          signal: combined,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (compatible; DeepSeekCode/1.0; +https://deepseek.com)",
+            Accept: "text/html,application/xhtml+xml,text/plain,*/*",
+          },
+        });
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+      }
 
       if (!response.ok) {
         return {
@@ -65,8 +78,27 @@ export const WebFetchTool = buildTool({
         };
       }
 
+      // Stream the body with a hard cap instead of buffering an arbitrarily
+      // large page before truncating to 50KB.
       const contentType = response.headers.get("content-type") ?? "";
-      let text = await response.text();
+      let text = "";
+      if (response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (text.length > MAX_SIZE_CHARS) {
+            text = text.slice(0, MAX_SIZE_CHARS) + "\n\n... (truncated at 50KB)";
+            await reader.cancel().catch(() => {});
+            break;
+          }
+        }
+        text += decoder.decode();
+      } else {
+        text = await response.text();
+      }
 
       
       if (!args.raw && (contentType.includes("html") || text.includes("<html"))) {

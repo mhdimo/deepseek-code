@@ -87,7 +87,7 @@ function estimateCost(model: string, tokens: number): number {
 }
 
 /** Render statusline stdout ANSI-aware; unsupported escapes were stripped by parseAnsi. */
-function StatusLineText({ text }: { text: string }) {
+const StatusLineText = React.memo(function StatusLineText({ text }: { text: string }) {
   return (
     <>
       {parseAnsi(text).map((seg, i) => (
@@ -106,9 +106,9 @@ function StatusLineText({ text }: { text: string }) {
       ))}
     </>
   );
-}
+});
 
-export default function StatusBar({
+export default React.memo(function StatusBar({
   model,
   agentName,
   isLoading = false,
@@ -248,4 +248,4 @@ export default function StatusBar({
       </Box>
     </Box>
   );
-}
+});

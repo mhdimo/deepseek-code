@@ -4,8 +4,8 @@ import type { Message, MessageBlock, ToolUseBlock } from "../types/index.js";
 import { theme, resolveColor, getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import Markdown, { RowText, rowSelection, markdownRows, flattenMarkdown, updateMarkdownModel, type MarkdownModelState, type MarkdownBlockRows } from "./Markdown.js";
-import ToolBlock, { buildToolBlockSpans, BLACK_CIRCLE } from "./ToolBlock.js";
-import { AgentFanout, agentFanoutLineCount } from "./AgentFanout.js";
+import ToolBlock, { buildToolBlockSpans, BLACK_CIRCLE, type ToolBlockSpan } from "./ToolBlock.js";
+import { AgentFanout, buildAgentFanoutLines } from "./AgentFanout.js";
 import MessageResponse from "./MessageResponse.js";
 import ThinkingBlock from "./ThinkingBlock.js";
 import type { TextRow } from "../services/selection/lineModel.js";
@@ -158,6 +158,23 @@ function MessageView({
     return next;
   };
 
+  // Tool spans keyed by block object identity. Completed Edit/Write blocks
+  // carry the most expensive render data (Myers word diffs, wrap per line)
+  // yet their output never changes between flushes — without this cache the
+  // streaming message re-built every finished tool's spans ~12.5x/sec. App
+  // replaces the block object whenever output/status/isExpanded change, so
+  // the WeakMap misses exactly when the spans are stale.
+  const toolSpanCacheRef = useRef(new WeakMap<ToolUseBlock, { width: number; isTranscriptMode: boolean; themeName: string; spans: ToolBlockSpan[] }>());
+  const toolSpansFor = (tool: ToolUseBlock, contentWidth: number, isTranscript: boolean): ToolBlockSpan[] => {
+    const cached = toolSpanCacheRef.current.get(tool);
+    if (cached && cached.width === contentWidth && cached.isTranscriptMode === isTranscript && cached.themeName === themeName) {
+      return cached.spans;
+    }
+    const spans = buildToolBlockSpans(tool, contentWidth, isTranscript, theme);
+    toolSpanCacheRef.current.set(tool, { width: contentWidth, isTranscriptMode: isTranscript, themeName, spans });
+    return spans;
+  };
+
   const userWidth = Math.max(1, contentWidth - 2);
 
   if (message.role === "user") {
@@ -256,7 +273,7 @@ function MessageView({
     // model span (computed here, rendered by ToolBlock from the same data),
     // so the row accumulator never drifts from what is on screen.
     const renderTool = (tool: ToolUseBlock, baseKey: string): React.ReactNode => {
-      const spans = buildToolBlockSpans(tool, contentWidth, isTranscriptMode ?? false, theme);
+      const spans = toolSpansFor(tool, contentWidth, isTranscriptMode ?? false);
       const headRow = row;
       row += 1;
       report({ key: `${baseKey}:head`, rowCount: 1, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
@@ -290,10 +307,14 @@ function MessageView({
     // ("Running N agents…", ├─/└─ per agent). Renders its lines as opaque
     // rows so the row accumulator stays in sync with the screen.
     const renderAgentFanout = (run: ToolUseBlock[], baseKey: string): React.ReactNode => {
-      const lineCount = agentFanoutLineCount(run);
+      // Compute the lines ONCE and reuse them for both the row accounting
+      // and the render (building them twice meant two JSON.parse + full
+      // output scans of every agent block per flush).
+      const fanoutLines = buildAgentFanoutLines(run);
+      const lineCount = fanoutLines.length;
       row += lineCount;
       report({ key: `${baseKey}:fanout`, rowCount: lineCount, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
-      return <AgentFanout key={baseKey} blocks={run} />;
+      return <AgentFanout key={baseKey} blocks={run} lines={fanoutLines} />;
     };
 
     const renderBlock = (block: MessageBlock, idx: number): React.ReactNode => {

@@ -22,7 +22,9 @@ async function searchDuckDuckGo(query: string, maxResults = 5): Promise<string> 
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
-      }
+      },
+      // A slow/blocked search endpoint must not hang the agent step.
+      signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
       return `Error: HTTP ${response.status} from DuckDuckGo`;

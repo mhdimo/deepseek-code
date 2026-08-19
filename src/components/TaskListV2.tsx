@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { statSync } from "fs";
 import { Box, Text, useStdout } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import type { TodoItem } from "../types/index.js";
@@ -208,7 +209,7 @@ function TaskItemRow({
   );
 }
 
-export function TaskListV2({ todos, isStandalone = false }: TaskListV2Props): React.ReactElement | null {
+export const TaskListV2 = React.memo(function TaskListV2({ todos, isStandalone = false }: TaskListV2Props): React.ReactElement | null {
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 24;
   const columns = stdout?.columns ?? 80;
@@ -258,9 +259,29 @@ export function TaskListV2({ todos, isStandalone = false }: TaskListV2Props): Re
     return () => clearTimeout(timer);
   }, [todos]);
 
-  // Poll running background tasks so owner activity lines stay live.
+  // Poll running background tasks so owner activity lines stay live —
+  // but only re-render when something actually changed (id/status/output
+  // file mtime), so an idle 1s tick doesn't force a full App-tree render.
+  const lastTasksSigRef = useRef("");
   useEffect(() => {
-    const id = setInterval(() => forceUpdate((n) => n + 1), 1000);
+    const id = setInterval(() => {
+      const sig = listTasks()
+        .filter((t) => t.status === "running")
+        .map((t) => {
+          let mtime = "";
+          try {
+            mtime = String(statSync(t.outputPath).mtimeMs);
+          } catch {
+            
+          }
+          return t.id + ":" + t.type + ":" + mtime;
+        })
+        .join("|");
+      if (sig !== lastTasksSigRef.current) {
+        lastTasksSigRef.current = sig;
+        forceUpdate((n) => n + 1);
+      }
+    }, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -343,6 +364,6 @@ export function TaskListV2({ todos, isStandalone = false }: TaskListV2Props): Re
   }
 
   return <Box flexDirection="column">{content}</Box>;
-}
+});
 
 export default TaskListV2;

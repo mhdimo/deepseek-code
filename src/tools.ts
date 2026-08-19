@@ -198,6 +198,15 @@ export function toolsToBindingFormat(
                   ? result.data
                   : JSON.stringify(result.data, null, 2);
                 
+                // Every tool declares maxResultSizeChars but nothing enforced
+                // it — Grep could embed up to 20MB and Glob unbounded output
+                // into the model context. Cap here so the LLM never sees
+                // results beyond the declared budget.
+                const maxResult = tool.maxResultSizeChars ?? 100_000;
+                if (resultString.length > maxResult) {
+                  resultString = resultString.slice(0, maxResult) + "\n\n... (truncated at " + maxResult + " chars)";
+                }
+                
                 runHooksFireAndForget("PostToolUse", {
                   tool: tool.name,
                   input,

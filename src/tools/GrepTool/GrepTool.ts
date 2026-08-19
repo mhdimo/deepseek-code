@@ -119,7 +119,7 @@ async function rgAvailable(): Promise<boolean> {
 async function runBun(
   cmd: string[],
   cwd: string,
-  opts?: { signal?: AbortSignal; maxBuffer?: number },
+  opts?: { signal?: AbortSignal; maxBuffer?: number; timeoutMs?: number },
 ): Promise<RunResult> {
   const proc = Bun.spawn({
     cmd,
@@ -128,12 +128,26 @@ async function runBun(
     stderr: "pipe",
     signal: opts?.signal,
   });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const code = await proc.exited;
-  return { code, stdout, stderr };
+  const timeout = opts?.timeoutMs;
+  const timer = timeout
+    ? setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          
+        }
+      }, timeout)
+    : null;
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const code = await proc.exited;
+    return { code, stdout, stderr };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 
@@ -241,6 +255,9 @@ async function ripgrep(
 ): Promise<string[]> {
   const { code, stdout, stderr } = await runBun(["rg", ...args], target, {
     signal,
+    // A hung rg (huge tree, wedged filesystem) must not stall the whole
+    // agent step forever — 20s matches the reference ripgrep timeout.
+    timeoutMs: 20_000,
   });
 
   if (RG_SUCCESS_CODES.has(code)) {

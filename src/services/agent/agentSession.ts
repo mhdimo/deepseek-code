@@ -31,7 +31,37 @@ interface CacheEntry { key: string; ms: MemorySession; context: ToolUseContext; 
 // the JS Agent wrapper (which owns the native ToolSet) then lost its last
 // reference, GC ran its destructor mid-turn, and the native loop SIGTRAPped on
 // the freed toolset. Entries stay referenced until explicitly released.
+//
+// Unbounded growth is still wrong: every agent/effort/model switch and every
+// subagent run used to add a full native session (memory dir + context) for
+// the process lifetime. The cache is now LRU-bounded with one hard rule —
+// the entry most recently created or touched is NEVER evicted, and that
+// entry is always the session the current turn is driving (submitUserPrompt
+// only holds the session object, not the Agent wrapper, so evicting it
+// mid-turn would re-expose the SIGTRAP). Older entries are only referenced
+// by the cache, so dropping them is safe; subagent entries additionally hold
+// their own MemorySession in the run frame until releaseMemorySession runs.
 const cache = new Map<string, CacheEntry>();
+const MAX_CACHE_ENTRIES = 12;
+
+function touchCache(key: string): void {
+  // Map iteration order = insertion order; re-inserting moves the entry to
+  // the newest position (LRU recency).
+  const entry = cache.get(key);
+  if (entry) {
+    cache.delete(key);
+    cache.set(key, entry);
+  }
+}
+
+function trimCache(protectedKey: string): void {
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    // Oldest entry first; never evict the just-used key.
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined || oldest === protectedKey) break;
+    cache.delete(oldest);
+  }
+}
 
 export function getOrCreateMemorySession(opts: {
   providerConfig: ProviderConfig;
@@ -71,6 +101,7 @@ export function getOrCreateMemorySession(opts: {
   ].join("|");
   const cached = cache.get(key);
   if (cached) {
+    touchCache(key);
     if (requestPermission) {
       cached.context.requestPermission = requestPermission;
     }
@@ -231,6 +262,7 @@ export function getOrCreateMemorySession(opts: {
 
   const ms: MemorySession = { agent, session };
   cache.set(key, { key, ms, context });
+  trimCache(key);
   return ms;
 }
 

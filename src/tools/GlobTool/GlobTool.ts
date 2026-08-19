@@ -73,11 +73,38 @@ export const GlobTool = buildTool({
         );
 
         let out = "";
+        let lines = 0;
+        let settled = false;
+        const settle = (data: string) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolvePromise({ data });
+        };
+
         child.stdout.on("data", (d: Buffer) => {
-          out += d.toString();
+          const chunk = d.toString();
+          out += chunk;
+          lines += chunk.split("\n").length - 1;
+          // Early stop: we only keep MAX_RESULTS — don't let find traverse
+          // the whole tree (and buffer unbounded output) for a huge match set.
+          if (lines >= MAX_RESULTS) {
+            child.kill("SIGTERM");
+            settle(out.trim().split("\n").filter(Boolean).slice(0, MAX_RESULTS).map((p) => relative(cwd, p)).join("\n") || "No files matched the pattern.");
+          }
         });
 
+        const timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          settle("Error: glob timed out");
+        }, 30_000);
+
+        const abortHandler = () => settle("Aborted/Cancelled by user");
+        context.abortController?.signal.addEventListener("abort", abortHandler);
+
         child.on("close", () => {
+          context.abortController?.signal.removeEventListener("abort", abortHandler);
+          if (settled) return;
           const results = out
             .trim()
             .split("\n")
@@ -86,14 +113,15 @@ export const GlobTool = buildTool({
             .slice(0, MAX_RESULTS);
 
           if (results.length === 0) {
-            resolvePromise({ data: "No files matched the pattern." });
+            settle("No files matched the pattern.");
           } else {
-            resolvePromise({ data: results.join("\n") });
+            settle(results.join("\n"));
           }
         });
 
         child.on("error", () => {
-          resolvePromise({ data: "Error: find command not available" });
+          context.abortController?.signal.removeEventListener("abort", abortHandler);
+          settle("Error: find command not available");
         });
       });
     } catch (error) {

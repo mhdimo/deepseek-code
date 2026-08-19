@@ -33,8 +33,18 @@ export default function TasksStatusPill(): React.ReactNode {
   const [running, setRunning] = useState<TaskState[]>([]);
 
   useEffect(() => {
-    const update = () =>
-      setRunning(listTasks().filter((t) => t.status === "running"));
+    // Diff against the previous snapshot: listTasks() returns a fresh array
+    // every second, and a bare setRunning forced a full App-tree render +
+    // Ink layout pass even when no task changed.
+    const update = () => {
+      const next = listTasks().filter((t) => t.status === "running");
+      setRunning((prev) => {
+        if (prev.length === next.length && prev.every((t, i) => t.id === next[i]?.id)) {
+          return prev;
+        }
+        return next;
+      });
+    };
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);

@@ -19,7 +19,7 @@ import type { ToolUseBlock } from "../types/index.js";
  * row accounting and renders <AgentFanout> for the visuals.
  */
 
-interface FanoutLine {
+export interface FanoutLine {
   text: string;
   color?: string;
   bold?: boolean;
@@ -113,8 +113,14 @@ export function agentFanoutLineCount(blocks: ToolUseBlock[]): number {
   return buildAgentFanoutLines(blocks).length;
 }
 
-export function AgentFanout({ blocks }: { blocks: ToolUseBlock[] }): React.ReactElement {
-  const lines = buildAgentFanoutLines(blocks);
+export function AgentFanout({ blocks, lines: linesProp }: {
+  blocks: ToolUseBlock[];
+  /** Precomputed lines (MessageView computes them once for both the row
+   *  accounting and the render — building them twice per render meant two
+   *  JSON.parse + full-output scans of every agent block per flush). */
+  lines?: FanoutLine[];
+}): React.ReactElement {
+  const lines = linesProp ?? buildAgentFanoutLines(blocks);
   return (
     <Box flexDirection="column" flexShrink={0} minWidth={0}>
       {lines.map((line, i) => (

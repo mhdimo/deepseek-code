@@ -1073,7 +1073,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   
   
-  useEffect(() => {
+  // Persist the session. Each save rewrites the FULL transcript (JSON
+  // stringify + writeFileSync + stats rewrite) — firing that on every
+  // message append, token-usage event and line-count update stalled the
+  // UI thread with 3-6+ synchronous full-file rewrites per turn. Debounced
+  // (400ms trailing) and flushed on unmount/exit; a crash loses at most the
+  // last ~400ms of messages, which is the tradeoff for not blocking the
+  // render loop (the native session owns the authoritative history anyway).
+  const persistSession = useCallback(() => {
     if (messages.length === 0) return;
     try {
       const sessionMessages = messages.map((m) => ({
@@ -1126,7 +1133,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     } catch {
       
     }
-  }, [messages.length, tokenCount, cost, apiDurationMs, sessionLinesAdded, sessionLinesRemoved]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, activeSessionHash, tokenCount, activeModel, currentAgent, workingDirectory, apiDurationMs, sessionLinesAdded, sessionLinesRemoved, cost]);
+
+  const persistSessionRef = useRef(persistSession);
+  persistSessionRef.current = persistSession;
+  const sessionSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (messages.length === 0) return;
+    if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+    sessionSaveTimerRef.current = setTimeout(() => {
+      sessionSaveTimerRef.current = null;
+      persistSessionRef.current();
+    }, 400);
+  }, [messages, tokenCount, cost, apiDurationMs, sessionLinesAdded, sessionLinesRemoved]);
+  useEffect(() => {
+    // Flush any pending save when the app unmounts (ctrl+c / exit).
+    return () => {
+      if (sessionSaveTimerRef.current) {
+        clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = null;
+        persistSessionRef.current();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   
   useEffect(() => {
@@ -4104,6 +4135,22 @@ Based on the above changes:
 
 
   
+  // Stable references so memoized children (TextInput suggestion memo,
+  // StatusBar) don't re-render on every 80ms flush.
+  const recentFilesMemo = useMemo(
+    () => (currentFile ? [currentFile] : []),
+    [currentFile],
+  );
+  const tasksMemo = useMemo(
+    () => ({
+      done: todos.filter((t) => t.status === "completed").length,
+      total: todos.length,
+      inProgress: todos.filter((t) => t.status === "in_progress").length,
+      expanded: tasksExpanded,
+    }),
+    [todos, tasksExpanded],
+  );
+
   const renderCommandOverlay = () => {
     switch (commandOverlay?.view) {
       case "model":
@@ -4673,7 +4720,7 @@ Based on the above changes:
             isLoading={isLoading}
             agentName={currentAgent}
             workingDirectory={workingDirectory}
-            recentFiles={currentFile ? [currentFile] : []}
+            recentFiles={recentFilesMemo}
             isBlocked={!!pendingPermission || !!pendingQuestions}
             waitingPermission={!!pendingPermission}
             queueCount={queuedSubmissions.length}
@@ -4709,12 +4756,7 @@ Based on the above changes:
             tokenBudget={contextManagerRef.current.getBudget()}
             statusLineOutput={statusLineText}
             statusLinePadding={statusLineSetting?.padding}
-            tasks={{
-              done: todos.filter((t) => t.status === "completed").length,
-              total: todos.length,
-              inProgress: todos.filter((t) => t.status === "in_progress").length,
-              expanded: tasksExpanded,
-            }}
+            tasks={tasksMemo}
           />
         </>
       )}

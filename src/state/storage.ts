@@ -6,7 +6,7 @@
 
 
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -128,9 +128,25 @@ function ensureDataDir(): void {
 
 
 
+// loadSettings() runs on EVERY tool invocation (permission rules, hooks,
+// effort, statusline …). Reading + JSON.parse-ing the file each time meant
+// dozens of synchronous disk hits per agent turn, stalling the UI thread.
+// The cache is keyed by file mtime so external edits are still picked up;
+// saveSettings invalidates it explicitly (same-tick rewrites otherwise
+// share the mtime).
+let settingsCache: { mtimeMs: number; settings: PersistedSettings } | null = null;
+
 export function loadSettings(): PersistedSettings {
   try {
-    if (!existsSync(SETTINGS_FILE)) return {};
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(SETTINGS_FILE).mtimeMs;
+    } catch {
+      return {};
+    }
+    if (settingsCache && settingsCache.mtimeMs === mtimeMs) {
+      return settingsCache.settings;
+    }
     const raw = readFileSync(SETTINGS_FILE, "utf-8");
     const settings = JSON.parse(raw) as PersistedSettings;
     
@@ -147,6 +163,7 @@ export function loadSettings(): PersistedSettings {
     } catch {
       
     }
+    settingsCache = { mtimeMs, settings };
     return settings;
   } catch {
     return {};
@@ -159,6 +176,7 @@ export function saveSettings(settings: PersistedSettings): void {
   const existing = loadSettings();
   const merged = { ...existing, ...settings };
   writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+  settingsCache = null;
 }
 
 
@@ -273,34 +291,51 @@ export function listSessions(): SessionData[] {
 }
 
 
+// Pruning used to go through listSessions(), which reads + JSON.parses
+// EVERY session file — pruneOldSessions runs synchronously at startup and
+// pruneSessions on every first save of a session. Session filenames are
+// `<timestamp36>-<rand>.json` (creation-ordered) and files are rewritten on
+// every update, so filename order and file mtime are accurate proxies that
+// avoid touching file contents at all.
 export function pruneSessions(keepCount = 50): void {
-  const sessions = listSessions();
-  if (sessions.length <= keepCount) return;
-
-  const toDelete = sessions.slice(keepCount);
-  for (const session of toDelete) {
-    try {
-      unlinkSync(join(SESSIONS_DIR, `${session.hash}.json`));
-    } catch {
-      
+  ensureDataDir();
+  try {
+    const files = readdirSync(SESSIONS_DIR)
+      .filter((f) => f.endsWith(".json"))
+      .sort()
+      .reverse();
+    if (files.length <= keepCount) return;
+    for (const f of files.slice(keepCount)) {
+      try {
+        unlinkSync(join(SESSIONS_DIR, f));
+      } catch {
+        
+      }
     }
+  } catch {
+    
   }
 }
 
 
 export function pruneOldSessions(days = 30): number {
-  const sessions = listSessions();
+  ensureDataDir();
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   let removed = 0;
-  for (const session of sessions) {
-    if (session.updatedAt < cutoff) {
+  try {
+    for (const f of readdirSync(SESSIONS_DIR)) {
+      if (!f.endsWith(".json")) continue;
       try {
-        unlinkSync(join(SESSIONS_DIR, `${session.hash}.json`));
-        removed++;
+        if (statSync(join(SESSIONS_DIR, f)).mtimeMs < cutoff) {
+          unlinkSync(join(SESSIONS_DIR, f));
+          removed++;
+        }
       } catch {
         
       }
     }
+  } catch {
+    
   }
   return removed;
 }
