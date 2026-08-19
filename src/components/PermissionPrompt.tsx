@@ -517,18 +517,24 @@ function PermissionSelect({
         const isFocused = option.value === focusedValue;
         return (
           <Box key={option.value} flexDirection="column" flexShrink={0}>
-            <Box flexDirection="row" gap={1}>
+            <Box flexDirection="row">
               {isFocused ? (
-                <Text color={resolveColor(theme.suggestion)}>❯</Text>
+                <Text color={resolveColor(theme.suggestion)}>❯ </Text>
               ) : (
-                <Text> </Text>
+                <Text>  </Text>
               )}
+              {/* Reference parity: EVERY option is numbered (dimmed, aligned
+                  with the input-row numbers) so the 1..N shortcut keys are
+                  visible. Previously only input-type rows rendered their
+                  index, which made the editable "don't ask again for" row
+                  show a lone "2." while the rest had none. */}
+              <Text dimColor>{`${index + 1}.`.padEnd(maxIndexWidth + 2)}</Text>
               <Text dimColor={false} color={isFocused ? resolveColor(theme.suggestion) : undefined}>
                 {option.label}
               </Text>
             </Box>
             {option.description && (
-              <Box paddingLeft={2}>
+              <Box paddingLeft={maxIndexWidth + 3}>
                 <Text dimColor={option.dimDescription !== false}>{option.description}</Text>
               </Box>
             )}
