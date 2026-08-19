@@ -14,7 +14,12 @@ import type { AskUserQuestion, PermissionRuleset, ProviderConfig } from "./types
 
 export type PermissionCallback = (
   toolName: string,
-  description: string,
+  /** Static text or a lazy thunk. Thunks are only evaluated when the
+   *  approval UI actually renders the description — auto-approve modes
+   *  (headless --print, bypassPermissions, allow-rules) never touch them.
+   *  Tools whose preview requires a file read + diff (Write/Edit) pass a
+   *  thunk so headless runs skip that work entirely. */
+  description: string | (() => string),
   /** Tool input (when the tool provides one) — the permission UI renders
    *  a faithful diff from it (file_path/old_string/new_string/content). */
   input?: unknown,

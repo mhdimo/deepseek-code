@@ -60,7 +60,7 @@ const MAX_DIFF_ROWS = 12;
 
 interface PermissionPromptProps {
   toolName: string;
-  description: string;
+  description: string | (() => string);
   input?: unknown;
   workingDir: string;
   /** Pre-computed reason the prompt was raised (e.g. a hook decision).
@@ -1770,6 +1770,11 @@ function AskUserQuestionPermissionRequest({
 export default function PermissionPrompt(props: PermissionPromptProps) {
   const { toolName, description, input, workingDir, onApprove, onDeny } = props;
 
+  // Materialize lazy descriptions exactly once, when the prompt actually
+  // renders — Write/Edit preview thunks (file read + diff) never run in
+  // auto-approve or headless modes.
+  const desc = typeof description === "function" ? description() : description;
+
   const explanation = useRuleExplanation(toolName, input, workingDir, props.explanation);
 
   if (toolName === "Edit") {
@@ -1808,8 +1813,8 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
     return (
       <ShellPermissionRequest
         toolName={toolName}
-        command={inputString(input, "command") || description}
-        description={description}
+        command={inputString(input, "command") || desc}
+        description={desc}
         explanation={explanation}
         workingDir={workingDir}
         onApprove={onApprove}
@@ -1851,7 +1856,7 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
   if (toolName === "NotebookEdit") {
     return (
       <NotebookEditPermissionRequest
-        description={description}
+        description={desc}
         input={input}
         explanation={explanation}
         workingDir={workingDir}
@@ -1864,7 +1869,7 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
   if (toolName === "WebFetch") {
     return (
       <WebFetchPermissionRequest
-        description={description}
+        description={desc}
         input={input}
         explanation={explanation}
         workingDir={workingDir}
@@ -1877,7 +1882,7 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
   if (toolName === "Skill") {
     return (
       <SkillPermissionRequest
-        description={description}
+        description={desc}
         input={input}
         explanation={explanation}
         workingDir={workingDir}
@@ -1900,7 +1905,7 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
   if (toolName === "AskUserQuestion" || toolName.startsWith("AskUserQuestion:")) {
     return (
       <AskUserQuestionPermissionRequest
-        description={description}
+        description={desc}
         onApprove={onApprove}
         onDeny={onDeny}
       />
@@ -1910,7 +1915,7 @@ export default function PermissionPrompt(props: PermissionPromptProps) {
   return (
     <FallbackPermissionRequest
       toolName={toolName}
-      description={description}
+      description={desc}
       explanation={explanation}
       workingDir={workingDir}
       onApprove={onApprove}

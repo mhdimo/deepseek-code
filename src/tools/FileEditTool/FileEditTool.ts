@@ -59,7 +59,10 @@ export const FileEditTool = buildTool({
     const fullPath = resolvePath(context.workingDir, input.file_path);
     const relPath = relativePath(context.workingDir, fullPath);
 
-    const preview = [
+    // Lazy: the Edit dialog renders its own hunk diff from the input;
+    // auto-approve/headless modes never render a prompt, so the string
+    // diff below only runs if something actually displays it.
+    const preview = () => [
       `Edit ${relPath}`,
       "",
       "Diff preview:",

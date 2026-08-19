@@ -4,6 +4,7 @@
 
 
 import { readFile, writeFile } from "fs/promises";
+import { readFileSync } from "fs";
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import {
@@ -55,25 +56,30 @@ export const FileWriteTool = buildTool({
     const fullPath = resolvePath(context.workingDir, input.file_path);
     const relPath = relativePath(context.workingDir, fullPath);
 
-    
-    let previousContent = "";
-    let exists = false;
-    try {
-      previousContent = await readFile(fullPath, "utf-8");
-      exists = true;
-    } catch {
-      exists = false;
-    }
-
-    const preview = [
-      `Write ${relPath}`,
-      exists ? "Mode: overwrite existing file" : "Mode: create new file",
-      "",
-      exists ? "Diff preview:" : "Content preview:",
-      exists
-        ? previewRawBlock(buildSimpleDiffPreview(previousContent, input.content), 60, 1200)
-        : asAddedLines(input.content, 20),
-    ].join("\n");
+    // LAZY preview: the permission dialog renders its own old-vs-new diff
+    // from `input` (FileWritePermissionRequest), so this description is
+    // never materialized in the TUI — and headless/auto-approve modes never
+    // render any prompt. The file read + full-content diff used to run on
+    // EVERY Write (twice: here and in call), even when never shown.
+    const preview = () => {
+      let previousContent = "";
+      let exists = false;
+      try {
+        previousContent = readFileSync(fullPath, "utf-8");
+        exists = true;
+      } catch {
+        exists = false;
+      }
+      return [
+        `Write ${relPath}`,
+        exists ? "Mode: overwrite existing file" : "Mode: create new file",
+        "",
+        exists ? "Diff preview:" : "Content preview:",
+        exists
+          ? previewRawBlock(buildSimpleDiffPreview(previousContent, input.content), 60, 1200)
+          : asAddedLines(input.content, 20),
+      ].join("\n");
+    };
 
     return context.requestPermission("Write", preview, input);
   },

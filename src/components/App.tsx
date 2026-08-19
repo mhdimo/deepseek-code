@@ -201,7 +201,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [permissionQueue, setPermissionQueue] = useState<
     Array<{
       toolName: string;
-      description: string;
+      description: string | (() => string);
       /** Tool input — the dialog renders a faithful diff from it. */
       input?: unknown;
       /** Matched permission rule / hook that raised this request (dim
@@ -1714,7 +1714,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
   
   const requestPermission = useCallback(
-    (toolName: string, description: string, input?: unknown): Promise<{ approved: boolean; feedback?: string }> => {
+    (toolName: string, description: string | (() => string), input?: unknown): Promise<{ approved: boolean; feedback?: string }> => {
       const mode = permissionModeRef.current;
       if (mode === "bypassPermissions") {
         return Promise.resolve({ approved: true });

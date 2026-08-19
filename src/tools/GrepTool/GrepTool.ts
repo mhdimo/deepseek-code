@@ -119,7 +119,7 @@ async function rgAvailable(): Promise<boolean> {
 async function runBun(
   cmd: string[],
   cwd: string,
-  opts?: { signal?: AbortSignal; maxBuffer?: number; timeoutMs?: number },
+  opts?: { signal?: AbortSignal; maxBuffer?: number; timeoutMs?: number; lineBudget?: number },
 ): Promise<RunResult> {
   const proc = Bun.spawn({
     cmd,
@@ -139,8 +139,42 @@ async function runBun(
       }, timeout)
     : null;
   try {
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
+    // Stream stdout with a hard byte cap and an optional line budget:
+    // buffering the ENTIRE rg output before capping (the old behavior)
+    // spiked hundreds of MB on broad searches. Kill rg once the budget
+    // is satisfied — the caller only keeps head_limit lines anyway.
+    const MAX = opts?.maxBuffer ?? 20_000_000;
+    const lineBudget = opts?.lineBudget ?? 0;
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    let capped = false;
+    let done = false;
+    let lines = 0;
+    for (;;) {
+      const read = await reader.read();
+      done = read.done;
+      if (done) break;
+      stdout += decoder.decode(read.value, { stream: true });
+      if (stdout.length > MAX) {
+        capped = true;
+        stdout = stdout.slice(0, MAX);
+        break;
+      }
+      if (lineBudget > 0) {
+        lines += countNewlines(read.value!);
+        if (lines >= lineBudget) break;
+      }
+    }
+    if (!done && (capped || (lineBudget > 0 && lines >= lineBudget))) {
+      try {
+        proc.kill();
+      } catch {
+        
+      }
+    }
+    stdout += decoder.decode();
+    const [stderr] = await Promise.all([
       new Response(proc.stderr).text(),
     ]);
     const code = await proc.exited;
@@ -148,6 +182,14 @@ async function runBun(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function countNewlines(buf: Uint8Array): number {
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 10) n++;
+  }
+  return n;
 }
 
 
@@ -252,12 +294,17 @@ async function ripgrep(
   args: string[],
   target: string,
   signal?: AbortSignal,
+  lineBudget?: number,
 ): Promise<string[]> {
   const { code, stdout, stderr } = await runBun(["rg", ...args], target, {
     signal,
     // A hung rg (huge tree, wedged filesystem) must not stall the whole
     // agent step forever — 20s matches the reference ripgrep timeout.
     timeoutMs: 20_000,
+    // Kill rg once we've collected enough result lines for -l/-c modes
+    // (each line is one file/count) instead of letting it walk the whole
+    // tree — the caller only keeps head_limit entries anyway.
+    lineBudget,
   });
 
   if (RG_SUCCESS_CODES.has(code)) {
@@ -607,7 +654,15 @@ export const GrepTool = buildTool({
     if (await rgAvailable()) {
       try {
         const args = buildRgArgs(input);
-        const lines = await ripgrep(args, dir, signal);
+        // In -l/-c modes every output line is one result, so rg can be
+        // killed once head_limit + offset lines arrived (renderers only
+        // keep that many anyway). Content mode lines carry context, so no
+        // line budget there — the byte cap still applies.
+        const budget =
+          output_mode !== "content" && (input.head_limit ?? DEFAULT_HEAD_LIMIT) !== 0
+            ? (input.head_limit ?? DEFAULT_HEAD_LIMIT) + (input.offset ?? 0)
+            : undefined;
+        const lines = await ripgrep(args, dir, signal, budget);
 
         if (output_mode === "content") {
           return { data: renderContent(lines, cwd, input.head_limit, input.offset) };

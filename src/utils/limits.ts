@@ -70,7 +70,13 @@ export function truncateToTokenBudget(
 ): TokenTruncation {
   const maxChars = maxTokens * 4;
   if (text.length <= maxChars) {
-    return { content: text, truncated: false, keptLines: text.length === 0 ? 0 : text.split("\n").length };
+    // Count newlines without allocating a full lines array — this runs on
+    // every FileRead result that fits the budget.
+    let keptLines = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) keptLines++;
+    }
+    return { content: text, truncated: false, keptLines };
   }
 
   const lines = text.split("\n");
