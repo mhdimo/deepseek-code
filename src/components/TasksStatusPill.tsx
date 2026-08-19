@@ -1,32 +1,50 @@
-
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { listTasks } from "../services/tasks/backgroundFramework.js";
-import { taskEntryLabel, taskTypeDotColor } from "../utils/taskLabels.js";
+import { taskTypeDotColor } from "../utils/taskLabels.js";
 import { agentColorToThemeToken } from "../services/agents/agentColorManager.js";
 import { colorForAgent } from "../services/teams/teamService.js";
 import type { TaskState } from "../Task.js";
 
 /**
- * Live footer pill above the prompt (Claude Code BackgroundTaskStatus
- * equivalent): lists running background agents / workflows / shells and hints
- * that ↓ opens the tasks manager. Agent dots take their team color when one
- * is assigned. Renders nothing when all tasks are idle.
+ * Live footer pill above the prompt (Claude Code BackgroundTaskStatus +
+ * pillLabel parity): a compact type-aware aggregate of running background
+ * agents / workflows / shells, plus a ↓ hint that opens the tasks manager.
+ * Reference labels: "1 local agent", "2 shells", "1 background workflow",
+ * mixed sets collapse to "N background tasks". Renders nothing when idle.
  */
 
-/** Teammate color for agent/workflow tasks, else the type's default dot. */
-function dotTokenFor(task: TaskState): string {
-  if (task.name) {
-    const token = agentColorToThemeToken(colorForAgent(task.name));
-    if (token) return token;
+/** Aggregated label for a set of running tasks (pillLabel.ts parity). */
+export function getPillLabel(tasks: TaskState[]): string {
+  const n = tasks.length;
+  const allSameType = tasks.every((t) => t.type === tasks[0]!.type);
+  if (allSameType) {
+    switch (tasks[0]!.type) {
+      case "shell":
+        return n === 1 ? "1 shell" : `${n} shells`;
+      case "agent":
+        return n === 1 ? "1 local agent" : `${n} local agents`;
+      case "workflow":
+        return n === 1 ? "1 background workflow" : `${n} background workflows`;
+    }
   }
-  return taskTypeDotColor(task.type);
+  return `${n} background ${n === 1 ? "task" : "tasks"}`;
 }
 
-function themeToken(token: string): string {
-  const value = (theme as Record<string, unknown>)[token];
-  return typeof value === "string" ? value : theme.success;
+/** Dot color: first task's team color, else its type dot. */
+function dotColorFor(tasks: TaskState[]): string {
+  const first = tasks[0]!;
+  if (first.name) {
+    const token = agentColorToThemeToken(colorForAgent(first.name));
+    if (token) {
+      const value = (theme as Record<string, unknown>)[token];
+      if (typeof value === "string") return resolveColor(value);
+    }
+  }
+  const t = taskTypeDotColor(first.type);
+  const value = (theme as Record<string, unknown>)[t];
+  return resolveColor(typeof value === "string" ? value : theme.success);
 }
 
 export default function TasksStatusPill(): React.ReactNode {
@@ -52,20 +70,11 @@ export default function TasksStatusPill(): React.ReactNode {
 
   if (running.length === 0) return null;
 
-  const shown = running.slice(0, 3);
-  const more = running.length - shown.length;
-
   return (
     <Box paddingLeft={2}>
       <Text dimColor>
-        {shown.map((task, i) => (
-          <Text key={task.id}>
-            {i > 0 && "  "}
-            <Text color={resolveColor(themeToken(dotTokenFor(task)))}>● </Text>
-            {taskEntryLabel(task.command)}
-          </Text>
-        ))}
-        {more > 0 && `  +${more} more`}
+        <Text color={dotColorFor(running)}>● </Text>
+        {getPillLabel(running)}
         {"  · "}
         <Text bold>↓</Text> to view
       </Text>

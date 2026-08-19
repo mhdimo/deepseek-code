@@ -75,6 +75,8 @@ export class Agent {
     history: Message[],
     workingDir: string,
     requestPermission?: PermissionCallback,
+    /** Live per-tool activity callback (fanout "Reading src/foo.ts" lines). */
+    onToolActivity?: (toolName: string, input: Record<string, unknown>) => void,
   ): AsyncGenerator<AgentEvent> {
     const runAbortController = new AbortController();
     this.abortController = runAbortController;
@@ -100,6 +102,7 @@ export class Agent {
       memoryDir: subagentMemoryDir,
       requestPermission: requestPermission ?? undefined,
       abortController: runAbortController,
+      onToolActivity,
       history: history.slice(-30),
       sessionKey: `subagent-${randomUUID().slice(0, 8)}`,
     });

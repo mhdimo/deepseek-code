@@ -81,6 +81,10 @@ export interface ToolUseContext {
 
   onToolOutput?: (toolName: string, text: string) => void;
 
+  /** Fired with the real input right before a tool executes — sub-agents
+   *  use it to stream "Reading src/foo.ts"-style live activity lines. */
+  onToolActivity?: (toolName: string, input: Record<string, unknown>) => void;
+
   /** Surface a system message in the UI (e.g. background task completion). */
   onSystemMessage?: (content: string) => void;
 }

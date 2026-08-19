@@ -310,7 +310,7 @@ function MessageView({
       // Compute the lines ONCE and reuse them for both the row accounting
       // and the render (building them twice meant two JSON.parse + full
       // output scans of every agent block per flush).
-      const fanoutLines = buildAgentFanoutLines(run);
+      const fanoutLines = buildAgentFanoutLines(run, theme);
       const lineCount = fanoutLines.length;
       row += lineCount;
       report({ key: `${baseKey}:fanout`, rowCount: lineCount, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });

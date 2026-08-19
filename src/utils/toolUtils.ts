@@ -112,6 +112,57 @@ export function formatFileContent(
 
 
 
+/**
+ * Human-readable "what is this tool doing right now" description for live
+ * sub-agent activity lines (Claude Code's Tool.getActivityDescription
+ * parity): "Reading src/foo.ts", "Running npm test", "Searching for bug"…
+ * Falls back to the bare tool name.
+ */
+export function describeToolActivity(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+): string {
+  const s = (v: unknown, max = 90): string => {
+    const str = typeof v === "string" ? v : String(v ?? "");
+    const oneLine = str.replace(/\s+/g, " ").trim();
+    return oneLine.length > max ? oneLine.slice(0, max - 1) + "…" : oneLine;
+  };
+  switch (toolName) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "NotebookEdit":
+      return `${toolName === "Read" ? "Reading" : toolName === "Write" ? "Writing" : "Editing"} ${s(input?.["file_path"] ?? input?.["notebook_path"])}`;
+    case "Bash":
+      return `Running ${s(input?.["command"])}`;
+    case "Glob":
+      return `Finding files matching ${s(input?.["pattern"])}`;
+    case "Grep":
+      return `Searching ${s(input?.["pattern"])}`;
+    case "LS":
+      return `Listing ${s(input?.["path"] ?? ".")}`;
+    case "WebFetch":
+      return `Fetching ${s(input?.["url"])}`;
+    case "WebSearch":
+      return `Searching for ${s(input?.["query"])}`;
+    case "TodoWrite":
+      return "Updating todos";
+    case "Agent":
+      return `Running sub-agent ${s(input?.["description"] ?? input?.["prompt"])}`;
+    case "TaskCreate":
+    case "TaskUpdate":
+    case "TaskGet":
+    case "TaskList":
+      return "Managing tasks";
+    case "Sleep":
+      return "Waiting";
+    case "Skill":
+      return `Using skill ${s(input?.["name"])}`;
+    default:
+      return toolName;
+  }
+}
+
 export function buildSystemInstructions(systemPrompt: string, workingDir: string): string {
   const envPrompt = `
 

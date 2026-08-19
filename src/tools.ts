@@ -190,6 +190,9 @@ export function toolsToBindingFormat(
                 resultString = `Blocked by PreToolUse hook: ${pre.reason ?? ""}`.trim();
                 isError = true;
               } else {
+                // Live activity hook (sub-agent fanout lines): fires with the
+                // REAL input right before execution.
+                context.onToolActivity?.(tool.name, input as Record<string, unknown>);
                 const result = await Promise.race([
                   tool.call(input as any, context),
                   abortPromise,

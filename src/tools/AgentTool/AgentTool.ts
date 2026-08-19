@@ -5,6 +5,7 @@ import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
 import { DESCRIPTION } from "./prompt.js";
 
 import { agentManager } from "../../services/agent/index.js";
+import { describeToolActivity } from "../../utils/toolUtils.js";
 import {
   registerVirtualTask,
   appendTaskOutput,
@@ -46,9 +47,14 @@ interface RunAccumulator {
   durationMs: number;
 }
 
+interface ActivityCallbackRef {
+  current?: (toolName: string, input: Record<string, unknown>) => void;
+}
+
 async function drainAgent(
   events: AsyncGenerator<import("../../types/index.js").AgentEvent>,
   onActivity: (line: string) => void,
+  onToolActivity: ActivityCallbackRef,
 ): Promise<RunAccumulator> {
   const acc: RunAccumulator = {
     activity: [],
@@ -59,14 +65,28 @@ async function drainAgent(
     durationMs: 0,
   };
   const started = Date.now();
+  // Wrap the raw onToolActivity into rich "⎿ Reading src/foo.ts" lines and
+  // publish it through the ref BEFORE the first generator pull (the native
+  // session — and therefore the tool wrapper — is built lazily on first
+  // next(), so the stable outer callback will see this wrapped one).
+  if (onToolActivity) {
+    onToolActivity.current = (toolName: string, input: Record<string, unknown>) => {
+      const line = `⎿ ${describeToolActivity(toolName, input)}`;
+      acc.activity.push(line);
+      onActivity(`${line}\n`);
+    };
+  }
   for await (const ev of events) {
     if (ev.type === "text-delta") {
       acc.reply += ev.text;
     } else if (ev.type === "tool-call-start") {
       acc.toolUses++;
-      const line = `⎿ ${ev.toolName}`;
-      acc.activity.push(line);
-      onActivity(`${line}\n`);
+      if (!onToolActivity.current) {
+        // Fallback: tool name only (the engine event carries no input).
+        const line = `⎿ ${ev.toolName}`;
+        acc.activity.push(line);
+        onActivity(`${line}\n`);
+      }
     } else if (ev.type === "finish") {
       acc.tokens = ev.usage.totalTokens;
     } else if (ev.type === "error") {
@@ -100,11 +120,16 @@ export const AgentTool = buildTool({
     const desc = args.description ?? args.prompt.slice(0, 60);
 
     const agent = agentManager.createAgent(agentName, context.providerConfig);
+    // Stable delegating callback: drainAgent publishes its rich-activity
+    // wrapper through the ref before the generator's first pull (the native
+    // session — and its tool wrapper — is built lazily on first next()).
+    const activityRef: ActivityCallbackRef = {};
     const events = agent.run(
       args.prompt,
       [],
       context.workingDir,
       context.requestPermission,
+      (toolName, input) => activityRef.current?.(toolName, input),
     );
 
     // Background mode: register a trackable task, return immediately, and
@@ -126,7 +151,7 @@ export const AgentTool = buildTool({
           task.id,
           `Agent (${subagentType}): ${desc}\nprompt: ${args.prompt.slice(0, 500)}\n\n`,
         );
-        const acc = await drainAgent(events, (line) => appendTaskOutput(task.id, line));
+        const acc = await drainAgent(events, (line) => appendTaskOutput(task.id, line), activityRef);
         const outcome = killed
           ? "✗ Terminated by user."
           : acc.error
@@ -179,7 +204,7 @@ export const AgentTool = buildTool({
     const acc = await drainAgent(events, (line) => {
       context.onToolOutput?.("Agent", line);
       appendTaskOutput(task.id, line);
-    });
+    }, activityRef);
     updateTaskState(
       task.id,
       killed

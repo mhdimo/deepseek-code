@@ -75,6 +75,7 @@ export function getOrCreateMemorySession(opts: {
   abortController?: AbortController;
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
   onToolOutput?: (toolName: string, text: string) => void;
+  onToolActivity?: (toolName: string, input: Record<string, unknown>) => void;
   onTodosChange?: (todos: TodoItem[]) => void;
   onSystemMessage?: (content: string) => void;
   history?: Message[];
@@ -86,7 +87,7 @@ export function getOrCreateMemorySession(opts: {
    *  native session (concurrent-safe; evicts the cached entry). */
   sessionKey?: string;
 }): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, askUserQuestions, abortController, onToolResult, onToolOutput, onTodosChange } = opts;
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, askUserQuestions, abortController, onToolResult, onToolOutput, onToolActivity, onTodosChange } = opts;
 
 
 
@@ -114,6 +115,9 @@ export function getOrCreateMemorySession(opts: {
     }
     if (onToolOutput) {
       cached.context.onToolOutput = onToolOutput;
+    }
+    if (onToolActivity) {
+      cached.context.onToolActivity = onToolActivity;
     }
     if (onTodosChange) {
       cached.context.onTodosChange = onTodosChange;
@@ -151,6 +155,7 @@ export function getOrCreateMemorySession(opts: {
     consumePermissionWaitMs: () => 0,
     onToolResult,
     onToolOutput,
+    onToolActivity,
     onTodosChange,
     onSystemMessage: opts.onSystemMessage,
   };
