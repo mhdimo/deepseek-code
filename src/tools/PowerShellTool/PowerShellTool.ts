@@ -56,6 +56,7 @@ function resolvePowerShellExecutable(): string {
 
 export const PowerShellTool = buildTool({
   name: POWERSHELL_TOOL_NAME,
+  requiredPermission: "allowExecute",
   description: DESCRIPTION,
   inputSchema: PowerShellInputSchema,
 
@@ -70,10 +71,6 @@ export const PowerShellTool = buildTool({
   maxResultSizeChars: 100_000,
 
   checkPermissions: async (input, context) => {
-    if (!context.permissions.allowExecute) {
-      return { approved: false, feedback: "Execute permission denied for this agent." };
-    }
-
     return context.requestPermission("PowerShell", input.command);
   },
 

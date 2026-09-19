@@ -31,6 +31,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { estimateTokens } from "../utils/limits.js";
+import type { CommandDefinition } from "../services/commands/commandRegistry.js";
 
 export type SkillSource = "project" | "user" | "bundled" | "plugin";
 
@@ -248,6 +249,45 @@ export function getSkill(name: string): SkillContent | null {
   return match ? { ...match } : null;
 }
 
+
+/**
+ * A skill as the command picker sees it — the same shape a custom command or a
+ * plugin command has, so it lands in the same list. The description is the
+ * SKILL.md frontmatter's and nothing more: the picker is a list, not a preview.
+ */
+export function toSkillCommand(skill: SkillInfo): CommandDefinition {
+  return {
+    name: skill.name.trim().replace(/^\/+/, "").toLowerCase(),
+    description: skill.description || `Skill: ${skill.name}`,
+    usage: [`/${skill.name} `],
+    category: "skill",
+    acceptsArgs: true,
+    executionKey: "skill",
+  };
+}
+
+/**
+ * The prompt a skill invoked as a slash command sends.
+ *
+ * Same substitution a custom command gets, because a SKILL.md author writes
+ * `$ARGUMENTS` expecting exactly that, and the same append when they did not —
+ * the arguments have to reach the model either way, and dropping them silently
+ * is the one outcome that would look like the skill ignoring the request.
+ */
+export function renderSkillPrompt(skill: SkillContent, args: readonly string[]): string {
+  const argString = args.join(" ");
+  // Templated means the body said where the arguments go — `$ARGUMENTS`, or a
+  // positional `$1`/`$2`. Appending them after a body that already placed them
+  // would send the same request twice.
+  const templated = /\$ARGUMENTS|\$\d+/.test(skill.content);
+  let out = skill.content.split("$ARGUMENTS").join(argString).split("${ARGUMENTS}").join(argString);
+  args.forEach((arg, index) => {
+    out = out.split(`$${index + 1}`).join(arg).split(`\${${index + 1}}`).join(arg);
+  });
+  out = out.trim();
+  if (!templated && argString) return `${out}\n\nUser request/argument: ${argString}`;
+  return out;
+}
 
 export function buildSkillToolDescription(header: string): string {
   const skills = listSkills();

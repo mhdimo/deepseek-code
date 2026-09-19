@@ -199,29 +199,63 @@ function mergeTextTokens(tokens: Token[]): Token[] {
 
 
 /**
+ * Nesting depth (0-based) of a list item whose marker starts at `rawIndent`
+ * source columns, given the indents of the enclosing items still open.
+ *
+ * The reference indents by marked's nesting level, not by the source's leading
+ * whitespace (``${'  '.repeat(listDepth)}`` per level — see the list-item case
+ * in wrapBlockRows for the columns that adds up to), and marked treats a
+ * four-space-indented nested item as one level in, so the raw space count is
+ * not the depth. Indents are tracked as a stack of open levels instead: deeper
+ * than the innermost opens a level, shallower closes levels.
+ */
+function listDepthFor(stack: number[], rawIndent: number): number {
+  while (stack.length > 0 && rawIndent < stack[stack.length - 1]!) stack.pop();
+  if (stack.length === 0 || rawIndent > stack[stack.length - 1]!) stack.push(rawIndent);
+  return stack.length - 1;
+}
+
+/**
  * Parse a list of source lines into blocks, recording the source line index
  * of each block's first line (blockLineIdx). Line-accurate offsets make the
  * streaming incremental re-parse possible: appending text only ever changes
  * the LAST block, so the tail can be re-parsed from that block's first line.
+ *
+ * List nesting is the one piece of parser state that spans lines, so the
+ * indent stack in effect at each block is recorded too (blockIndentStack):
+ * `seedStack` lets a tail re-parse start with the stack the full parse
+ * would have had there.
  */
-function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] } {
+interface ParsedLines {
+  blocks: Block[];
+  blockLineIdx: number[];
+  blockIndentStack: number[][];
+}
+
+function parseLines(lines: string[], seedStack: number[] = []): ParsedLines {
   const blocks: Block[] = [];
   const blockLineIdx: number[] = [];
+  const blockIndentStack: number[][] = [];
+  const indentStack: number[] = [...seedStack];
+  const pushBlock = (lineIdx: number, block: Block): void => {
+    blockLineIdx.push(lineIdx);
+    blockIndentStack.push([...indentStack]);
+    blocks.push(block);
+  };
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i]!;
 
-    
+
     if (line.trim() === "") {
       i++;
       continue;
     }
 
-    
+
     if (/^(?:[-*_]){3,}\s*$/.test(line) && !/[^-*_\s]/.test(line)) {
-      blockLineIdx.push(i);
-      blocks.push({ type: "hr" });
+      pushBlock(i, { type: "hr" });
       i++;
       continue;
     }
@@ -231,14 +265,14 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
     if (fenceMatch) {
       const lang = fenceMatch[1] || "";
       const codeLines: string[] = [];
-      blockLineIdx.push(i);
+      const fenceStart = i;
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i]!)) {
         codeLines.push(lines[i]!);
         i++;
       }
-      if (i < lines.length) i++; 
-      blocks.push({
+      if (i < lines.length) i++;
+      pushBlock(fenceStart, {
         type: "code-block",
         language: lang || undefined,
         content: codeLines.join("\n"),
@@ -256,8 +290,7 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
     if (headingMatch && /^#{1,6}\s+/.test(line)) {
       const level = headingMatch[1]!.length;
       const content = headingMatch[2]!.replace(/\s*#+\s*$/, "");
-      blockLineIdx.push(i);
-      blocks.push({
+      pushBlock(i, {
         type: "heading",
         level,
         tokens: content ? tokenizeInline(content) : [],
@@ -274,13 +307,14 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
         quoteLines.push(lines[i]!.replace(/^>\s?/, ""));
         i++;
       }
-      for (let k = 0; k < quoteLines.length; k++) {
-        blockLineIdx.push(quoteStart + k);
-        blocks.push({
-          type: "blockquote",
-          tokens: tokenizeInline(quoteLines[k]!),
-        });
-      }
+      // ONE block for the whole run of `>` lines. The reference prefixes the
+      // bar to every line of a blockquote token, so splitting a quote into a
+      // block per source line would put the inter-block spacer (a blank row)
+      // between the bar-prefixed lines.
+      pushBlock(quoteStart, {
+        type: "blockquote",
+        tokens: tokenizeInline(quoteLines.join("\n")),
+      });
       continue;
     }
 
@@ -294,9 +328,8 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
         // item instead of deadlocking (see heading branch comment).
         const liMatch = lines[i]?.match(/^(\s*)([-*+])\s+(.*)$/);
         if (!liMatch) break;
-        const indentLevel = Math.floor(liMatch[1]!.length / 2);
-        blockLineIdx.push(listStart + itemIdx);
-        blocks.push({
+        const indentLevel = listDepthFor(indentStack, liMatch[1]!.length);
+        pushBlock(listStart + itemIdx, {
           type: "list-item",
           indent: indentLevel,
           ordered: false,
@@ -316,9 +349,8 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
         // Marker-only lines ("1. ") consumed as empty items (see heading).
         const liMatch = lines[i]?.match(/^(\s*)(\d+)\.\s+(.*)$/);
         if (!liMatch) break;
-        const indentLevel = Math.floor(liMatch[1]!.length / 2);
-        blockLineIdx.push(listStart + itemIdx);
-        blocks.push({
+        const indentLevel = listDepthFor(indentStack, liMatch[1]!.length);
+        pushBlock(listStart + itemIdx, {
           type: "list-item",
           indent: indentLevel,
           ordered: true,
@@ -351,14 +383,14 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
         });
       const header = splitRow(line);
       const align = parseAlign(splitRow(lines[i + 1]!));
-      blockLineIdx.push(i);
+      const tableStart = i;
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length && lines[i]!.trim() !== "" && lines[i]!.includes("|")) {
         rows.push(splitRow(lines[i]!));
         i++;
       }
-      blocks.push({ type: "table", header, align, rows });
+      pushBlock(tableStart, { type: "table", header, align, rows });
       continue;
     }
 
@@ -377,15 +409,18 @@ function parseLines(lines: string[]): { blocks: Block[]; blockLineIdx: number[] 
       i++;
     }
     if (paraLines.length > 0) {
-      blockLineIdx.push(i - paraLines.length);
-      blocks.push({
+      pushBlock(i - paraLines.length, {
         type: "paragraph",
-        tokens: tokenizeInline(paraLines.join(" ")),
+        // Source line breaks are KEPT: the reference hands the paragraph's
+        // text token straight to the renderer (marked leaves the soft breaks
+        // in it), so a hard-wrapped paragraph keeps the model's line breaks
+        // and only over-long lines wrap. Joining with a space re-flows it.
+        tokens: tokenizeInline(paraLines.join("\n")),
       });
     }
   }
 
-  return { blocks, blockLineIdx };
+  return { blocks, blockLineIdx, blockIndentStack };
 }
 
 /** Parse a markdown string into blocks (full parse — no line tracking). */
@@ -431,12 +466,37 @@ function tokensToRuns(tokens: Token[], dim?: boolean, permissionColor?: string):
   return runs;
 }
 
-/** Wrap a block's runs at `width`, marking each row's column origin
- *  (blockquote prefix / list indent). */
-function wrapBlock(runs: StyledRun[], width: number, origin: number): TextRow[] {
-  const rows = wrapTextRuns(runs, Math.max(1, width - origin));
-  for (const r of rows) r.origin = origin;
-  return rows;
+/** A blockquote's runs: a dim `▎ ` bar in front of every non-blank source
+ *  line, all text italic. The bar is part of the line, exactly as the
+ *  reference prefixes it per split line — wrapped continuations belong to
+ *  column 0, not to a hanging indent under the bar. */
+function blockquoteRuns(
+  tokens: Token[],
+  dim?: boolean,
+  permissionColor?: string,
+): StyledRun[] {
+  const lines: StyledRun[][] = [[]];
+  for (const r of tokensToRuns(tokens, dim, permissionColor)) {
+    const parts = r.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) lines.push([]);
+      const part = parts[i]!;
+      if (part !== "") lines[lines.length - 1]!.push({ text: part, style: r.style });
+    }
+  }
+  const bar: StyledRun = { text: "▎ ", style: { dim: true } };
+  const out: StyledRun[] = [];
+  lines.forEach((lineRuns, i) => {
+    if (i > 0) out.push({ text: "\n" });
+    // Blank quote lines keep their row but get no bar (reference: the bar is
+    // only added when the line has visible text).
+    if (lineRuns.every((r) => r.text.trim() === "")) return;
+    out.push(bar);
+    for (const r of lineRuns) {
+      out.push({ text: r.text, style: { italic: true, ...(r.style ?? {}) } });
+    }
+  });
+  return out;
 }
 
 /** Pure line model for a code block (per-line syntax highlight; empty
@@ -453,76 +513,246 @@ function codeBlockRows(block: Block, width: number): TextRow[] {
   return wrapTextRuns(runs, width);
 }
 
-/** Padded cell rows of a table; the header row is bold, the separator dim. */
-function tableLines(block: Block): { text: string; bold?: boolean; dim?: boolean }[] {
+// --- Tables (port of MarkdownTable.tsx) -----------------------------------
+
+/** Minimum column width to prevent degenerate layouts. */
+const MIN_COLUMN_WIDTH = 3;
+/** Accounts for parent indentation (message prefix) and terminal-resize
+ *  races — without enough margin the table overflows its layout box. */
+const SAFETY_MARGIN = 4;
+/** Above this many wrapped lines per row the reference switches to the
+ *  vertical (key/value) layout. */
+const MAX_ROW_LINES = 4;
+
+/** Wrap one cell's text to `width`; `hard` splits words longer than the
+ *  column (the reference's wrapText(hard) path). */
+function wrapCell(text: string, width: number, hard: boolean): string[] {
+  const trimmed = text.trimEnd();
+  if (width <= 0) return [trimmed];
+  const words = trimmed.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return [""];
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of words) {
+    const parts: string[] = [];
+    if (hard && word.length > width) {
+      for (let k = 0; k < word.length; k += width) parts.push(word.slice(k, k + width));
+    } else {
+      parts.push(word);
+    }
+    for (const w of parts) {
+      if (!cur) cur = w;
+      else if (cur.length + 1 + w.length <= width) cur += " " + w;
+      else {
+        lines.push(cur);
+        cur = w;
+      }
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length > 0 ? lines : [""];
+}
+
+/** Pad to `targetWidth` according to alignment (reference padAligned). */
+function padAlignedText(
+  text: string,
+  targetWidth: number,
+  align: "left" | "center" | "right" | undefined,
+): string {
+  const padding = Math.max(0, targetWidth - text.length);
+  if (align === "center") {
+    const leftPad = Math.floor(padding / 2);
+    return " ".repeat(leftPad) + text + " ".repeat(padding - leftPad);
+  }
+  if (align === "right") return " ".repeat(padding) + text;
+  return text + " ".repeat(padding);
+}
+
+/** `┌───┬───┐` / `├───┼───┤` / `└───┴───┘` (widths + 2 padding per column). */
+function tableBorderLine(
+  columnWidths: number[],
+  type: "top" | "middle" | "bottom",
+): StyledRun[] {
+  const [left, mid, cross, right] = {
+    top: ["┌", "─", "┬", "┐"],
+    middle: ["├", "─", "┼", "┤"],
+    bottom: ["└", "─", "┴", "┘"],
+  }[type] as [string, string, string, string];
+  let text = left;
+  columnWidths.forEach((w, c) => {
+    text += mid.repeat(w + 2);
+    text += c < columnWidths.length - 1 ? cross : right;
+  });
+  return [{ text }];
+}
+
+/** Vertical (key/value) layout: bold `Label: value` rows with a 2-space
+ *  continuation indent, records separated by a ─ rule. */
+function verticalTableLines(
+  header: string[],
+  rows: string[][],
+  terminalWidth: number,
+): StyledRun[][] {
+  const out: StyledRun[][] = [];
+  const separator = "─".repeat(Math.max(0, Math.min(terminalWidth - 1, 40)));
+  const wrapIndent = "  ";
+  rows.forEach((row, rowIndex) => {
+    if (rowIndex > 0) out.push([{ text: separator }]);
+    row.forEach((cell, colIndex) => {
+      const label = header[colIndex] || `Column ${colIndex + 1}`;
+      // Clean value: trim, collapse internal whitespace/newlines.
+      const value = (cell ?? "").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+      // Two-pass wrap: the first line is narrower (the label takes space),
+      // continuation lines get the full width minus the indent.
+      const firstLineWidth = terminalWidth - label.length - 3;
+      const continuationWidth = terminalWidth - wrapIndent.length - 1;
+      const firstPass = wrapCell(value, Math.max(firstLineWidth, 10), false);
+      const firstLine = firstPass[0] ?? "";
+      let wrapped: string[];
+      if (firstPass.length <= 1 || continuationWidth <= firstLineWidth) {
+        wrapped = firstPass;
+      } else {
+        const rest = firstPass
+          .slice(1)
+          .map((l) => l.trim())
+          .join(" ");
+        wrapped = [firstLine, ...wrapCell(rest, continuationWidth, false)];
+      }
+      out.push([
+        { text: `${label}:`, style: { bold: true } },
+        { text: ` ${firstLine}` },
+      ]);
+      for (let k = 1; k < wrapped.length; k++) {
+        const line = wrapped[k]!;
+        if (!line.trim()) continue;
+        out.push([{ text: `${wrapIndent}${line}` }]);
+      }
+    });
+  });
+  return out;
+}
+
+/** Box-bordered rows of a markdown table (header, ├─┼─┤ separators between
+ *  every row, closing border), or the reference's vertical key/value layout
+ *  when the grid would wrap too tall or crowd the terminal edge. */
+function tableLines(block: Block, width: number): StyledRun[][] {
   const header = block.header ?? [];
   const rows = block.rows ?? [];
-  const align = block.align ?? [];
   const cols = header.length;
   if (cols === 0) return [];
 
-  const termWidth = process.stdout.columns || 80;
-  const sepOverhead = Math.max(0, cols - 1) * 3;
-  const avail = Math.max(20, termWidth - sepOverhead);
+  // The reference measures against the terminal; our box can be narrower
+  // (message prefix / indentation), so take the tighter of the two.
+  const terminalWidth = Math.min(process.stdout.columns || 80, width);
 
-  const widths: number[] = [];
+  // Step 1: minimum (longest word) and ideal (whole cell) column widths.
+  const minWidths: number[] = [];
+  const idealWidths: number[] = [];
   for (let c = 0; c < cols; c++) {
-    let w = header[c]?.length ?? 0;
-    for (const r of rows) w = Math.max(w, r[c]?.length ?? 0);
-    widths.push(w);
-  }
-  const sum = (): number => widths.reduce((a, b) => a + b, 0);
-  if (sum() > avail) {
-    const total = sum();
-    for (let c = 0; c < cols; c++) {
-      widths[c] = Math.max(6, Math.floor(((widths[c] ?? 6) * avail) / Math.max(1, total)));
+    let min = MIN_COLUMN_WIDTH;
+    let ideal = MIN_COLUMN_WIDTH;
+    for (const row of [header, ...rows]) {
+      const text = row[c] ?? "";
+      ideal = Math.max(ideal, text.length);
+      for (const word of text.split(/\s+/)) min = Math.max(min, word.length);
     }
-    while (sum() > avail) {
-      let mi = 0;
-      for (let c = 0; c < cols; c++) if ((widths[c] ?? 0) > (widths[mi] ?? 0)) mi = c;
-      widths[mi] = Math.max(6, (widths[mi] ?? 6) - 1);
-    }
+    minWidths.push(min);
+    idealWidths.push(ideal);
   }
 
-  const padCell = (s: string, c: number): string => {
-    const w = widths[c] ?? 0;
-    const a = align[c];
-    if (a === "right") return s.padStart(w);
-    if (a === "center") {
-      const t = Math.max(0, w - s.length);
-      return " ".repeat(Math.floor(t / 2)) + s + " ".repeat(t - Math.floor(t / 2));
-    }
-    return s.padEnd(w);
-  };
+  // Step 2/3: fit the columns into the available space.
+  const borderOverhead = 1 + cols * 3; // │ + (2 padding + 1 border) per col
+  const availableWidth = Math.max(
+    terminalWidth - borderOverhead - SAFETY_MARGIN,
+    cols * MIN_COLUMN_WIDTH,
+  );
+  const total = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
+  const totalMin = total(minWidths);
+  const totalIdeal = total(idealWidths);
 
-  const renderCells = (cells: string[]): string[] => {
-    const wrapped = cells.map((cell, c) => wrapWords(cell ?? "", widths[c] ?? 1));
-    const maxLines = Math.max(...wrapped.map((w) => w.length));
-    const out: string[] = [];
-    for (let li = 0; li < maxLines; li++) {
-      out.push(cells.map((_, c) => padCell(wrapped[c]![li] ?? "", c)).join(" │ "));
+  let needsHardWrap = false;
+  let columnWidths: number[];
+  if (totalIdeal <= availableWidth) {
+    columnWidths = idealWidths;
+  } else if (totalMin <= availableWidth) {
+    const extraSpace = availableWidth - totalMin;
+    const overflows = idealWidths.map((ideal, i) => ideal - minWidths[i]!);
+    const totalOverflow = total(overflows);
+    columnWidths = minWidths.map((min, i) =>
+      totalOverflow === 0
+        ? min
+        : min + Math.floor((overflows[i]! / totalOverflow) * extraSpace),
+    );
+  } else {
+    // Wider than the terminal even at minimum widths: shrink and break words.
+    needsHardWrap = true;
+    const scale = availableWidth / totalMin;
+    columnWidths = minWidths.map((w) =>
+      Math.max(Math.floor(w * scale), MIN_COLUMN_WIDTH),
+    );
+  }
+
+  const wrapRow = (cells: string[]): string[][] =>
+    cells.map((cell, c) => wrapCell(cell ?? "", columnWidths[c] ?? 1, needsHardWrap));
+
+  // Step 4: too many wrapped lines per row → vertical format.
+  const headerCells = wrapRow(header);
+  const rowCells = rows.map(wrapRow);
+  let maxRowLines = 1;
+  for (const cellLines of [headerCells, ...rowCells]) {
+    for (const lines of cellLines) maxRowLines = Math.max(maxRowLines, lines.length);
+  }
+  if (maxRowLines > MAX_ROW_LINES) {
+    return verticalTableLines(header, rows, terminalWidth);
+  }
+
+  // One rendered row: every cell is vertically centred in the row's height.
+  const renderRow = (cells: string[][], isHeader: boolean): StyledRun[][] => {
+    const maxLines = Math.max(...cells.map((l) => l.length), 1);
+    const out: StyledRun[][] = [];
+    for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
+      let text = "│";
+      for (let c = 0; c < cols; c++) {
+        const cellLines = cells[c] ?? [];
+        const offset = Math.floor((maxLines - cellLines.length) / 2);
+        const idx = lineIdx - offset;
+        const line = idx >= 0 && idx < cellLines.length ? cellLines[idx]! : "";
+        // Headers always centred; data uses the column's alignment.
+        const align = isHeader ? "center" : block.align?.[c] ?? "left";
+        text += " " + padAlignedText(line, columnWidths[c] ?? 0, align) + " │";
+      }
+      out.push([{ text }]);
     }
     return out;
   };
 
-  const out: { text: string; bold?: boolean; dim?: boolean }[] = [];
-  for (const l of renderCells(header)) out.push({ text: l, bold: true });
-  out.push({ text: widths.map((w) => "─".repeat(w)).join("─┼─"), dim: true });
-  for (const row of rows) {
-    for (const l of renderCells(row)) out.push({ text: l });
+  const out: StyledRun[][] = [];
+  out.push(tableBorderLine(columnWidths, "top"));
+  out.push(...renderRow(headerCells, true));
+  out.push(tableBorderLine(columnWidths, "middle"));
+  rowCells.forEach((cells, r) => {
+    out.push(...renderRow(cells, false));
+    if (r < rowCells.length - 1) out.push(tableBorderLine(columnWidths, "middle"));
+  });
+  out.push(tableBorderLine(columnWidths, "bottom"));
+
+  // Safety check: nothing may come within SAFETY_MARGIN of the edge.
+  const maxLineWidth = Math.max(
+    ...out.map((runs) => runs.reduce((n, r) => n + r.text.length, 0)),
+  );
+  if (maxLineWidth > terminalWidth - SAFETY_MARGIN) {
+    return verticalTableLines(header, rows, terminalWidth);
   }
   return out;
 }
 
 function tableRows(block: Block, width: number): TextRow[] {
-  const lines = tableLines(block);
+  const lines = tableLines(block, width);
+  if (lines.length === 0) return [];
   const runs: StyledRun[] = [];
   lines.forEach((line, i) => {
     if (i > 0) runs.push({ text: "\n" });
-    runs.push({
-      text: line.text,
-      style: line.bold ? { bold: true } : line.dim ? { dim: true } : undefined,
-    });
+    runs.push(...line);
   });
   return wrapTextRuns(runs, width);
 }
@@ -552,7 +782,9 @@ function wrapBlockRows(
       break;
     case "heading": {
       const level = block.level ?? 1;
-      const style: TextStyle = level >= 2 ? { bold: true } : { italic: true, underline: true };
+      // h1 is bold + italic + underline; h2 and deeper are bold only.
+      const style: TextStyle =
+        level >= 2 ? { bold: true } : { bold: true, italic: true, underline: true };
       if (dim) style.dim = true;
       const runs = (block.tokens ?? []).map((t) => ({ text: t.content, style }));
       rows = wrapTextRuns(runs, width);
@@ -562,22 +794,29 @@ function wrapBlockRows(
       rows = codeBlockRows(block, width);
       break;
     case "list-item": {
-      const indent = block.indent ?? 0;
-      const leftPad = indent * 2;
-      const bullet = block.ordered ? `${getListNumber(indent, block.index ?? 1)}.` : "-";
+      const depth = block.indent ?? 0;
+      const bullet = block.ordered ? `${getListNumber(depth, block.index ?? 1)}.` : "-";
+      // The indent belongs to the LINE, so a wrapped continuation starts at
+      // column 0 instead of hanging under the bullet. The reference's
+      // list_item prepends `'  '.repeat(listDepth)` to EVERY child and
+      // recurses with listDepth + 1; marked nests a sub-list inside its
+      // parent item's tokens (list_item → [text, list]), so each level's
+      // prefix stacks on the previous one — but only for the FIRST line of a
+      // nested list, since the child string is multi-line. The rendered
+      // indents are therefore 0, 2, 6, 10, 14 … (2 at the first level, +4
+      // per level after that; measured on the reference's formatToken with
+      // marked 15.0.12 for seven levels).
+      const indent = depth === 0 ? 0 : 4 * depth - 2;
       const runs: StyledRun[] = [
-        { text: `${bullet} ` },
+        { text: `${" ".repeat(indent)}${bullet} ` },
         ...tokensToRuns(block.tokens ?? [], dim, permissionColor),
       ];
-      rows = wrapBlock(runs, width, leftPad);
+      rows = wrapTextRuns(runs, width);
       break;
     }
-    case "blockquote": {
-      const runs = tokensToRuns(block.tokens ?? [], dim, permissionColor);
-      for (const r of runs) r.style = { italic: true, ...(r.style ?? {}) };
-      rows = wrapBlock(runs, width, 2);
+    case "blockquote":
+      rows = wrapTextRuns(blockquoteRuns(block.tokens ?? [], dim, permissionColor), width);
       break;
-    }
     case "hr":
       rows = [{ runs: [{ text: "---" }], softWrapped: false }];
       break;
@@ -587,9 +826,10 @@ function wrapBlockRows(
     default:
       rows = wrapTextRuns(tokensToRuns(block.tokens ?? [], dim, permissionColor), width);
     }
-    // heading's marginBottom={1} plus the flex gap between blocks = 2
-    // spacer rows after it; other blocks contribute 1 gap row each.
-    return { block, rows, spacersAfter: block.type === "heading" ? 2 : 0 };
+    // The reference's heading token emits one EOL and the space token that
+    // follows it supplies the other blank row, so a heading gets exactly the
+    // one inter-block spacer row every other block gets.
+    return { block, rows, spacersAfter: 0 };
 }
 
 /**
@@ -610,6 +850,9 @@ export interface MarkdownModelState {
   model: MarkdownBlockRows[];
   /** Source line index of each block's first line. */
   blockLineIdx: number[];
+  /** List indent stack in effect at each block's first line, so a tail
+   *  re-parse can resume with the nesting context the full parse had. */
+  blockIndentStack: number[][];
 }
 
 /**
@@ -649,16 +892,25 @@ export function updateMarkdownModel(
     // appending never shifts earlier lines).
     const lastIdx = state.model.length - 1;
     const tailLine = state.blockLineIdx[lastIdx]!;
-    const { blocks, blockLineIdx } = parseLines(lines.slice(tailLine));
+    // Seed with the list nesting the last block was parsed under: list depth
+    // spans lines, so a tail parse that restarts the stack would indent the
+    // re-parsed items differently from the full parse.
+    const { blocks, blockLineIdx, blockIndentStack } = parseLines(
+      lines.slice(tailLine),
+      state.blockIndentStack[lastIdx] ?? [],
+    );
     if (blocks.length > 0) {
       const model = state.model.slice(0, lastIdx);
       const newBlockLineIdx = state.blockLineIdx.slice(0, lastIdx);
+      const newBlockIndentStack = state.blockIndentStack.slice(0, lastIdx);
       for (let i = 0; i < blocks.length; i++) {
         newBlockLineIdx.push(tailLine + (blockLineIdx[i] ?? 0));
+        newBlockIndentStack.push(blockIndentStack[i] ?? []);
         model.push(wrapBlockRows(blocks[i]!, width, dim, permissionColor));
       }
       state.model = model;
       state.blockLineIdx = newBlockLineIdx;
+      state.blockIndentStack = newBlockIndentStack;
     }
     // else: trailing blank lines only — the model is already correct.
     state.content = content;
@@ -677,6 +929,7 @@ export function updateMarkdownModel(
     permissionColor,
     model,
     blockLineIdx: parsed.blockLineIdx,
+    blockIndentStack: parsed.blockIndentStack,
   };
 }
 
@@ -695,12 +948,19 @@ export function markdownTotalRows(model: MarkdownBlockRows[]): number {
   return flattenMarkdown(model).length;
 }
 
+/** Blank row between two blocks? The reference's `hr` token is a bare `---`
+ *  with no EOL of its own — the blank line above a rule comes from the space
+ *  token before it — so nothing is blank-padded after a horizontal rule. */
+function hasGapBefore(model: MarkdownBlockRows[], i: number): boolean {
+  return i > 0 && model[i - 1]!.block.type !== "hr";
+}
+
 /** Flatten a markdownRows() result into one row list including spacer rows
  *  (used for copy extraction and row accounting). */
 export function flattenMarkdown(model: MarkdownBlockRows[]): TextRow[] {
   const out: TextRow[] = [];
   for (let i = 0; i < model.length; i++) {
-    if (i > 0) out.push(SPACER);
+    if (hasGapBefore(model, i)) out.push(SPACER);
     out.push(...model[i]!.rows);
     for (let s = 0; s < (model[i]!.spacersAfter ?? 0); s++) out.push(SPACER);
   }
@@ -833,32 +1093,18 @@ function numberToRoman(n: number): string {
   return result;
 }
 
+/** Ordered-list marker for a nesting depth: decimal at the top level, then
+ *  letters, then roman numerals (reference getListNumber, which is called
+ *  with the same depth+1 the reference's list_item passes down). */
 function getListNumber(listDepth: number, orderedListNumber: number): string {
   switch (listDepth) {
-    case 2:
+    case 1:
       return numberToLetter(orderedListNumber);
-    case 3:
+    case 2:
       return numberToRoman(orderedListNumber);
     default:
       return orderedListNumber.toString();
   }
-}
-
-function wrapWords(text: string, width: number): string[] {
-  if (width <= 1) return [text];
-  const words = text.split(/\s+/).filter(Boolean);
-  const out: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    if (!cur) cur = w;
-    else if (cur.length + 1 + w.length <= width) cur += " " + w;
-    else {
-      out.push(cur);
-      cur = w;
-    }
-  }
-  if (cur) out.push(cur);
-  return out.length ? out : [""];
 }
 
 interface MarkdownProps {
@@ -926,38 +1172,14 @@ const MemoBlock = React.memo(function MemoBlock({
     );
   }
 
-  let inner: React.ReactNode;
-  switch (block.type) {
-    case "blockquote":
-      inner = (
-        <Box flexDirection="row" minWidth={0}>
-          <Text dimColor>{"▎ "}</Text>
-          <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-            {rowEls(0)}
-          </Box>
-        </Box>
-      );
-      break;
-    case "list-item":
-      inner = (
-        <Box
-          marginLeft={(block.indent ?? 0) * 2}
-          flexDirection="column"
-          flexGrow={1}
-          flexShrink={1}
-          minWidth={0}
-        >
-          {rowEls(0)}
-        </Box>
-      );
-      break;
-    default:
-      inner = (
-        <Box flexDirection="column" minWidth={0}>
-          {rowEls(0)}
-        </Box>
-      );
-  }
+  // Blockquotes and list items carry their bar / indent in the row text
+  // (see blockquoteRuns and the list-item case in wrapBlockRows), so every
+  // block is a plain column of rows.
+  const inner: React.ReactNode = (
+    <Box flexDirection="column" minWidth={0}>
+      {rowEls(0)}
+    </Box>
+  );
   return (
     <Box flexDirection="column" flexShrink={0}>
       {inner}
@@ -992,7 +1214,7 @@ export default function Markdown({
   const fragments: React.ReactNode[] = [];
   let row = startRow;
   modelRows.forEach((b, bi) => {
-    if (bi > 0) {
+    if (hasGapBefore(modelRows, bi)) {
       fragments.push(
         <RowBox key={`sp${bi}`} row={SPACER} selCols={selColsAt(row, 0)} width={width} dim={dim} />,
       );

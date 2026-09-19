@@ -33,6 +33,7 @@ const inputSchema = z.object({
 
 export const TaskUpdateTool = buildTool({
   name: "TaskUpdate",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

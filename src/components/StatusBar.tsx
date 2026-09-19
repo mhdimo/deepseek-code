@@ -1,16 +1,8 @@
-
-
-
-
-
-
-
-
-
 import React from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { parseAnsi } from "../utils/statusline.js";
+import { DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT_TOKENS } from "../services/contextManager.js";
 import type { AgentName, ThinkingMode, TokenBudget } from "../types/index.js";
 import type { EffortLevel } from "../state/storage.js";
 
@@ -18,27 +10,30 @@ import type { EffortLevel } from "../state/storage.js";
 interface StatusBarProps {
   model: string;
   agentName: AgentName;
-  
+
   isLoading?: boolean;
   tokenCount?: number;
-  
+
   inputTokens?: number;
-  
+
   outputTokens?: number;
   thinkingMode?: ThinkingMode;
-  
+
   effort?: EffortLevel;
   mcpEnabledCount?: number;
   queueCount?: number;
   queuePreview?: string;
   currentFile?: string | null;
+  /** Accepted for API compatibility but unused: the reference has no
+   *  permission hint in its status row — the dialog carries
+   *  "Esc to cancel · Tab to amend" itself. */
   awaitingPermission?: boolean;
   cost?: number;
   inspectMode?: boolean;
   permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
-  
+
   tokenBudget?: TokenBudget;
-  
+
   statusLineOutput?: string | null;
   /** settings.statusLine.padding — spacing for the bar when a statusline is configured. */
   statusLinePadding?: number;
@@ -64,6 +59,29 @@ const EFFORT_SYMBOLS: Record<string, string> = {
   high: "●",
   xhigh: "◈",
   max: "◉",
+};
+
+/** Reference PermissionMode.ts — per-mode symbol. ⏸ is PAUSE_ICON, ⏵⏵ the
+ *  accept-edits/bypass run icon. */
+const PERMISSION_MODE_SYMBOLS: Record<string, string> = {
+  plan: "⏸",
+  acceptEdits: "⏵⏵",
+  bypassPermissions: "⏵⏵",
+};
+
+/** Reference PermissionMode.ts titles, rendered lowercased + " on". */
+const PERMISSION_MODE_TITLES: Record<string, string> = {
+  plan: "Plan Mode",
+  acceptEdits: "Accept edits",
+  bypassPermissions: "Bypass Permissions",
+};
+
+/** Reference getModeColor: plan → planMode, acceptEdits → autoAccept,
+ *  bypassPermissions → error. */
+const PERMISSION_MODE_COLORS: Record<string, string> = {
+  plan: "planMode",
+  acceptEdits: "autoAccept",
+  bypassPermissions: "error",
 };
 
 function formatTokens(n: number): string {
@@ -111,6 +129,12 @@ const StatusLineText = React.memo(function StatusLineText({ text }: { text: stri
   );
 });
 
+/** Theme token lookup that tolerates a palette without the token. */
+function themeColor(token: string): string {
+  const value = (theme as Record<string, unknown>)[token];
+  return resolveColor(typeof value === "string" ? value : theme.text);
+}
+
 export default React.memo(function StatusBar({
   model,
   agentName,
@@ -124,7 +148,6 @@ export default React.memo(function StatusBar({
   queueCount = 0,
   queuePreview,
   currentFile = null,
-  awaitingPermission = false,
   cost,
   inspectMode = false,
   permissionMode = "default",
@@ -137,7 +160,6 @@ export default React.memo(function StatusBar({
     agentName === "review"
       ? "magenta"
       : ((theme as Record<string, unknown>)[AGENT_COLORS[agentName] ?? "claude"] as string) ?? theme.claude;
-  const dim = theme.inactive;
 
   const displayFile = currentFile
     ? currentFile.length > 40
@@ -148,10 +170,9 @@ export default React.memo(function StatusBar({
   const totalForCost = inputTokens + outputTokens > 0 ? inputTokens + outputTokens : tokenCount;
   const calculatedCost = cost ?? estimateCost(model, totalForCost);
 
-  
-  const maxContext =
-    tokenBudget?.maxContextTokens ?? 1_000_000;
-  const reservedOutput = tokenBudget?.reservedForResponse ?? 4096;
+
+  const maxContext = tokenBudget?.maxContextTokens ?? DEFAULT_CONTEXT_WINDOW;
+  const reservedOutput = tokenBudget?.reservedForResponse ?? RESERVED_OUTPUT_TOKENS;
   const effectiveMax = maxContext - reservedOutput;
 
   const usedPct = effectiveMax > 0
@@ -160,7 +181,7 @@ export default React.memo(function StatusBar({
   const barLen = 10;
   const filled = Math.round((usedPct / 100) * barLen);
   const ctxBar = "█".repeat(filled) + "░".repeat(barLen - filled);
-  
+
   const ctxColor =
     usedPct > 80
       ? resolveColor(theme.error)
@@ -168,87 +189,106 @@ export default React.memo(function StatusBar({
         ? resolveColor(theme.warning)
         : resolveColor(theme.success);
   const hasTokens = inputTokens + outputTokens > 0 || tokenCount > 0;
+  // The engine compacts on its own, so the readout carries the reference's
+  // auto-compact-enabled wording ("12% until auto-compact"); once the bar is
+  // in its error band the reference's /compact advice replaces it.
+  const contextLow = usedPct > 80;
 
-  
+
   const effortChip =
     effort && effort !== "off"
       ? ` · ${EFFORT_SYMBOLS[effort] ?? "●"} ${effort}`
       : null;
 
-  
-  
-  
+  // Reference footer: the shortcut hint stands alone, and a configured
+  // status line suppresses it entirely.
   const rightHints = statusLineOutput
     ? null
-    : awaitingPermission
-      ? "enter to confirm · esc to cancel"
-      : isLoading
-        ? "esc to interrupt"
-        : "? for shortcuts · ↑/↓ for history";
+    : isLoading
+      ? "esc to interrupt"
+      : "? for shortcuts";
+
+  const modeSymbol = PERMISSION_MODE_SYMBOLS[permissionMode] ?? "";
 
   return (
-    <Box paddingX={statusLinePadding ?? 2} flexDirection="row" justifyContent="space-between">
-      {}
-      <Box flexShrink={1}>
-        <Text wrap="truncate-end">
-          {tasks && tasks.total > 0 && (
-            <Text
-              color={tasks.expanded ? resolveColor(theme.claude) : resolveColor(theme.inactive)}
-              bold={tasks.expanded}
-            >
-              {`▸ ${tasks.done}/${tasks.total} tasks`}
-              {tasks.inProgress > 0 ? ` · ${tasks.inProgress} in progress` : ""}
-              {" · "}
-            </Text>
-          )}
-          <Text color={resolveColor(theme.text)}>{model}</Text>
-          {permissionMode !== "default" && (
-            <Text
-              color={permissionMode === "plan" ? resolveColor(theme.warning) : permissionMode === "bypassPermissions" ? resolveColor(theme.error) : resolveColor(theme.success)}
-              bold
-            >
-              {permissionMode === "acceptEdits"
-                ? " · accept edits"
-                : permissionMode === "plan"
-                  ? " · plan mode"
-                  : " · bypass perms"}
-            </Text>
-          )}
-          {agentName !== "code" && (
-            <Text dimColor>
-              {" · "}
-              <Text color={agentColor} bold>
-                {agentName}
-              </Text>
-            </Text>
-          )}
-          {thinkingMode === "whale" && <Text color="magenta" bold> · WHALE</Text>}
-          {effortChip && <Text dimColor>{effortChip}</Text>}
-          {mcpEnabledCount > 0 && <Text dimColor> · MCP {mcpEnabledCount}</Text>}
-          {displayFile && <Text dimColor> · {displayFile}</Text>}
-          {hasTokens && (
-            <Text dimColor>
-              {" · "}
-              <Text color={ctxColor}>{ctxBar}</Text>
-              {` ${100 - usedPct}%`}
-              {" · ↓"}
-              {formatTokens(inputTokens)}
-              {" ↑"}
-              {formatTokens(outputTokens)}
-              {" · ~"}
-              {formatCost(calculatedCost)}
-            </Text>
-          )}
-          {inspectMode && <Text color="cyan" bold> · INSPECT</Text>}
-          {queueCount > 0 && <Text dimColor> · queue {queueCount}</Text>}
-        </Text>
-      </Box>
+    <Box paddingX={statusLinePadding ?? 2} flexDirection="column">
+      {/* Custom status line: its own left-aligned row above the hint row
+          (reference PromptInputFooter stacks StatusLine above the footer). */}
+      {statusLineOutput ? (
+        <Box>
+          <Text dimColor wrap="truncate-end">
+            <StatusLineText text={statusLineOutput} />
+          </Text>
+        </Box>
+      ) : null}
 
-      {}
-      <Box flexShrink={1}>
-        <Text dimColor wrap="truncate-end">
-          {statusLineOutput ? <StatusLineText text={statusLineOutput} /> : ` · ${rightHints}`}
-        </Text>
+      <Box flexDirection="row" justifyContent="space-between">
+        {}
+        <Box flexShrink={1}>
+          <Text wrap="truncate-end">
+            {tasks && tasks.total > 0 && (
+              <Text
+                color={tasks.expanded ? resolveColor(theme.claude) : resolveColor(theme.inactive)}
+                bold={tasks.expanded}
+              >
+                {`▸ ${tasks.done}/${tasks.total} tasks`}
+                {tasks.inProgress > 0 ? ` · ${tasks.inProgress} in progress` : ""}
+                {" · "}
+              </Text>
+            )}
+            <Text color={resolveColor(theme.text)}>{model}</Text>
+            {permissionMode !== "default" && (
+              <Text color={themeColor(PERMISSION_MODE_COLORS[permissionMode] ?? "text")} bold>
+                {" · "}
+                {modeSymbol ? `${modeSymbol} ` : ""}
+                {(PERMISSION_MODE_TITLES[permissionMode] ?? permissionMode).toLowerCase()} on
+                <Text dimColor> (shift+tab to cycle)</Text>
+              </Text>
+            )}
+            {agentName !== "code" && (
+              <Text dimColor>
+                {" · "}
+                <Text color={agentColor} bold>
+                  {agentName}
+                </Text>
+              </Text>
+            )}
+            {thinkingMode === "whale" && <Text color="magenta" bold> · WHALE</Text>}
+            {effortChip && <Text dimColor>{effortChip}</Text>}
+            {mcpEnabledCount > 0 && <Text dimColor> · MCP {mcpEnabledCount}</Text>}
+            {displayFile && <Text dimColor> · {displayFile}</Text>}
+            {hasTokens && (
+              <Text dimColor>
+                {" · "}
+                <Text color={ctxColor}>{ctxBar}</Text>
+                {contextLow ? (
+                  <Text color={resolveColor(theme.error)}>
+                    {` Context low (${100 - usedPct}% remaining) · Run /compact to compact & continue`}
+                  </Text>
+                ) : (
+                  ` ${100 - usedPct}% until auto-compact`
+                )}
+                {" · ↑ "}
+                {formatTokens(inputTokens)}
+                {" tokens · ↓ "}
+                {formatTokens(outputTokens)}
+                {" tokens · ~"}
+                {formatCost(calculatedCost)}
+              </Text>
+            )}
+            {inspectMode && <Text color="cyan" bold> · INSPECT</Text>}
+            {queueCount > 0 && <Text dimColor> · queue {queueCount}</Text>}
+          </Text>
+        </Box>
+
+        {}
+        {rightHints ? (
+          <Box flexShrink={1}>
+            <Text dimColor wrap="truncate-end">
+              {rightHints}
+            </Text>
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );

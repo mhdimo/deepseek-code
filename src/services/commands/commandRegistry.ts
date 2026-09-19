@@ -6,7 +6,8 @@ export type CommandCategory =
   | "project"
   | "mcp"
   | "custom"
-  | "plugin";
+  | "plugin"
+  | "skill";
 
 export interface CommandDefinition {
   /** Canonical name without the leading slash. */
@@ -126,7 +127,7 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     usage: ["/export [markdown|json]"],
     acceptsArgs: true,
   }),
-  command("compact", "Summarize the conversation to save context", "session", {
+  command("compact", "Summarize the conversation to save context (the transcript is archived first)", "session", {
     acceptsArgs: true,
   }),
   command("copy", "Pick an assistant response to copy to the clipboard", "session", {

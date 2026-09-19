@@ -8,7 +8,7 @@ import { getAllBaseTools } from "../tools.js";
 import { listSkills } from "../skills/skillService.js";
 import { listDiscoveredAgents } from "../services/agents/agentDiscovery.js";
 import { agentManager } from "../services/agent/index.js";
-import { AUTOCOMPACT_BUFFER_TOKENS } from "../services/contextManager.js";
+import { AUTOCOMPACT_BUFFER_TOKENS, DEFAULT_CONTEXT_WINDOW } from "../services/contextManager.js";
 import { formatTokenCount } from "../services/tokenTracker.js";
 import { loadConfig } from "../utils/config.js";
 import {
@@ -65,7 +65,6 @@ export default function ContextView({
 
   const max = budget.maxContextTokens;
   const usedTotal = inputTokens + outputTokens;
-  const effectiveLimit = max - budget.reservedForResponse;
   const usedPct = Math.min(100, (usedTotal / max) * 100);
 
   const analysis = useMemo(() => {
@@ -119,11 +118,13 @@ export default function ContextView({
     });
     const segments = normalizeSegments(raw, usedTotal);
 
-    // Fixed grid of glyph squares: 20x10 for 1M+ windows, 10x10 below;
-    // 5 wide on narrow terminals.
+    // Fixed grid of glyph squares: 20x10 for windows far larger than the
+    // standard one (a DEEPSEEK_CONTEXT_WINDOW override), 10x10 below; 5 wide
+    // on narrow terminals.
     const narrow = (process.stdout.columns || 80) < 80;
-    const gridWidth = max >= 1_000_000 ? (narrow ? 5 : 20) : narrow ? 5 : 10;
-    const gridHeight = max >= 1_000_000 ? 10 : narrow ? 5 : 10;
+    const dense = max > DEFAULT_CONTEXT_WINDOW;
+    const gridWidth = dense ? (narrow ? 5 : 20) : narrow ? 5 : 10;
+    const gridHeight = dense ? 10 : narrow ? 5 : 10;
 
     const gridRows = buildGridRows(segments, max, gridWidth, gridHeight);
     const suggestions = generateContextSuggestions(segments, messages, usedTotal, max);
@@ -138,139 +139,130 @@ export default function ContextView({
   );
 
   const itemRow = (name: string, tokens: number) => (
-    <Box key={name} marginLeft={1}>
+    <Box key={name}>
       <Text>└ {name}: </Text>
-      <Text dimColor>~{formatTokenCount(tokens)} tok</Text>
+      <Text dimColor>{formatTokenCount(tokens)} tokens</Text>
     </Box>
   );
 
   return (
     <Dialog
-      title="Context usage"
+      title="Context Usage"
       subtitle={`${messages.length} message${messages.length === 1 ? "" : "s"} in this session`}
       onCancel={onClose}
       footer="esc to close"
     >
-      {usedTotal === 0 && messages.length === 0 ? (
-        <Text dimColor>No context used yet — send a message to begin.</Text>
-      ) : (
-        <>
+      {/* Reference layout: the square grid sits on the left with the token
+          summary and the category legend stacked to its right. */}
+      <Box flexDirection="row" gap={2}>
+        <Box flexDirection="column" flexShrink={0}>
+          {analysis.gridRows.map((row, ri) => (
+            <Box key={ri} flexDirection="row">
+              {row.map((cell, ci) => (
+                <Text
+                  key={ci}
+                  color={
+                    cell.kind === "free"
+                      ? undefined
+                      : resolveColor(theme[cell.colorToken])
+                  }
+                  dimColor={cell.kind === "free"}
+                >
+                  {gridGlyph(cell)}
+                </Text>
+              ))}
+            </Box>
+          ))}
+        </Box>
+
+        <Box flexDirection="column" gap={0} flexShrink={0}>
           <Text dimColor>
             {model ? `${model} · ` : ""}
             {formatTokenCount(usedTotal)}/{formatTokenCount(max)} tokens ({usedPct.toFixed(1)}%)
           </Text>
+          <Text> </Text>
+          <Text dimColor italic>Estimated usage by category</Text>
+          {legendSegments.map((segment) => (
+            <Box key={segment.key}>
+              <Text color={resolveColor(theme[segment.colorToken])}>{"⛁"}</Text>
+              <Text> {segment.label}: </Text>
+              <Text dimColor>
+                {`${formatTokenCount(segment.tokens)} tokens (${pctOf(segment.tokens)})`}
+              </Text>
+            </Box>
+          ))}
+          {freeSegment && freeSegment.tokens > 0 && (
+            <Box>
+              <Text dimColor>{"⛶"}</Text>
+              <Text> {freeSegment.label}: </Text>
+              <Text dimColor>
+                {`${formatTokenCount(freeSegment.tokens)} (${pctOf(freeSegment.tokens)})`}
+              </Text>
+            </Box>
+          )}
+          {reservedSegment && reservedSegment.tokens > 0 && (
+            <Box>
+              <Text color={resolveColor(theme[reservedSegment.colorToken])}>{"⛝"}</Text>
+              <Text dimColor> {reservedSegment.label}: </Text>
+              <Text dimColor>
+                {`${formatTokenCount(reservedSegment.tokens)} tokens (${pctOf(reservedSegment.tokens)})`}
+              </Text>
+            </Box>
+          )}
+        </Box>
+      </Box>
 
+      <Box flexDirection="column">
+        {analysis.skills.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
-            {analysis.gridRows.map((row, ri) => (
-              <Box key={ri} flexDirection="row">
-                {row.map((cell, ci) => (
-                  <Text
-                    key={ci}
-                    color={
-                      cell.kind === "free"
-                        ? undefined
-                        : resolveColor(theme[cell.colorToken])
-                    }
-                    dimColor={cell.kind === "free"}
-                  >
-                    {gridGlyph(cell)}
-                  </Text>
-                ))}
-              </Box>
-            ))}
-          </Box>
-
-          <Box flexDirection="column" marginTop={1}>
-            <Text dimColor italic>Estimated usage by category</Text>
-            {legendSegments.map((segment) => (
-              <Box key={segment.key}>
-                <Text color={resolveColor(theme[segment.colorToken])}>{"⛁ "}</Text>
-                <Text>{segment.label.padEnd(24)}</Text>
-                <Text dimColor>
-                  {`~${formatTokenCount(segment.tokens)} tokens (${pctOf(segment.tokens)})`}
-                </Text>
-              </Box>
-            ))}
-            {reservedSegment && reservedSegment.tokens > 0 && (
-              <Box>
-                <Text color={resolveColor(theme[reservedSegment.colorToken])}>{"⛝ "}</Text>
-                <Text dimColor>
-                  {`${reservedSegment.label}: ${formatTokenCount(reservedSegment.tokens)} tokens (${pctOf(reservedSegment.tokens)})`}
-                </Text>
-              </Box>
-            )}
-            {freeSegment && freeSegment.tokens > 0 && (
-              <Box>
-                <Text dimColor>{"⛶ "}</Text>
-                <Text dimColor>
-                  {`${freeSegment.label}: ${formatTokenCount(freeSegment.tokens)} tokens (${pctOf(freeSegment.tokens)})`}
-                </Text>
-              </Box>
+            <Box>
+              <Text bold>Skills</Text>
+              <Text dimColor> · /skills</Text>
+            </Box>
+            {analysis.skills.map((s) =>
+              itemRow(s.name, estimateTokens(`${s.name} ${s.description}`)),
             )}
           </Box>
+        )}
 
-          {analysis.skills.length > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Box>
-                <Text bold>Skills</Text>
-                <Text dimColor> · /skills</Text>
-              </Box>
-              {analysis.skills.map((s) =>
-                itemRow(s.name, estimateTokens(`${s.name} ${s.description}`)),
-              )}
+        {analysis.agents.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Text bold>Custom agents</Text>
+              <Text dimColor> · /agents</Text>
             </Box>
-          )}
-
-          {analysis.agents.length > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Box>
-                <Text bold>Custom agents</Text>
-                <Text dimColor> · /agent</Text>
-              </Box>
-              {analysis.agents.map((a) =>
-                itemRow(a.name, estimateTokens(`${a.name} ${a.description} ${a.prompt ?? ""}`)),
-              )}
-            </Box>
-          )}
-
-          {analysis.mcpEntries.length > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Box>
-                <Text bold>MCP tools</Text>
-                <Text dimColor> · /mcp</Text>
-              </Box>
-              {analysis.mcpEntries.map((m) =>
-                itemRow(m.name, estimateTokens(`${m.name} ${m.command} ${(m.args ?? []).join(" ")}`)),
-              )}
-            </Box>
-          )}
-
-          {analysis.suggestions.length > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Text bold>Suggestions</Text>
-              {analysis.suggestions.map((s, i) => (
-                <Box key={i} marginTop={i === 0 ? 0 : 1}>
-                  <StatusIcon status={s.severity} withSpace />
-                  <Text bold>{s.title}</Text>
-                  {s.savingsTokens !== undefined && (
-                    <Text dimColor>{" → save ~"}{formatTokenCount(s.savingsTokens)}</Text>
-                  )}
-                </Box>
-              ))}
-            </Box>
-          )}
-
-          <Box marginTop={1} flexDirection="column">
-            <Text>
-              <Text bold>Used: </Text>
-              {formatTokenCount(usedTotal)} / {formatTokenCount(max)} tokens ({usedPct.toFixed(1)}%)
-            </Text>
-            <Text dimColor>
-              {formatTokenCount(effectiveLimit)} usable after reserving {formatTokenCount(budget.reservedForResponse)} for the response · native session auto-compacts near the limit, /compact forces a summary
-            </Text>
-            <Text dimColor>Per-category numbers are estimates scaled to the engine-reported total.</Text>
+            {analysis.agents.map((a) =>
+              itemRow(a.name, estimateTokens(`${a.name} ${a.description} ${a.prompt ?? ""}`)),
+            )}
           </Box>
-        </>
+        )}
+
+        {analysis.mcpEntries.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Text bold>MCP tools</Text>
+              <Text dimColor> · /mcp</Text>
+            </Box>
+            {analysis.mcpEntries.map((m) =>
+              itemRow(m.name, estimateTokens(`${m.name} ${m.command} ${(m.args ?? []).join(" ")}`)),
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {analysis.suggestions.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Suggestions</Text>
+          {analysis.suggestions.map((s, i) => (
+            <Box key={i} marginTop={i === 0 ? 0 : 1}>
+              <StatusIcon status={s.severity} withSpace />
+              <Text bold>{s.title}</Text>
+              {s.savingsTokens !== undefined && (
+                <Text dimColor>{" → save ~"}{formatTokenCount(s.savingsTokens)}</Text>
+              )}
+            </Box>
+          ))}
+        </Box>
       )}
     </Dialog>
   );

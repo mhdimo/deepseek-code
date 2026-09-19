@@ -71,6 +71,7 @@ async function searchDuckDuckGo(query: string, maxResults = 5): Promise<string> 
 
 export const WebSearchTool = buildTool({
   name: "WebSearch",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

@@ -77,9 +77,29 @@ export class Agent {
     requestPermission?: PermissionCallback,
     /** Live per-tool activity callback (fanout "Reading src/foo.ts" lines). */
     onToolActivity?: (toolName: string, input: Record<string, unknown>) => void,
+    /**
+     * The turn this run belongs to, if any. A foreground sub-agent is part of
+     * the turn and is cancelled with it; a background one passes nothing, so it
+     * survives the interrupt and has to be stopped with TaskStop.
+     */
+    parentSignal?: AbortSignal,
   ): AsyncGenerator<AgentEvent> {
     const runAbortController = new AbortController();
     this.abortController = runAbortController;
+
+    // Linked one way: the parent's interrupt cancels this run, but aborting
+    // this run (TaskStop, or killing one sub-agent) must not cancel the
+    // parent's turn or its siblings.
+    let unlinkParent: (() => void) | null = null;
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        runAbortController.abort();
+      } else {
+        const onParentAbort = () => runAbortController.abort();
+        parentSignal.addEventListener("abort", onParentAbort);
+        unlinkParent = () => parentSignal.removeEventListener("abort", onParentAbort);
+      }
+    }
 
     // Drive the native Agent + Session loop through the SAME construction the
     // main chat uses (getOrCreateMemorySession) so the C++ side owns tool
@@ -95,7 +115,7 @@ export class Agent {
       // best-effort — an unwritable dir only skips memory features
     }
 
-    const ms = getOrCreateMemorySession({
+    const ms = await getOrCreateMemorySession({
       providerConfig: this.providerConfig,
       agentConfig: this.config,
       workingDir,
@@ -161,6 +181,7 @@ export class Agent {
         yield { type: "error", error: categorized.message };
       }
     } finally {
+      unlinkParent?.();
       if (this.abortController === runAbortController) {
         this.abortController = null;
       }

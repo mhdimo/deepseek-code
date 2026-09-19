@@ -11,8 +11,18 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { basename } from "node:path";
 import ChatPanel, { type ChatPanelHandle } from "./ChatPanel.js";
+import {
+  applyNativeToolResult,
+  capRetainedOutput,
+  interruptStreamingTurn,
+} from "./streamingMessage.js";
+import { adoptSession } from "./adoptSession.js";
+import { persistedThinkingMode } from "./settingsRows.js";
 import { useMouseWheelScroll, isMouseSequence } from "./useMouseWheelScroll.js";
 import { useMouseSelection, type ContentSelection } from "./useMouseSelection.js";
+import { ctrlCAction, overlaysOf, type CtrlCOverlay } from "./ctrlC.js";
+import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON } from "./terminalLayout.js";
+import { onExitCleanup } from "../services/exitCleanup.js";
 import CommandPicker, { filterCommands, ALL_COMMANDS } from "./CommandPicker.js";
 import type { CommandDef } from "./CommandPicker.js";
 import ShortcutOverlay from "./ShortcutOverlay.js";
@@ -30,22 +40,36 @@ import SearchResultsView from "./SearchResultsView.js";
 import type { SearchMatch } from "../utils/transcriptSearch.js";
 import { ThemeProvider } from "../ui/design-system/ThemeProvider.js";
 import { resolveThemeSetting, type ThemeSetting } from "../utils/theme.js";
+import { APP_VERSION } from "../utils/version.js";
 import Onboarding, { type ThemeChoice } from "./Onboarding.js";
 import EffortCallout from "./EffortCallout.js";
 import ThemePicker from "./ThemePicker.js";
-import { isTrusted } from "../services/projectTrust.js";
+import { isTrusted, trustDir } from "../services/projectTrust.js";
+import { protectedWriteReason, pathWrittenBy, pathWithinDir } from "../services/protectedPaths.js";
+import TrustPrompt from "./TrustPrompt.js";
+import {
+  activeProjectConfigPaths,
+  findProjectConfig,
+  loadProjectConfig,
+  loadProjectPermissions,
+} from "../utils/config.js";
 import { buildStatusLineCommandInput } from "../utils/statusline.js";
 import { agentManager } from "../services/agent/index.js";
 import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
 import { getOrCreateMemorySession, resetMemorySession } from "../services/agent/agentSession.js";
+import {
+  initialPermissionMode,
+  permissionModeCycle,
+  type PermissionMode,
+} from "../services/bypassMode.js";
 import os from "node:os";
 import { readdirSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { listOutputStyles } from "../services/outputStyles.js";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { resolve, relative, dirname, join } from "node:path";
 import { TokenTracker } from "../services/tokenTracker.js";
-import { ContextManager } from "../services/contextManager.js";
+import { ContextManager, contextWindowFor } from "../services/contextManager.js";
 import { getToolDescriptions } from "../tools.js";
 import type {
   Message,
@@ -73,7 +97,9 @@ import {
   listSessions,
   pruneSessions,
   pruneOldSessions,
+  takeHardeningNotes,
 } from "../state/storage.js";
+import { pruneOldToolOutputs } from "../services/toolOutputs.js";
 import { Settings } from "./Settings/Settings.js";
 import { recordSessionStats } from "../state/stats.js";
 import { runHooksFireAndForget } from "../services/hooks.js";
@@ -100,6 +126,7 @@ import HooksView from "./HooksView.js";
 import McpView from "./McpView.js";
 import SkillsMenu from "./SkillsMenu.js";
 import RewindPicker, { type RewindMode } from "./RewindPicker.js";
+import { rewindPlan } from "./rewind.js";
 import CopyPicker from "./CopyPicker.js";
 import MemoryPicker from "./MemoryPicker.js";
 import OutputStylePicker from "./OutputStylePicker.js";
@@ -109,17 +136,39 @@ import TeamsDialog from "./teams/TeamsDialog.js";
 import { listWorkflows, getWorkflow, type Workflow } from "../services/workflow/workflowService.js";
 import { startWorkflowRun } from "../services/workflow/runner.js";
 import TasksStatusPill from "./TasksStatusPill.js";
-import { listTasks } from "../services/tasks/backgroundFramework.js";
+import { listTasks, stopAllTasks } from "../services/tasks/backgroundFramework.js";
+import { setBusy, startScheduler, stopScheduler } from "../services/scheduler.js";
+import {
+  formatTaskNotifications,
+  takeTaskNotifications,
+} from "../services/tasks/notifications.js";
+import { collectFileChanges, formatFileChanges } from "../services/fileChangeNotice.js";
 import { buildFileIndex } from "../utils/fileIndex.js";
 import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
 import { getEffortLevel, isEffortLevel } from "../services/effort.js";
 import type { EffortLevel } from "../state/storage.js";
-import { listSkills, getSkill } from "../skills/skillService.js";
+import { listSkills, getSkill, renderSkillPrompt, toSkillCommand } from "../skills/skillService.js";
 import { writeToFile } from "../utils/exportConversation.js";
+import {
+  CompactionFailed,
+  archiveTranscript,
+  compactionNotice,
+  summarizeConversation,
+} from "../services/compaction.js";
+import { LIMIT_FINISH_REASON, stepLimitNotice } from "../services/stepLimit.js";
 import { searchMessages } from "../utils/transcriptSearch.js";
-import { snapshotFiles, restoreSnapshot, hasSnapshot, dropSnapshot, dropAllSnapshots } from "../utils/fileHistory.js";
+import {
+  snapshotFiles,
+  restoreSnapshot,
+  hasSnapshot,
+  dropSnapshot,
+  dropAllSnapshots,
+  setFileHistorySession,
+  getFileHistorySession,
+  resetFileHistorySession,
+} from "../utils/fileHistory.js";
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
-import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage } from "../services/recovery.js";
+import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage, EMPTY_FINISH_REASON, emptyTurnMessage } from "../services/recovery.js";
 import { matchDecision, parsePermissionSettings, escapeRuleContent } from "../services/permissions.js";
 import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
 import { safeTerminalRows } from "./terminalLayout.js";
@@ -160,16 +209,27 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
     
     void shutdownLspServerManager();
+    // Unmount first: the terminal goes back to the user immediately, and the
+    // wait below is only ever as long as a background shell takes to die.
     exit();
-    setTimeout(() => {
-      process.exit(0);
-    }, 50);
+    // Background shells outlive the app that started them otherwise — nothing
+    // else supervises them, so nothing else would ever stop them.
+    void stopAllTasks().finally(() => {
+      setTimeout(() => {
+        process.exit(0);
+      }, 50);
+    });
   }, [exit]);
 
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Which MCP server the session builder is blocked on, if any. Building a
+  // session contacts each configured server synchronously — no timeout, no
+  // cancellation — so this is the one thing that can be shown while the UI
+  // thread is inside that call. See onMcpConnect in services/agent/agentSession.ts.
+  const [mcpConnecting, setMcpConnecting] = useState<string | null>(null);
   // Spinner sentiment — if the last user message was frustrated, the working
   // indicator spins a tongue-in-cheek verb list instead of the normal one.
   // Backward scan without the [...messages].reverse() copy — that allocated
@@ -225,7 +285,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [activeBaseURL, setActiveBaseURL] = useState(config.baseURL);
 
   
-  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("off");
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(persistedThinkingMode);
 
   
   
@@ -354,6 +414,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const abortRef = useRef<AbortController | null>(null);
+  /** The step budget of the turn in flight — named in the notice when the
+   *  engine stops because it ran out, since the finish event cannot say it. */
+  const maxStepsRef = useRef(0);
   const lastSubmittedPromptRef = useRef("");
   const lastEscTimeRef = useRef(0);
   const lastCtrlCTimeRef = useRef(0);
@@ -445,6 +508,22 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     };
   }, [stdout, termRows]);
 
+  // Ask the terminal to mark pastes (DEC 2004). Without it a paste and a burst
+  // of typing are the same event stream, and a line break inside a pasted
+  // block is indistinguishable from Enter — see paste.ts. Restored on the way
+  // out, including on the paths that never unmount (a signal), because
+  // bracketed paste is the terminal's state and not ours to leave on.
+  useEffect(() => {
+    const out = stdout ?? process.stdout;
+    out.write(BRACKETED_PASTE_ON);
+    onExitCleanup(() => {
+      out.write(BRACKETED_PASTE_OFF);
+    });
+    return () => {
+      out.write(BRACKETED_PASTE_OFF);
+    };
+  }, [stdout]);
+
   
   
   const [showThemePicker, setShowThemePicker] = useState(false);
@@ -479,6 +558,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   
   
+  // A workspace's `.deepseek-code.json` can start MCP servers (commands this
+  // process runs) and redirect the API base URL, so config.ts refuses to read it
+  // until the directory is trusted. Ask once per workspace, before anything has
+  // been built from config. Declining is per-session: we only ever record trust,
+  // so an untrusted workspace is asked again next launch.
+  const [trustRequest, setTrustRequest] = useState<{ directory: string; configFile: string } | null>(
+    () => {
+      try {
+        const configFile = findProjectConfig(workingDirectory);
+        if (!configFile || isTrusted(workingDirectory)) return null;
+        return { directory: workingDirectory, configFile };
+      } catch {
+        return null;
+      }
+    },
+  );
+
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     try {
       return !config.apiKey && !loadSettings().onboarded;
@@ -507,8 +603,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [skipPermissions, setSkipPermissions] = useState(() => !!config.dangerouslySkipPermissions);
 
   
-  const [permissionMode, setPermissionMode] = useState<"default" | "acceptEdits" | "plan" | "bypassPermissions">(
-    config.dangerouslySkipPermissions ? "bypassPermissions" : "default",
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(() =>
+    initialPermissionMode(config),
   );
   const permissionModeRef = useRef(permissionMode);
   permissionModeRef.current = permissionMode;
@@ -564,6 +660,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   const [workflowCommands, setWorkflowCommands] = useState<CommandDef[]>([]);
 
+  // Skills are slash commands: every .claude/skills/<name>/SKILL.md (and the
+  // user-level and bundled ones) becomes /<name>. Before this they existed only
+  // behind `/skills <name>`, so a skill the user had installed was invisible to
+  // the picker — and typing it did nothing.
+  const [skillCommands, setSkillCommands] = useState<CommandDef[]>([]);
+
   
   const [todos, setTodos] = useState<TodoItem[]>([]);
   
@@ -597,6 +699,46 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     setMessages((prev) => [...prev, { role: "system", content, timestamp: Date.now() }]);
   }, []);
 
+  // index.tsx repairs ~/.deepseek-code at startup; say so if it had to. The
+  // user may have assumed those files were private.
+  useEffect(() => {
+    const notes = takeHardeningNotes();
+    if (notes.length > 0) pushSystem(`🔒 ${notes.join("\n")}`);
+  }, [pushSystem]);
+
+  const handleTrustDecision = useCallback(
+    (trusted: boolean) => {
+      setTrustRequest(null);
+      if (!trusted) {
+        pushSystem(
+          `Not trusting ${workingDirectory} — its local config is ignored. You'll be asked again next time.`,
+        );
+        return;
+      }
+
+      trustDir(workingDirectory);
+      // Apply it now instead of making the user restart. The values are state,
+      // so setting them and dropping the cached session is enough for the next
+      // message to be built against the workspace's config.
+      const project = loadProjectConfig(workingDirectory);
+      if (project.provider) setActiveProvider(project.provider);
+      if (project.model) setActiveModel(project.model);
+      if (project.apiKey) setActiveApiKey(project.apiKey);
+      if (project.baseURL) setActiveBaseURL(project.baseURL);
+      if (project.mcpServers) {
+        setMcpServers((prev) => ({ ...prev, ...project.mcpServers }));
+      }
+      resetMemorySession();
+
+      pushSystem(
+        `✓ Trusted ${workingDirectory} — applying its model, endpoint and MCP servers. ` +
+          `Its other settings apply from the next launch. ` +
+          `Undo by removing it from ~/.deepseek-code/trusted-dirs.json.`,
+      );
+    },
+    [workingDirectory, pushSystem],
+  );
+
   
   const closeCommandOverlay = useCallback((dismissedAs?: string) => {
     setCommandOverlay(null);
@@ -614,14 +756,22 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       const targetDepth = messageNumber;
       const oldDepth = messages.length;
       if (targetDepth < 1 || targetDepth > messages.length) return;
-      if (mode === "conversation" || mode === "both") {
+      const plan = rewindPlan(mode);
+      if (plan.truncateConversation) {
         setMessages(messages.slice(0, targetDepth));
+        if (plan.dropEngineSession) {
+          // The engine's history is its own, and a cached session ignores the
+          // `history` we pass it — so truncating this list without dropping the
+          // session leaves the model remembering the turns that were just
+          // rewound. See components/rewind.ts.
+          resetMemorySession();
+        }
       }
 
       const restored: string[] = [];
       const failures: string[] = [];
-      if (mode === "code" || mode === "both") {
-        if (hasSnapshot(targetDepth)) {
+      if (plan.restoreFiles) {
+        if (hasSnapshot(targetDepth, workingDirectory)) {
           let entries;
           try {
             entries = await restoreSnapshot(targetDepth, workingDirectory);
@@ -863,6 +1013,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     prevLoadingRef.current = isLoading;
   }, [isLoading, scheduleStatusLineRun]);
 
+  // Cron. Nothing started the scheduler before this, so a job scheduled with
+  // ScheduleCron was written to disk, listed by the tool, and never fired.
+  // Fired jobs enqueue onto the same queue user submissions use, and the
+  // queue drain above turns them into ordinary turns.
+  useEffect(() => {
+    startScheduler((prompt) => {
+      setQueuedSubmissions((prev) => [...prev, prompt]);
+    });
+    return () => stopScheduler();
+  }, []);
+
+  // …but not mid-turn: a job that comes due while a turn is in flight waits
+  // for the next tick after it ends. Deferred, never dropped.
+  useEffect(() => {
+    setBusy(isLoading);
+  }, [isLoading]);
+
   const refreshPlugins = useCallback(() => {
     try {
       const plugins = loadInstalledPlugins();
@@ -918,8 +1085,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       }
       setMcpServers(newMcp);
       // Plugin skills are cached in skillService — invalidate after any
-      // plugin install/enable/disable mutation so /skills reflects it.
+      // plugin install/enable/disable mutation so /skills reflects it, and
+      // re-read the slash commands that were built from it.
       clearSkillsCache();
+      setSkillCommands(listSkills().map(toSkillCommand));
     } catch {}
   }, [config.mcpServers]);
 
@@ -955,10 +1124,25 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   const yieldToRenderer = () => new Promise<void>((r) => setTimeout(r, 0));
 
+  /**
+   * Say which MCP server the session builder is about to block on, and give
+   * Ink the turn it needs to actually paint it.
+   *
+   * The `setTimeout(0)` is the whole point: a React update queued in the same
+   * synchronous run as the blocking native call would be batched away and
+   * never painted, so the app would freeze on the *previous* frame. Yielding
+   * here lets the commit land first, which is what turns an unexplained hang
+   * into "Connecting to MCP server "fs"… 30s".
+   */
+  const announceMcpConnect = async (name: string): Promise<void> => {
+    setMcpConnecting(name);
+    await yieldToRenderer();
+  };
+
   
   const extraCommands = useMemo(
-    () => [...pluginCommands, ...workflowCommands, ...toCommandDefs(customCommands)],
-    [pluginCommands, workflowCommands, customCommands],
+    () => [...pluginCommands, ...workflowCommands, ...skillCommands, ...toCommandDefs(customCommands)],
+    [pluginCommands, workflowCommands, skillCommands, customCommands],
   );
   const slashInputActive = input.trimStart().startsWith("/");
   const filteredCommands: CommandDef[] = !isLoading && slashInputActive ? filterCommands(input, extraCommands) : [];
@@ -1050,6 +1234,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     }
     try {
+      setSkillCommands(listSkills().map(toSkillCommand));
+    } catch {
+
+    }
+    try {
       setWorkflowCommands(
         listWorkflows().map((wf) => ({
           name: wf.name,
@@ -1065,9 +1254,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     }
     
     try {
-      pruneOldSessions(loadSettings().cleanupPeriodDays ?? 30);
+      const cleanupDays = loadSettings().cleanupPeriodDays ?? 30;
+      pruneOldSessions(cleanupDays);
+      // Same filesystem cache, same lifetime: spilled command output.
+      pruneOldToolOutputs(cleanupDays);
     } catch {
-      
+
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1116,6 +1308,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           model: activeModel,
           agent: currentAgent,
           workingDirectory,
+          // Record which file-history scope this conversation's snapshots live
+          // in, so resuming it can find them again.
+          fileHistoryId: getFileHistorySession(),
         });
         setActiveSessionHash(currentHash);
         
@@ -1211,12 +1406,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       const session = loadSession(sessionHashToLoad);
       if (session) {
-        setMessages(session.messages.map((m) => ({
-          ...m,
-          toolUse: [],
-        })));
-        setTokenCount(session.tokenUsage);
-        setActiveSessionHash(session.hash);
+        adoptSession(session, {
+          // Nothing has been sent yet, so there is no native session to drop —
+          // but going through the same door keeps this path honest if that
+          // stops being true (a send can outlive the effect that started it).
+          resetEngineSession: resetMemorySession,
+          setMessages,
+          setTokenCount,
+          setActiveSessionHash,
+          setFileHistoryScope: setFileHistorySession,
+        });
         setMessages((prev) => [
           ...prev,
           {
@@ -1262,77 +1461,139 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     setTimeout(() => chatRef.current?.scrollToBottom(), 0);
   };
 
+  /**
+   * The overlays that own the keyboard, most modal first: the full-screen
+   * takeovers (transcript, the pickers, settings, help) ahead of the popovers
+   * that sit over a live prompt, and the callouts last. This is the list the
+   * Ctrl+C decision reads and the one `closeOverlay` writes back to — written
+   * once as data so the two cannot drift apart the way the old if-chain did,
+   * where each new overlay had to be remembered in a different place.
+   */
+  const overlayOpen: Array<[CtrlCOverlay, boolean]> = [
+    ["transcript", isTranscriptMode],
+    ["session-picker", showSessionPicker],
+    ["settings", showSettingsUI],
+    ["help", showHelp],
+    ["history-search", showHistorySearch],
+    ["plugins", showPluginOverlay],
+    ["export", exportDialog !== null],
+    ["search-results", searchResults !== null],
+    ["effort-callout", showEffortCallout],
+    ["theme-picker", showThemePicker],
+    ["commands", commandOverlay !== null],
+  ];
+
+  function closeOverlay(overlay: CtrlCOverlay): void {
+    switch (overlay) {
+      case "transcript":
+        exitTranscriptMode();
+        return;
+      case "session-picker":
+        setShowSessionPicker(false);
+        return;
+      case "settings":
+        setShowSettingsUI(false);
+        return;
+      case "help":
+        setShowHelp(false);
+        return;
+      case "history-search":
+        setShowHistorySearch(false);
+        return;
+      case "plugins":
+        setShowPluginOverlay(false);
+        return;
+      case "export":
+        setExportDialog(null);
+        return;
+      case "search-results":
+        setSearchResults(null);
+        return;
+      case "effort-callout":
+        handleEffortCalloutDone("dismiss");
+        return;
+      case "theme-picker":
+        setShowThemePicker(false);
+        return;
+      case "commands":
+        setCommandOverlay(null);
+        return;
+    }
+  }
+
   useInput((_input, key) => {
     // Terminal mouse sequences reach every useInput handler as a raw string
     // like `[<64;10;15M` with an empty key name — never treat them as keys.
     if (isMouseSequence(_input)) return;
     if (key.ctrl && _input === "c") {
-      if (pendingQuestions) {
-        pendingQuestions.reject(new Error("Questions cancelled by user."));
-        setPendingQuestions(null);
-        return;
-      }
-      if (isTranscriptMode) {
-        exitTranscriptMode();
-        return;
-      }
-      if (showSessionPicker) {
-        setShowSessionPicker(false);
-        return;
-      }
-      if (showSettingsUI) {
-        setShowSettingsUI(false);
-        return;
-      }
-      if (showHelp) {
-        setShowHelp(false);
-        return;
-      }
-      if (exportDialog) {
-        setExportDialog(null);
-        return;
-      }
-      if (searchResults) {
-        setSearchResults(null);
-        return;
-      }
-      if (commandOverlay) {
-        setCommandOverlay(null);
-        return;
-      }
-
+      // What Ctrl+C means is decided in ctrlC.ts, as precedence-ordered data:
+      // open overlay, then running turn, then draft, and only then the exit.
       const now = Date.now();
-      if (isLoading) {
-        
-        abortRef.current?.abort();
-        lastCtrlCTimeRef.current = now;
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content: "Generation interrupted. Press Ctrl+C again to exit.",
-            timestamp: now,
-          },
-        ]);
-      } else if (now - lastCtrlCTimeRef.current < 1500) {
-        
-        handleExit();
-      } else {
-        lastCtrlCTimeRef.current = now;
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content: "Press Ctrl+C again to exit.",
-            timestamp: now,
-          },
-        ]);
+      const action = ctrlCAction({
+        hasPendingQuestions: pendingQuestions !== null,
+        overlays: overlaysOf(overlayOpen),
+        isLoading,
+        hasDraft: input.length > 0,
+        lastCtrlCAt: lastCtrlCTimeRef.current,
+        now,
+      });
+
+      switch (action.kind) {
+        case "cancel-questions":
+          pendingQuestions!.reject(new Error("Questions cancelled by user."));
+          setPendingQuestions(null);
+          return;
+        case "close-overlay":
+          closeOverlay(action.overlay);
+          return;
+        case "abort":
+          abortRef.current?.abort();
+          lastCtrlCTimeRef.current = now;
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "Generation interrupted. Press Ctrl+C again to exit.",
+              timestamp: now,
+            },
+          ]);
+          return;
+        case "clear-input":
+          setInput("");
+          lastCtrlCTimeRef.current = now;
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "Input cleared. Press Ctrl+C again to exit.",
+              timestamp: now,
+            },
+          ]);
+          return;
+        case "exit":
+          handleExit();
+          return;
+        case "arm-exit":
+          lastCtrlCTimeRef.current = now;
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "Press Ctrl+C again to exit.",
+              timestamp: now,
+            },
+          ]);
+          return;
       }
-      return;
     }
 
     
     
+    // The trust prompt owns the keyboard until it is answered.
+    if (trustRequest) {
+      return;
+    }
+
     if (showOnboarding) {
       return;
     }
@@ -1566,13 +1827,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       } else if (isLoading) {
         abortRef.current?.abort();
         setIsLoading(false);
+
+        // Keep what the turn had already produced — the text so far, the tools
+        // that settled, and the call the user just cancelled, marked
+        // `interrupted` — instead of dropping the whole thing. Same message
+        // shape as the normal finalizer, minus its running-block filter.
+        const interruptedText = streamingBlocksRef.current
+          .filter((b): b is MessageBlock & { type: "text" } => b.type === "text")
+          .map((b) => b.content ?? "")
+          .join("");
+        const interruptedMessage = interruptStreamingTurn(
+          streamingBlocksRef.current,
+          interruptedText,
+          streamingToolUseRef.current,
+        );
+
         streamingTextRef.current = "";
         streamingToolUseRef.current = [];
+        streamingBlocksRef.current = [];
         thinkingOpenRef.current = null;
         setStreamingText("");
         setStreamingToolUse([]);
+        setStreamingBlocks([]);
         setMessages((prev) => [
           ...prev,
+          ...(interruptedMessage ? [interruptedMessage] : []),
           { role: "system", content: "Generation interrupted.", timestamp: Date.now() },
         ]);
         if (lastSubmittedPromptRef.current) {
@@ -1702,9 +1981,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     
     if (key.shift && key.tab) {
       setPermissionMode((prev) => {
-        const order: ("default" | "acceptEdits" | "plan" | "bypassPermissions")[] = [
-          "default", "acceptEdits", "plan", "bypassPermissions",
-        ];
+        // `bypassPermissions` is in the cycle only when this process holds the
+        // grant for it — the same grant `assertBypassSafe` validates at startup.
+        // It used to be the fourth entry unconditionally, so root outside a
+        // sandbox could reach unrestricted execution by pressing a key four
+        // times in the process that gate had just declined to protect.
+        const order = permissionModeCycle(config);
         const idx = order.indexOf(prev);
         return order[(idx + 1) % order.length]!;
       });
@@ -1716,29 +1998,45 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const requestPermission = useCallback(
     (toolName: string, description: string | (() => string), input?: unknown): Promise<{ approved: boolean; feedback?: string }> => {
       const mode = permissionModeRef.current;
-      if (mode === "bypassPermissions") {
-        return Promise.resolve({ approved: true });
-      }
       if (mode === "plan") {
         return Promise.resolve({
           approved: false,
           feedback: "Plan mode is read-only. Press Shift+Tab to switch to a write-enabled mode.",
         });
       }
+      // Protected paths are the one write that is never settled automatically,
+      // by any of the three approvals below. "Don't ask again for Write" was
+      // consent to edit the project, not to rewrite .git/hooks, ~/.zshrc or
+      // .claude/settings.json — so those still ask, in every mode.
+      const protectedReason = protectedWriteReason(
+        toolName,
+        input as Record<string, unknown> | undefined,
+        workingDirectory,
+      );
       const sessionDecision = matchDecision(
         parsePermissionSettings(sessionRules),
         toolName,
         input,
         workingDirectory,
       );
-      if (sessionDecision.decision === "allow") {
-        return Promise.resolve({ approved: true });
-      }
+      // A denial stays a denial: the guard only ever adds a prompt.
       if (sessionDecision.decision === "deny") {
         return Promise.resolve({ approved: false, feedback: "Denied by a session rule." });
       }
-      if (mode === "acceptEdits" && ["Write", "Edit", "NotebookEdit"].includes(toolName)) {
-        return Promise.resolve({ approved: true });
+      if (!protectedReason) {
+        if (mode === "bypassPermissions") {
+          return Promise.resolve({ approved: true });
+        }
+        if (sessionDecision.decision === "allow") {
+          return Promise.resolve({ approved: true });
+        }
+        // Accept-edits is a grant about this project, not about the machine:
+        // the target has to be inside the working directory for the mode to
+        // settle it. A path the call does not name is never auto-approved.
+        const target = pathWrittenBy(toolName, input as Record<string, unknown> | undefined, workingDirectory);
+        if (mode === "acceptEdits" && target !== null && pathWithinDir(target, workingDirectory)) {
+          return Promise.resolve({ approved: true });
+        }
       }
       return new Promise((resolve) => {
         runHooksFireAndForget("Notification", {
@@ -1746,7 +2044,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           tool: toolName,
           cwd: workingDirectory,
         });
-        setPermissionQueue((prev) => [...prev, { toolName, description, input, resolve }]);
+        setPermissionQueue((prev) => [
+          ...prev,
+          {
+            toolName,
+            description,
+            input,
+            explanation: protectedReason
+              ? `${protectedReason} · protected paths always require approval`
+              : undefined,
+            resolve,
+          },
+        ]);
       });
     },
     [sessionRules],
@@ -1846,19 +2155,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       const target = next[bestIndex]!;
       // Cap retained output: tool-level caps (Bash 50KB, fetch 50KB, the
       // maxResultSizeChars enforcement) bound single results, but a long
-      // session still holds every tool output in React state forever. The
-      // renderer only ever shows ~200 lines anyway; /export uses message
-      // content. Keep a generous head + tail so transcripts stay usable
-      // without unbounded RAM growth.
-      const cappedOutput =
-        output.length > MAX_RETAINED_OUTPUT
-          ? output.slice(0, MAX_RETAINED_OUTPUT) +
-            "\n\n... [retained output truncated at " +
-            Math.floor(MAX_RETAINED_OUTPUT / 1024) +
-            "KB — full result was " +
-            Math.ceil(output.length / 1024) +
-            "KB]"
-          : output;
+      // session still holds every tool output in React state forever.
+      const cappedOutput = capRetainedOutput(output, MAX_RETAINED_OUTPUT);
       next[bestIndex] = {
         ...target,
         status: isError ? "error" : "done",
@@ -2143,13 +2441,39 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
           }
 
-          case "tool-call-result":
-            
+          case "tool-call-result": {
+            // Tools the engine runs itself — every tool of an attached MCP
+            // server — never reach the TS wrapper, so `handleToolResult` is
+            // never called for them; this event is the only account of what
+            // they returned. Dropping it left the block spinning and then
+            // filtered it out of the finalized message (see streamingMessage).
+            const update = applyNativeToolResult(
+              streamingToolUseRef.current,
+              streamingBlocksRef.current,
+              event,
+              MAX_RETAINED_OUTPUT,
+            );
+            if (!update.changed) break;
+            streamingToolUseRef.current = update.toolUse;
+            streamingBlocksRef.current = update.blocks;
+            flushDirtyRef.current.toolUse = true;
+            flushDirtyRef.current.blocks = true;
+            scheduleStreamingFlush();
             break;
+          }
 
           case "step-finish":
             break;
 
+          // ── declared, not yet deliverable ────────────────────────────────
+          // The engine's StreamEvent union has no compaction member and no
+          // separate usage event (usage rides on `finish`), so query() cannot
+          // yield either of these and these two handlers cannot run. They are
+          // kept because they are what the events *should* do when the engine
+          // reports them — the requirement is filed — but nothing here is
+          // watching the engine's real sliding-window eviction today. What the
+          // app can see is the symptom: this turn's prompt tokens coming back
+          // smaller than the history that went in.
           case "token-usage":
             setTokenCount(event.usage.totalTokens);
             setInputTokens(event.usage.promptTokens);
@@ -2189,6 +2513,32 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               const totalCost = event.cost.totalCost;
               setCost((prev) => prev + totalCost);
             }
+            // The engine stops at max_steps the same way it stops when the
+            // model is done, so say which one happened — a turn that ends
+            // mid-task with no explanation reads as a bug in the agent.
+            if (event.finishReason === LIMIT_FINISH_REASON) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: stepLimitNotice(maxStepsRef.current),
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
+            // A rejected request reaches us as a completed turn with nothing in
+            // it and no error event at all, so this is the only thing standing
+            // between the user and a silent no-op. Say so.
+            if (event.finishReason === EMPTY_FINISH_REASON) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content: emptyTurnMessage(activeModel),
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
             
             
             
@@ -2211,7 +2561,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             if (cls === "prompt-too-long") {
               setMessages((prev) => [
                 ...prev,
-                { role: "system", content: promptTooLongMessage(), timestamp: Date.now() },
+                { role: "system", content: promptTooLongMessage(errorText), timestamp: Date.now() },
               ]);
               streamingTextRef.current = "";
               streamingToolUseRef.current = [];
@@ -2250,7 +2600,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                 ...prev,
                 {
                   role: "assistant",
-                  content: overloadMessage(activeModel),
+                  content: overloadMessage(activeModel, errorText),
                   timestamp: Date.now(),
                   isError: true,
                 },
@@ -2408,25 +2758,61 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       try {
         const agentConfig = agentManager.resolveConfig(currentAgent) ?? agentManager.getConfig("code");
+        maxStepsRef.current = agentConfig.maxSteps ?? 0;
 
-        
-        const { session } = getOrCreateMemorySession({
+
+        const { session, context } = await getOrCreateMemorySession({
           providerConfig,
           agentConfig,
           workingDir: workingDirectory,
           memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-          maxContextTokens: 1_000_000,
+          // The engine sizes its sliding window from this and compacts when the
+          // history passes it. It used to be 1,000,000 — eight times what
+          // DeepSeek serves, which bought a session that grew until the API
+          // refused it rather than one that compacted.
+          maxContextTokens: contextWindowFor(activeModel),
           requestPermission,
           askUserQuestions,
+          isPlanMode: () => permissionModeRef.current === "plan",
           mcpServers,
           abortController,
           onToolResult: handleToolResult,
           onToolOutput: handleToolOutput,
           onTodosChange: handleTodosChange,
           onSystemMessage: pushSystem,
+          onMcpConnect: announceMcpConnect,
           history: messages,
           effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
         });
+        setMcpConnecting(null);
+
+        // Background work that finished since the last turn is news the model
+        // has never seen, and a `<task-notification>` its tools' own
+        // descriptions promise. The engine owns history, so the only way to
+        // deliver it is another user turn before the prompt — see
+        // services/tasks/notifications.ts for why that is safe.
+        const finishedTasks = takeTaskNotifications();
+        const taskNews = formatTaskNotifications(finishedTasks);
+        if (taskNews) {
+          session.addUser(taskNews);
+          for (const task of finishedTasks) {
+            pushSystem(`↩ Told the model: ${task.summary}`);
+          }
+        }
+
+        // And the files it read that somebody else has since changed. Same
+        // channel, same reason (see services/fileChangeNotice.ts): history is
+        // the engine's, so a turn is the only way to say anything. Costs a
+        // stat per file the session has read, and nothing else — a file whose
+        // mtime has not moved is never opened.
+        const changedFiles = await collectFileChanges(context.readFileState);
+        const fileNews = formatFileChanges(changedFiles);
+        if (fileNews) {
+          session.addUser(fileNews);
+          for (const change of changedFiles) {
+            pushSystem(`↩ Told the model: ${change.path} changed on disk`);
+          }
+        }
 
         const startTime = Date.now();
         const activePrompt = promptOverride !== undefined ? promptOverride : trimmedInput;
@@ -2459,23 +2845,37 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               },
             ]);
             resetMemorySession();
-            const { session: fallbackSession } = getOrCreateMemorySession({
+            const { session: fallbackSession } = await getOrCreateMemorySession({
               providerConfig: fallback,
               agentConfig,
               workingDir: workingDirectory,
               memoryDir: `${os.homedir()}/.deepseek-code/memory`,
-              maxContextTokens: 1_000_000,
+              maxContextTokens: contextWindowFor(fallback.model ?? activeModel),
               requestPermission,
               askUserQuestions,
+              isPlanMode: () => permissionModeRef.current === "plan",
               mcpServers,
               abortController,
               onToolResult: handleToolResult,
               onToolOutput: handleToolOutput,
               onTodosChange: handleTodosChange,
               onSystemMessage: pushSystem,
+              onMcpConnect: announceMcpConnect,
               history: messages,
               effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
             });
+            // The fallback build has its own cache key, so it contacts the MCP
+            // servers again rather than reusing the ones just attached.
+            setMcpConnecting(null);
+            // Same news, redelivered to the fresh session: the overload
+            // retry replays `messages`, and the notification was never one of
+            // them (it lives in the engine's history, which this session does
+            // not inherit). The file news goes with it — this session's read
+            // state is empty, so a second `collectFileChanges` would find
+            // nothing left to say about files the model still needs warning
+            // about.
+            if (taskNews) fallbackSession.addUser(taskNews);
+            if (fileNews) fallbackSession.addUser(fileNews);
             const retryEvents = query({
               session: fallbackSession,
               config: agentConfig,
@@ -2485,18 +2885,16 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             });
             await processAgentStream(retryEvents);
           } catch (retryError) {
-            
-            
+            const retryRaw = (retryError as Error).message || String(retryError);
             setMessages((prev) => [
               ...prev,
               {
                 role: "system",
-                content: overloadMessage(fallback.model ?? activeModel),
+                content: overloadMessage(fallback.model ?? activeModel, retryRaw),
                 timestamp: Date.now(),
               },
             ]);
             setIsLoading(false);
-            const retryRaw = (retryError as Error).message || String(retryError);
             if (retryRaw) {
               process.stderr.write(`[overload-fallback] ${retryRaw}\n`);
             }
@@ -2516,12 +2914,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         if (cls === "prompt-too-long") {
           setMessages((prev) => [
             ...prev,
-            { role: "system", content: promptTooLongMessage(), timestamp: Date.now() },
+            { role: "system", content: promptTooLongMessage(raw), timestamp: Date.now() },
           ]);
         } else if (cls === "overload") {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: overloadMessage(activeModel), timestamp: Date.now(), isError: true },
+            { role: "assistant", content: overloadMessage(activeModel, raw), timestamp: Date.now(), isError: true },
           ]);
         } else {
           setMessages((prev) => [
@@ -2545,6 +2943,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       providerConfig,
       thinkingMode,
       messages,
+      // The memoized handler builds the session, and the session is where the
+      // server list is used. Leaving this out left the first turn after the
+      // list changed — trusting a project that declares MCP servers, say —
+      // attaching the servers it did not have yet, while the system message
+      // said they had been applied.
+      mcpServers,
       workingDirectory,
       requestPermission,
       askUserQuestions,
@@ -2822,8 +3226,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           contextManagerRef.current.reset();
           // Indices restart on /clear — GC the rewind snapshots so old
           // manifests don't orphan their blobs (fileHistory blob GC only
-          // ran on rewind before).
-          void dropAllSnapshots().catch(() => {});
+          // ran on rewind before). Capture the outgoing scope first: the drop
+          // must run against the conversation being discarded, not the new one.
+          {
+            const discarded = getFileHistorySession();
+            resetFileHistorySession();
+            void dropAllSnapshots(discarded).catch(() => {});
+          }
           return true;
 
         case "compact": {
@@ -2835,38 +3244,79 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             return true;
           }
 
-          
-          const userMessages = messages
-            .filter((m) => m.role === "user")
-            .slice(-8)
-            .map((m) => m.content.slice(0, 200))
-            .filter(Boolean);
-
-          const toolCount = messages
-            .filter((m) => m.toolUse?.length)
-            .reduce((sum, m) => sum + (m.toolUse?.length ?? 0), 0);
-
-          const summaryParts: string[] = [
-            `[Context compacted: ${messages.length} messages summarized]`,
-          ];
-          if (userMessages.length > 0) {
-            summaryParts.push(`Topics discussed: ${userMessages.join("; ")}`);
-          }
-          if (toolCount > 0) {
-            summaryParts.push(`Tool calls made: ${toolCount}`);
-          }
-
-          
-          resetMemorySession();
-          
-          contextManagerRef.current.reset();
-          setTokenCount(0);
-          setInputTokens(0);
-          setOutputTokens(0);
-
-          setMessages([
-            { role: "system", content: summaryParts.join("\n"), timestamp: Date.now() },
+          // Compaction is a model call, not a string operation. It used to
+          // build a banner out of the last eight prompts, call it a summary,
+          // and replace the conversation with it — destroying the transcript
+          // AND leaving the next session seeded with a note the summary path
+          // did not even replay (it was a `system` row). Nothing is replaced
+          // now until a real summary exists.
+          const toCompact = messages;
+          const compactController = new AbortController();
+          abortRef.current = compactController;
+          setIsLoading(true);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `Compacting ${toCompact.length} messages — summarizing with ${activeModel}…`,
+              timestamp: Date.now(),
+            },
           ]);
+
+          void (async () => {
+            try {
+              // Archive first: the summary is for the model, the archive is
+              // for whoever wants the detail back.
+              const archivedTo = await archiveTranscript({ messages: toCompact });
+
+              const result = await summarizeConversation({
+                providerConfig,
+                messages: toCompact,
+                signal: compactController.signal,
+              });
+
+              // The summarization call is a real API call the user pays for.
+              tokenTrackerRef.current.addStepUsage(result.usage);
+
+              // The native session's history is the pre-compaction
+              // conversation; the next turn must be built from the summary
+              // instead, so drop the cached session (getOrCreateMemorySession
+              // replays `messages` as user/assistant turns on the next send).
+              resetMemorySession();
+              // The rewind snapshots are keyed by message index, and those
+              // indices no longer exist — same reasoning as /clear.
+              void dropAllSnapshots().catch(() => {});
+              contextManagerRef.current.reset();
+              setTokenCount(0);
+              setInputTokens(0);
+              setOutputTokens(0);
+
+              setMessages([
+                {
+                  role: "user",
+                  content: `${compactionNotice({ summarized: result.summarized, archivedTo })}
+
+${result.summary}`,
+                  compaction: { summarized: result.summarized, archivedTo },
+                  timestamp: Date.now(),
+                },
+              ]);
+              pushSystem(
+                `Compacted ${result.summarized} messages → summary (${Math.round(result.summary.length / 4)} tokens est.). ` +
+                  `Full transcript: ${archivedTo}`,
+              );
+            } catch (err) {
+              // Every failure path leaves `messages` untouched on purpose.
+              pushSystem(
+                err instanceof CompactionFailed
+                  ? err.message
+                  : `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            } finally {
+              setIsLoading(false);
+              if (abortRef.current === compactController) abortRef.current = null;
+            }
+          })();
           return true;
         }
 
@@ -3202,6 +3652,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           if (arg === "clear" || arg === "new") {
             setMessages([]);
             resetMemorySession();
+            // A new conversation gets its own rewind scope; without this its
+            // snapshots restart at index 1 and overwrite the previous
+            // conversation's manifests, which that session still points at.
+            resetFileHistorySession();
             setSessionRules({ allow: [], deny: [] });
             setTokenCount(0);
             setActiveSessionHash(null);
@@ -3243,6 +3697,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           if (arg === "clear" || arg === "new") {
             setMessages([]);
             resetMemorySession();
+            // A new conversation gets its own rewind scope; without this its
+            // snapshots restart at index 1 and overwrite the previous
+            // conversation's manifests, which that session still points at.
+            resetFileHistorySession();
             setSessionRules({ allow: [], deny: [] });
             setTokenCount(0);
             setActiveSessionHash(null);
@@ -3257,9 +3715,15 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             ]);
             return true;
           }
-          setMessages(session.messages.map((m) => ({ ...m, toolUse: [] })));
-          setTokenCount(session.tokenUsage);
-          setActiveSessionHash(session.hash);
+          adoptSession(session, {
+            // The session already on screen may have been mid-conversation
+            // with the engine — resuming must take the engine with it.
+            resetEngineSession: resetMemorySession,
+            setMessages,
+            setTokenCount,
+            setActiveSessionHash,
+            setFileHistoryScope: setFileHistorySession,
+          });
           setMessages((prev) => [
             ...prev,
             {
@@ -3958,7 +4422,7 @@ Based on the above changes:
             ...prev,
             {
               role: "system",
-              content: `DeepSeek Code v0.1.0\nBun ${Bun.version}\nNode compatibility ${process.version}`,
+              content: `DeepSeek Code v${APP_VERSION}\nBun ${Bun.version}\nNode compatibility ${process.version}`,
               timestamp: Date.now(),
             },
           ]);
@@ -4013,6 +4477,15 @@ Based on the above changes:
           const custom = customCommands.find((c) => c.name.replace(/^\/+/, "").toLowerCase() === command);
           if (custom) {
             void submitUserPrompt(cmd, renderCommand(custom, restArgs));
+            return true;
+          }
+          // A skill is a slash command too: /<name> <args> sends the SKILL.md
+          // body (arguments substituted or appended) as the turn's prompt.
+          // Resolved live rather than from the list built at mount, so a skill
+          // added to disk mid-session is invocable without a restart.
+          const skill = getSkill(command);
+          if (skill) {
+            void submitUserPrompt(cmd, renderSkillPrompt(skill, restArgs));
             return true;
           }
           const pluginCommandName = command;
@@ -4070,6 +4543,8 @@ Based on the above changes:
       rewindToDepth,
       copyToClipboard,
       launchWorkflow,
+      providerConfig,
+      pushSystem,
     ],
   );
 
@@ -4266,32 +4741,30 @@ Based on the above changes:
       case "permissions":
         return (
           <PermissionsView
-            persistedRules={(() => {
+            userRules={(() => {
               try {
                 return loadSettings().permissions ?? {};
               } catch {
                 return {};
               }
             })()}
+            // Read through the same trust-gated loader the engine uses, so the
+            // list shows the rules that are actually in force.
+            projectRules={loadProjectPermissions(workingDirectory) ?? undefined}
             sessionRules={sessionRules}
             onPersistRules={(rules) => handleUpdateSetting("permissions", rules)}
             onSessionRulesChange={(next) => setSessionRules(next)}
-            onPersistProjectRules={(rules) => {
-              try {
-                const fs = require("node:fs") as typeof import("node:fs");
-                const pathMod = require("node:path") as typeof import("node:path");
-                const configPath = pathMod.join(process.cwd(), ".deepseek-code.json");
-                const existing = fs.existsSync(configPath)
-                  ? JSON.parse(fs.readFileSync(configPath, "utf-8"))
-                  : {};
-                fs.writeFileSync(
-                  configPath,
-                  JSON.stringify({ ...existing, permissions: rules }, null, 2) + "\n",
-                );
-              } catch (e) {
-                pushSystem(`✗ Failed to save project permissions: ${(e as Error).message}`);
-              }
-            }}
+            // Offered only for a trusted workspace: writing rules into a config
+            // the app is ignoring would look saved and do nothing, then take
+            // effect unannounced if the directory is trusted later.
+            onPersistProjectRules={
+              isTrusted(workingDirectory)
+                ? (rules) => {
+                    const err = writeProjectPermissions(workingDirectory, rules);
+                    if (err) pushSystem(`✗ Failed to save project permissions: ${err}`);
+                  }
+                : undefined
+            }
             onSummary={(summary) => pushSystem(summary)}
             onClose={() => setCommandOverlay(null)}
           />
@@ -4488,13 +4961,19 @@ Based on the above changes:
       initialState={themeMode}
       onThemeSave={(setting) => handleThemeModeChange(setting)}
     >
-    {showOnboarding ? (
-      
-      
+    {trustRequest ? (
+      <TrustPrompt
+        directory={trustRequest.directory}
+        configFile={trustRequest.configFile}
+        onDecide={handleTrustDecision}
+      />
+    ) : showOnboarding ? (
+
+
       <Onboarding
         hasApiKey={!!activeApiKey}
         initialTheme={themeMode}
-        version="0.1.0"
+        version={APP_VERSION}
         onDone={handleOnboardingDone}
       />
     ) : (
@@ -4511,7 +4990,7 @@ Based on the above changes:
           isLoading={isLoading}
           streamingText={streamingText}
           streamingToolUse={streamingToolUse}
-          version="0.1.0"
+          version={APP_VERSION}
           model={activeModel}
           workingDirectory={workingDirectory}
           agentName={currentAgent}
@@ -4548,12 +5027,12 @@ Based on the above changes:
             .filter(Boolean)
             .join(" · ")}
           onApprove={(value, feedback) => {
-            if (value === "__allow_all__") {
-              setSessionRules((prev) => ({
-                ...prev,
-                allow: [...new Set([...prev.allow, "Bash", "PowerShell"])],
-              }));
-            } else if (value === "__allow_edits__") {
+            // No session-wide "allow all" branch here: the Bash dialog has no
+            // such row (the reference's does not either), so nothing sends that
+            // value. That capability lives in the Shift+Tab bypass mode, which
+            // App reads separately — a second, unreachable path to it would only
+            // widen permissions the day a string collides.
+            if (value === "__allow_edits__") {
               setSessionRules((prev) => ({
                 ...prev,
                 allow: [...new Set([...prev.allow, "Edit", "Write", "NotebookEdit"])],
@@ -4600,11 +5079,34 @@ Based on the above changes:
       )}
 
       {}
-      <Box flexShrink={0} flexDirection="column">
+      {/* The pinned bottom area. FullscreenLayout:73 also caps this at half
+          the terminal height, so a tall composer or a long queue cannot
+          squeeze the conversation out of the viewport — but that cap is
+          maxHeight="50%", and stock ink 6.8.0 does not implement maxHeight at
+          all (yoga exposes setMaxHeight; ink never calls it), so it is not
+          expressible here without forking ink. See RELEASE-READINESS.md. */}
+      <Box flexShrink={0} flexDirection="column" width="100%">
       {}
       {isLoading && (
-        <Box paddingX={1}>
-          <Spinner noun={basename(workingDirectory)} sentiment={spinnerSentiment} />
+        // The reference's SpinnerAnimationRow is a full-width row inset two
+        // columns (Spinner.tsx:517). The row's leading blank line comes from
+        // the Spinner itself, which owns marginTop={1} — Spinner.tsx:142 — so
+        // this wrapper adds only the inset; adding marginTop here too would
+        // open two blank rows.
+        <Box flexDirection="row" width="100%" paddingLeft={2}>
+          <Spinner
+            // While a server is being contacted the spinner's usual "Thinking
+            // <dir>…" would be a lie — the turn has not started yet — and the
+            // elapsed seconds beside it are the only sign of how long a hung
+            // server has been hung.
+            label={
+              mcpConnecting
+                ? `Connecting to MCP server "${mcpConnecting}"…`
+                : undefined
+            }
+            noun={basename(workingDirectory)}
+            sentiment={spinnerSentiment}
+          />
         </Box>
       )}
       {isLoading && todos.length > 0 && (
@@ -4626,7 +5128,7 @@ Based on the above changes:
       ) : showEffortCallout ? (
         <EffortCallout onDone={handleEffortCalloutDone} currentLevel={effortLevel} />
       ) : showHelp ? (
-        <HelpView version="0.1.0" />
+        <HelpView version={APP_VERSION} />
       ) : exportDialog ? (
         <ExportView
           defaultFormat={exportDialog.defaultFormat}
@@ -4676,9 +5178,13 @@ Based on the above changes:
             if (session.workingDirectory === workingDirectory) {
               const loaded = loadSession(session.hash);
               if (loaded) {
-                setMessages(loaded.messages.map((m) => ({ ...m, toolUse: [] })));
-                setTokenCount(loaded.tokenUsage);
-                setActiveSessionHash(loaded.hash);
+                adoptSession(loaded, {
+                  resetEngineSession: resetMemorySession,
+                  setMessages,
+                  setTokenCount,
+                  setActiveSessionHash,
+                  setFileHistoryScope: setFileHistorySession,
+                });
               }
               setShowSessionPicker(false);
             } else {
@@ -4698,7 +5204,13 @@ Based on the above changes:
           onClose={() => setShowSessionPicker(false)}
         />
       ) : showSettingsUI ? (
-        <Settings defaultTab={settingsTab} onClose={() => setShowSettingsUI(false)} />
+        <Settings
+          defaultTab={settingsTab}
+          onClose={() => setShowSettingsUI(false)}
+          onSkipPermissionsChange={handleSkipPermissionsChange}
+          onThinkingModeChange={handleThinkingModeChange}
+          onThemeModeChange={handleThemeModeChange}
+        />
       ) : showPluginOverlay ? (
         <PluginPanel
           onClose={() => setShowPluginOverlay(false)}
@@ -4717,12 +5229,17 @@ Based on the above changes:
           borderDimColor
           marginTop={1}
           paddingLeft={2}
-          paddingRight={2}
           width="100%"
           alignItems="center"
+          alignSelf="center"
         >
+          {/* The reference's TranscriptModeFooter, in its virtual-scroll,
+              non-search branch. It reads its shortcut through
+              useShortcutDisplay(), which returns a plain string, so the line
+              is uniformly dim with no highlighted keys; and it advertises the
+              toggle rather than the ways out of the mode. */}
           <Text dimColor>
-            Showing detailed transcript · ↑↓ scroll · <Text bold color="cyan">pgup/pgdn</Text> page · <Text bold color="cyan">g/G</Text> top/bottom · <Text bold color="cyan">ctrl+o</Text>/<Text bold color="cyan">esc</Text>/<Text bold color="cyan">q</Text> to exit
+            Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll · home/end top/bottom
           </Text>
         </Box>
       ) : (
@@ -4759,7 +5276,6 @@ Based on the above changes:
             onChange={handleInputChange}
             onSubmit={handleSubmit}
             isLoading={isLoading}
-            agentName={currentAgent}
             workingDirectory={workingDirectory}
             recentFiles={recentFilesMemo}
             isBlocked={!!pendingPermission || !!pendingQuestions}
@@ -4809,6 +5325,33 @@ Based on the above changes:
 }
 
 
+
+/**
+ * Merge permission rules into the workspace's config file, preserving whatever
+ * else it holds. Returns an error message rather than throwing, so the caller
+ * only has to surface it.
+ *
+ * The path comes from activeProjectConfigPaths, the one place that decides
+ * whether a workspace's config may be touched at all — rebuilding the path here
+ * would let a write and the read that undoes it disagree about trust.
+ */
+function writeProjectPermissions(workingDir: string, rules: unknown): string | null {
+  try {
+    const configPath = activeProjectConfigPaths(workingDir)[0];
+    if (!configPath) return `${workingDir} is not trusted — its config is not read or written`;
+    const fs = require("node:fs") as typeof import("node:fs");
+    const existing = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf-8"))
+      : {};
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ ...existing, permissions: rules }, null, 2) + "\n",
+    );
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
 
 function formatToolInput(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {

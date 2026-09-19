@@ -191,6 +191,7 @@ function formatResults(
 
 export const ToolSearchTool = buildTool({
   name: TOOL_SEARCH_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: ToolSearchInputSchema,
 

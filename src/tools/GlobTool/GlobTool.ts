@@ -1,16 +1,11 @@
-
-
-
-
-
-import { spawn } from "child_process";
-import { relative, resolve } from "path";
+import { readdir, realpath, stat } from "fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "path";
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { GLOB_TOOL_NAME, DESCRIPTION } from "./prompt.js";
-
-
+import { checkReadAccess } from "../../services/readPermissions.js";
+import { globMatcher } from "./glob.js";
 
 const GlobInputSchema = z.object({
   pattern: z.string().describe(
@@ -21,14 +16,56 @@ const GlobInputSchema = z.object({
   ),
 });
 
+/** The reference caps at 100; a match set beyond that says "narrow your search". */
+const MAX_RESULTS = 100;
 
+/** Directories never worth walking into, matching the old find exclusions. */
+const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
-const MAX_RESULTS = 200;
+/** A wedged filesystem must not stall the agent step. */
+const TIMEOUT_MS = 30_000;
 
+interface Match {
+  path: string;
+  mtimeMs: number;
+}
 
+/**
+ * When a supplied directory is missing, the usual cause is a path that is right
+ * except for where it starts — an absolute path handed to a session running
+ * somewhere else. Look for the same relative path under cwd and offer it.
+ */
+async function suggestUnderCwd(requested: string): Promise<string | undefined> {
+  const cwd = process.cwd();
+  const parent = dirname(cwd);
+  // Resolve symlinks in the parent (/tmp is /private/tmp on macOS) so the
+  // prefix test compares against the realpath-resolved cwd.
+  let resolved = requested;
+  try {
+    resolved = join(await realpath(dirname(requested)), basename(requested));
+  } catch {
+    // Parent doesn't exist either; compare the path as given.
+  }
+  const parentPrefix = parent === sep ? sep : parent + sep;
+  if (
+    !resolved.startsWith(parentPrefix) ||
+    resolved.startsWith(cwd + sep) ||
+    resolved === cwd
+  ) {
+    return undefined;
+  }
+  const corrected = join(cwd, relative(parent, resolved));
+  try {
+    await stat(corrected);
+    return corrected;
+  } catch {
+    return undefined;
+  }
+}
 
 export const GlobTool = buildTool({
   name: GLOB_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: GlobInputSchema,
 
@@ -40,90 +77,83 @@ export const GlobTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  checkPermissions: async (_input, context) => {
-    if (!context.permissions.allowRead) {
-      return { approved: false, feedback: "Read permission denied for this agent." };
-    }
-    return { approved: true };
-  },
+  // Searching outside the working directory is the user's call, not the
+  // session's: see services/readPermissions.
+  checkPermissions: (input, context) => checkReadAccess(GLOB_TOOL_NAME, input, context),
 
   call: async (input, context) => {
     const { pattern } = input;
     const dir = resolvePath(context.workingDir, input.path);
     const cwd = resolve(context.workingDir);
+    const signal = context.abortController?.signal;
+
+    const deadline = Date.now() + TIMEOUT_MS;
+    const matches: Match[] = [];
 
     try {
-      return new Promise<{ data: string }>((resolvePromise) => {
-        const child = spawn(
-          "find",
-          [
-            dir,
-            "-name",
-            pattern,
-            "-not",
-            "-path",
-            "*/node_modules/*",
-            "-not",
-            "-path",
-            "*/.git/*",
-            "-type",
-            "f",
-          ],
-          { stdio: ["ignore", "pipe", "pipe"] },
-        );
-
-        let out = "";
-        let lines = 0;
-        let settled = false;
-        const settle = (data: string) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolvePromise({ data });
+      const stats = await stat(dir).catch(() => null);
+      if (!stats) {
+        const suggestion = await suggestUnderCwd(dir);
+        return {
+          data:
+            `Directory does not exist: ${input.path ?? dir}. ` +
+            `Note: your current working directory is ${cwd}.` +
+            (suggestion ? ` Did you mean ${suggestion}?` : ""),
         };
+      }
+      if (!stats.isDirectory()) {
+        return { data: `Path is not a directory: ${input.path ?? dir}` };
+      }
 
-        child.stdout.on("data", (d: Buffer) => {
-          const chunk = d.toString();
-          out += chunk;
-          lines += chunk.split("\n").length - 1;
-          // Early stop: we only keep MAX_RESULTS — don't let find traverse
-          // the whole tree (and buffer unbounded output) for a huge match set.
-          if (lines >= MAX_RESULTS) {
-            child.kill("SIGTERM");
-            settle(out.trim().split("\n").filter(Boolean).slice(0, MAX_RESULTS).map((p) => relative(cwd, p)).join("\n") || "No files matched the pattern.");
+      const isMatch = globMatcher(pattern);
+      const pending: string[] = [dir];
+
+      while (pending.length > 0) {
+        if (signal?.aborted) return { data: "Aborted/Cancelled by user" };
+        if (Date.now() > deadline) return { data: "Error: glob timed out" };
+
+        const current = pending.pop()!;
+        let entries;
+        try {
+          entries = await readdir(current, { withFileTypes: true });
+        } catch {
+          // Unreadable directory (permissions, raced deletion): skip it, the
+          // way find would print to stderr and carry on.
+          continue;
+        }
+
+        for (const entry of entries) {
+          const full = join(current, entry.name);
+          // isDirectory()/isFile() are false for symlinks, so links are not
+          // followed — same as find without -L, and it rules out link cycles.
+          if (entry.isDirectory()) {
+            if (!SKIP_DIRS.has(entry.name)) pending.push(full);
+            continue;
           }
-        });
+          if (!entry.isFile()) continue;
 
-        const timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          settle("Error: glob timed out");
-        }, 30_000);
+          const rel = relative(cwd, full);
+          if (!isMatch(rel)) continue;
+          const fileStats = await stat(full).catch(() => null);
+          matches.push({ path: rel, mtimeMs: fileStats?.mtimeMs ?? 0 });
+        }
+      }
 
-        const abortHandler = () => settle("Aborted/Cancelled by user");
-        context.abortController?.signal.addEventListener("abort", abortHandler);
+      if (matches.length === 0) {
+        return { data: "No files matched the pattern." };
+      }
 
-        child.on("close", () => {
-          context.abortController?.signal.removeEventListener("abort", abortHandler);
-          if (settled) return;
-          const results = out
-            .trim()
-            .split("\n")
-            .filter(Boolean)
-            .map((p) => relative(cwd, p))
-            .slice(0, MAX_RESULTS);
+      // Oldest first, as `rg --sort=modified` orders the reference's results.
+      matches.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      const truncated = matches.length > MAX_RESULTS;
+      const files = matches.slice(0, MAX_RESULTS).map((m) => m.path);
 
-          if (results.length === 0) {
-            settle("No files matched the pattern.");
-          } else {
-            settle(results.join("\n"));
-          }
-        });
-
-        child.on("error", () => {
-          context.abortController?.signal.removeEventListener("abort", abortHandler);
-          settle("Error: find command not available");
-        });
-      });
+      let data = files.join("\n");
+      if (truncated) {
+        data +=
+          "\n(Results are truncated. Consider using a more specific path or pattern.)";
+      }
+      return { data };
     } catch (error) {
       return { data: `Error: ${(error as Error).message}` };
     }

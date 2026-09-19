@@ -21,6 +21,7 @@ const TaskStopInputSchema = z.object({
 
 export const TaskStopTool = buildTool({
   name: TASK_STOP_TOOL_NAME,
+  requiredPermission: "allowExecute",
   description: DESCRIPTION,
   inputSchema: TaskStopInputSchema,
 
@@ -34,13 +35,6 @@ export const TaskStopTool = buildTool({
 
   
   
-  checkPermissions: async (_input, context) => {
-    if (!context.permissions.allowExecute) {
-      return { approved: false, feedback: "Execute permission denied for this agent." };
-    }
-    return { approved: true };
-  },
-
   call: async (input) => {
     const result = killTask(input.task_id);
     return { data: result.message };

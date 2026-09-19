@@ -39,11 +39,21 @@ import {
 import { getPatchForDisplay, type FileEditSpec } from "../utils/diff.js";
 import MultilineTextInput from "./MultilineTextInput.js";
 import { isMouseSequence } from "./useMouseWheelScroll.js";
-import { loadSettings } from "../state/storage.js";
+import {
+  bashOptionRows,
+  buildOptionRow,
+  DONT_ASK_AGAIN_JOINER,
+  DONT_ASK_AGAIN_LABEL,
+  LABEL_VALUE_SEPARATOR,
+  SESSION_EDIT_SHORTCUT,
+  sessionEditLabelParts,
+  type PermissionSegment,
+} from "./permissionLayout.js";
 import {
   clampLines,
   escapeRuleContent,
   isPathInFolder,
+  loadEffectivePermissions,
   matchDecision,
   parsePermissionSettings,
   pathInWorkingPath,
@@ -52,11 +62,6 @@ import {
   stripBashRedirections,
   suggestBashPrefix,
 } from "../services/permissions.js";
-
-/** Cap on diff rows rendered inside permission dialogs — keeps the dialog
- *  from overflowing the terminal. StructuredDiffList truncates to this, and
- *  FileWriteToolDiff's plain-content branch caps at the same value. */
-const MAX_DIFF_ROWS = 12;
 
 interface PermissionPromptProps {
   toolName: string;
@@ -347,6 +352,19 @@ function usePermissionFeedback(options: PermissionOption[], initialFocus?: strin
 /* PermissionSelect                                                    */
 /* ------------------------------------------------------------------ */
 
+/** Render the layout segments of one option row. */
+function OptionSegments({ segments }: { segments: PermissionSegment[] }) {
+  return (
+    <>
+      {segments.map((segment, i) => (
+        <Text key={i} dimColor={segment.dim} color={segment.color}>
+          {segment.text}
+        </Text>
+      ))}
+    </>
+  );
+}
+
 function PermissionSelect({
   options,
   initialFocus,
@@ -469,20 +487,38 @@ function PermissionSelect({
     }
   });
 
-  const maxIndexWidth = options.length.toString().length;
+  const optionCount = options.length;
+  const focusedColor = resolveColor(theme.suggestion);
 
   return (
     <Box flexDirection="column">
       {options.map((option, index) => {
+        const isFocused = option.value === focusedValue;
+        // Reference parity: an input row carries the same marker gutter as a
+        // plain row, so its number stays in the same column as its siblings
+        // and the focused row keeps the ❯.
+        const row = buildOptionRow({
+          index,
+          optionCount,
+          focused: isFocused,
+          focusedColor,
+          label:
+            option.type === "input" && option.showLabel && typeof option.label === "string"
+              ? option.label
+              : undefined,
+          // The separator rides with the label while the row is focused (its
+          // own `suggestion`-coloured segment, as upstream renders it) and with
+          // the value when it is not — so an empty value shows no dangling
+          // ": ".
+          labelSeparator: isFocused ? LABEL_VALUE_SEPARATOR : "",
+        });
+
         if (option.type === "input") {
-          const isFocused = option.value === focusedValue;
+          const showsLabel = option.showLabel === true;
           return (
             <Box key={option.value} flexDirection="column" flexShrink={0}>
               <Box flexDirection="row" flexShrink={0}>
-                <Text dimColor>{`${index + 1}.`.padEnd(maxIndexWidth + 2)}</Text>
-                {option.showLabel && typeof option.label === "string" ? (
-                  <Text dimColor={false}>{`${option.label}: `}</Text>
-                ) : null}
+                <OptionSegments segments={[...row.prefix, ...row.label]} />
                 {isFocused ? (
                   <MultilineTextInput
                     value={option.inputValue}
@@ -496,17 +532,27 @@ function PermissionSelect({
                     }}
                     focus={isFocused}
                     placeholder={option.placeholder}
+                    // Reference parity: on the focused row the label, the
+                    // separator and the editable value all take `suggestion`.
+                    color={focusedColor}
                   />
                 ) : (
                   <Text color={option.inputValue ? undefined : resolveColor(theme.inactive)}>
-                    {option.inputValue ||
-                      option.placeholder ||
-                      (typeof option.label === "string" ? option.label : "")}
+                    {/* A row that carries its label inline shows its value
+                        (nothing when empty); a bare feedback row shows the
+                        prompt it would take. */}
+                    {showsLabel
+                      ? option.inputValue
+                        ? `${LABEL_VALUE_SEPARATOR}${option.inputValue}`
+                        : ""
+                      : option.inputValue ||
+                        option.placeholder ||
+                        (typeof option.label === "string" ? option.label : "")}
                   </Text>
                 )}
               </Box>
               {option.description && (
-                <Box paddingLeft={maxIndexWidth + 3}>
+                <Box paddingLeft={row.descriptionIndent}>
                   <Text dimColor={option.dimDescription !== false}>{option.description}</Text>
                 </Box>
               )}
@@ -514,27 +560,21 @@ function PermissionSelect({
           );
         }
 
-        const isFocused = option.value === focusedValue;
         return (
           <Box key={option.value} flexDirection="column" flexShrink={0}>
             <Box flexDirection="row">
-              {isFocused ? (
-                <Text color={resolveColor(theme.suggestion)}>❯ </Text>
-              ) : (
-                <Text>  </Text>
-              )}
-              {/* Reference parity: EVERY option is numbered (dimmed, aligned
-                  with the input-row numbers) so the 1..N shortcut keys are
-                  visible. Previously only input-type rows rendered their
+              {/* Reference parity: EVERY option is numbered (dimmed) behind the
+                  shared marker gutter so the 1..N shortcut keys are visible in
+                  one column. Previously only input-type rows rendered their
                   index, which made the editable "don't ask again for" row
                   show a lone "2." while the rest had none. */}
-              <Text dimColor>{`${index + 1}.`.padEnd(maxIndexWidth + 2)}</Text>
-              <Text dimColor={false} color={isFocused ? resolveColor(theme.suggestion) : undefined}>
+              <OptionSegments segments={row.prefix} />
+              <Text dimColor={false} color={isFocused ? focusedColor : undefined}>
                 {option.label}
               </Text>
             </Box>
             {option.description && (
-              <Box paddingLeft={maxIndexWidth + 3}>
+              <Box paddingLeft={row.descriptionIndent}>
                 <Text dimColor={option.dimDescription !== false}>{option.description}</Text>
               </Box>
             )}
@@ -596,11 +636,13 @@ function getFilePermissionOptions({
         "Yes, during this session"
       ) : (
         <Text>
-          Yes, allow all edits in <Text bold>./</Text> during this session
+          {sessionEditLabelParts(null).prefix}
+          <Text bold>({SESSION_EDIT_SHORTCUT})</Text>
         </Text>
       );
   } else {
     const dirName = basename(dirname(filePath)) || "this directory";
+    const parts = sessionEditLabelParts(dirName);
     sessionLabel =
       operationType === "read" ? (
         <Text>
@@ -608,7 +650,10 @@ function getFilePermissionOptions({
         </Text>
       ) : (
         <Text>
-          Yes, allow all edits in <Text bold>{dirName}/</Text> during this session
+          {parts.prefix}
+          <Text bold>{parts.scope}</Text>
+          {parts.suffix}
+          <Text bold>({SESSION_EDIT_SHORTCUT})</Text>
         </Text>
       );
   }
@@ -635,7 +680,7 @@ function useRuleExplanation(
   return useMemo(() => {
     if (explanation) return explanation;
     try {
-      const perms = loadSettings().permissions;
+      const perms = loadEffectivePermissions(workingDir);
       if (!perms) return undefined;
       const decision = matchDecision(
         parsePermissionSettings(perms),
@@ -994,12 +1039,9 @@ function FileEditToolDiff({
 
   return (
     <DiffFrame>
-      <StructuredDiffList
-        hunks={data.patch}
-        dim={false}
-        width={columns}
-        maxRows={MAX_DIFF_ROWS}
-      />
+      {/* The whole patch, as the reference renders it (FileEditToolDiff hands
+          StructuredDiffList every hunk) — the user is approving these lines. */}
+      <StructuredDiffList hunks={data.patch} dim={false} width={columns} />
     </DiffFrame>
   );
 }
@@ -1040,17 +1082,12 @@ function FileWriteToolDiff({
         paddingX={1}
       >
         {hunks ? (
-          <StructuredDiffList
-            hunks={hunks}
-            dim={false}
-            width={columns - 2}
-            maxRows={MAX_DIFF_ROWS}
-          />
+          // Every hunk, as the reference renders it (FileWriteToolDiff).
+          <StructuredDiffList hunks={hunks} dim={false} width={columns - 2} />
         ) : content ? (
-          <Box flexDirection="column">
-            <Text>{content.split("\n").slice(0, MAX_DIFF_ROWS).join("\n")}</Text>
-            {content.split("\n").length > MAX_DIFF_ROWS && <Text dimColor>…</Text>}
-          </Box>
+          // A new file: the reference shows the whole body (HighlightedCode on
+          // the full content) — this dialog is the last look before it lands.
+          <Text>{content}</Text>
         ) : (
           <Text dimColor>(No content)</Text>
         )}
@@ -1179,26 +1216,24 @@ function ShellPermissionRequest({
     return stripped || "";
   }, [command]);
 
-  const options: PermissionOption[] = [
-    { label: "Yes", value: "yes", feedbackType: "accept" },
-    {
-      label: "Yes, and don't ask again for",
-      value: "yes-prefix",
-      feedbackType: "input",
-      placeholder: "command prefix (e.g., npm run:*)",
-      initialInputValue: suggestedPrefix,
-      showLabel: true,
-    },
-    { label: "Yes, allow all commands during this session", value: "yes-all" },
-    { label: "No", value: "no", feedbackType: "reject" },
-  ];
+  // Three rows, exactly: Yes / the editable rule / No. There is no session-wide
+  // "allow all commands" row here — the reference has none, and the row made
+  // this list a different shape from every other dialog's. The session-wide
+  // grant is still one keypress away: Shift+Tab cycles the permission modes
+  // (`permissionModeCycle`), and bypassPermissions auto-approves every call.
+  const options: PermissionOption[] = bashOptionRows().map((row) => ({
+    label: row.label,
+    value: row.value,
+    feedbackType: row.editable ? "input" : row.feedbackType,
+    placeholder: row.placeholder,
+    initialInputValue: row.editable ? suggestedPrefix : undefined,
+    showLabel: row.editable,
+  }));
   const feedback = usePermissionFeedback(options, options[0]?.value);
 
   const handleSelect = (value: string) => {
     if (value === "yes") {
       onApprove(undefined, feedback.getFeedbackFor("yes"));
-    } else if (value === "yes-all") {
-      onApprove("__allow_all__");
     } else if (value === "yes-prefix") {
       const prefix = feedback.getInputValue("yes-prefix").trim();
       if (prefix) {
@@ -1215,8 +1250,16 @@ function ShellPermissionRequest({
   return (
     <>
       <PermissionDialog title={title} explanation={explanation}>
+        {/* The preview is the tool-use message — the whole command, offline
+            highlighted, no `$`, no truncation — and the tool-call description
+            sits under it. When the two are the same string (as they are for
+            Bash here, where the description IS the command) the line is drawn
+            once rather than twice. */}
         <Box flexDirection="column" paddingX={2} paddingY={1}>
-          <Text dimColor>{description}</Text>
+          <Text dimColor>{command}</Text>
+          {description !== "" && description !== command && (
+            <Text dimColor>{description}</Text>
+          )}
         </Box>
         <Box flexDirection="column">
           <Text>Do you want to proceed?</Text>
@@ -1272,7 +1315,9 @@ function FallbackPermissionRequest({
     {
       label: (
         <Text>
-          Yes, and don't ask again for <Text bold>{toolName}</Text> in{" "}
+          {DONT_ASK_AGAIN_LABEL}
+          <Text bold>{toolName}</Text>
+          {DONT_ASK_AGAIN_JOINER}
           <Text bold>{workingDir}</Text>
         </Text>
       ),
@@ -1683,7 +1728,10 @@ function PlanModePermissionRequest({
   return (
     <>
       <PermissionDialog title={entering ? "Enter plan mode?" : "Exit plan mode?"}>
-        <Box flexDirection="column" paddingX={2} paddingY={1}>
+        {/* One box for the prose and the options: this dialog has no preview to
+            outdent, so the list shares the explanation's indent instead of
+            hanging a column to its left (upstream's shape). */}
+        <Box flexDirection="column" marginTop={1} paddingX={1}>
           <Text>
             {entering
               ? "The agent wants to enter plan mode to explore and design an implementation approach."
@@ -1698,16 +1746,16 @@ function PlanModePermissionRequest({
               <Text dimColor> · Present a plan for your approval</Text>
             </Box>
           )}
-        </Box>
-        <Box flexDirection="column">
-          <PermissionSelect
-            options={feedback.selectOptions}
-            initialFocus={feedback.selectOptions[0]?.value}
-            onSelect={handleSelect}
-            onCancel={() => onDeny()}
-            onFocusChange={feedback.handleFocusChange}
-            onInputModeToggle={feedback.handleInputModeToggle}
-          />
+          <Box marginTop={1}>
+            <PermissionSelect
+              options={feedback.selectOptions}
+              initialFocus={feedback.selectOptions[0]?.value}
+              onSelect={handleSelect}
+              onCancel={() => onDeny()}
+              onFocusChange={feedback.handleFocusChange}
+              onInputModeToggle={feedback.handleInputModeToggle}
+            />
+          </Box>
         </Box>
       </PermissionDialog>
       <Box paddingX={1} marginTop={1}>

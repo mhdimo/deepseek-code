@@ -61,12 +61,24 @@ export function getPatchFromContents({
   newContent,
   ignoreWhitespace = false,
   singleHunk = false,
+  timeoutMs = DIFF_TIMEOUT_MS,
+  onTimeout,
 }: {
   filePath: string;
   oldContent: string;
   newContent: string;
   ignoreWhitespace?: boolean;
   singleHunk?: boolean;
+  /** Budget for the diff; the library abandons the work at this mark. */
+  timeoutMs?: number;
+  /**
+   * Called when the library gave up rather than producing a patch. Returning
+   * `[]` is right for a caller that only draws the diff — there is nothing to
+   * draw — but a caller that *tells the model about the change* has to be able
+   * to say the diff was abandoned, which is a different thing from "no
+   * differences". Without this the two collapse into one empty array.
+   */
+  onTimeout?: () => void;
 }): StructuredPatchHunk[] {
   const result = structuredPatch(
     filePath,
@@ -78,10 +90,11 @@ export function getPatchFromContents({
     {
       ignoreWhitespace,
       context: singleHunk ? 100_000 : CONTEXT_LINES,
-      timeout: DIFF_TIMEOUT_MS,
+      timeout: timeoutMs,
     },
   );
   if (!result) {
+    onTimeout?.();
     return [];
   }
   return result.hunks.map((_) => ({

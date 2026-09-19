@@ -134,6 +134,7 @@ function isInsideManagedWorktree(cwd: string, repoRoot: string): boolean {
 
 export const EnterWorktreeTool = buildTool({
   name: ENTER_WORKTREE_TOOL_NAME,
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema: EnterWorktreeInputSchema,
 

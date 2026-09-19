@@ -96,6 +96,44 @@ export interface LspServerConfig {
   startupTimeout?: number;
 }
 
+/**
+ * One diagnostic, in the 1-based coordinates the rest of the app speaks.
+ *
+ * The wire is 0-based; the conversion happens once, on the way in, so nothing
+ * downstream has to remember which convention it is holding.
+ */
+export interface LspDiagnostic {
+  /** LSP wire values: 1 error, 2 warning, 3 information, 4 hint. */
+  severity: number;
+  message: string;
+  line: number;
+  character: number;
+  code?: string | number;
+  source?: string;
+}
+
+/** What one server last said about one file, and when it said it. */
+export interface LspFileDiagnostics {
+  server: string;
+  /** Epoch ms of the last publish for this file — the baseline clock. */
+  publishedAt: number;
+  diagnostics: LspDiagnostic[];
+}
+
+/**
+ * Bounds on the diagnostics store. A language server is free to report on
+ * every file in the workspace, and some do exactly that on startup; without a
+ * ceiling that is an unbounded Map of strings held for the life of the
+ * process, on behalf of a feature the user may never look at.
+ */
+const MAX_DIAGNOSTICS_PER_FILE = 200;
+const MAX_DIAGNOSED_FILES_PER_SERVER = 500;
+const MAX_DIAGNOSTIC_MESSAGE_CHARS = 2_000;
+
+/** The default budget for a publish to arrive after an edit. */
+export const DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 400;
+const DIAGNOSTICS_POLL_INTERVAL_MS = 25;
+
 
 const DEFAULT_LANGUAGE_EXTENSIONS: Record<string, string[]> = {
   typescript: [".ts", ".tsx", ".mts", ".cts"],
@@ -597,8 +635,15 @@ export function createLSPClient(
           }
           try {
             writeMessage({ jsonrpc: "2.0", method: "exit" });
+            // The handshake the protocol asks for ends with the server exiting
+            // on its own, and this is where that was undone: the kill below
+            // ran in the same turn, so SIGTERM arrived before the `exit`
+            // notification was read. Every clean shutdown therefore came back
+            // as a signal code, and the exit handler above reported it as a
+            // crash — on the way out of a process we had just asked to stop.
+            await withTimeout(proc.exited, 250, "LSP server exit timed out").catch(() => {});
           } catch {
-            
+
           }
         }
       } catch (error) {
@@ -662,6 +707,8 @@ export interface LSPServerInstance {
     method: string,
     handler: (params: unknown) => unknown | Promise<unknown>,
   ): void;
+
+  onNotification(method: string, handler: (params: unknown) => void): void;
 }
 
 
@@ -947,6 +994,7 @@ export function createLSPServerInstance(
     sendRequest,
     sendNotification,
     onRequest: client.onRequest,
+    onNotification: client.onNotification,
   };
 }
 
@@ -973,19 +1021,149 @@ export type LSPServerManager = {
   saveFile(filePath: string): Promise<void>;
   
   closeFile(filePath: string): Promise<void>;
-  
+
   isFileOpen(filePath: string): boolean;
+
+  /** What every server that has reported has to say about this file, now. */
+  getDiagnostics(filePath: string): LspFileDiagnostics[];
+
+  /** The same, once a server has published something fresher than `afterMs`. */
+  waitForDiagnostics(
+    filePath: string,
+    options?: { afterMs?: number; timeoutMs?: number },
+  ): Promise<LspFileDiagnostics[]>;
 };
 
 
 export function createLSPServerManager(): LSPServerManager {
   const servers: Map<string, LSPServerInstance> = new Map();
   const extensionMap: Map<string, string[]> = new Map();
-  
-  const openedFiles: Map<string, string> = new Map();
+
+  /**
+   * The documents a server currently has open, and the version we last sent.
+   *
+   * The version is not bookkeeping. LSP requires it to increase with every
+   * change to a document, and a second state carrying a number the server has
+   * already seen is a protocol error: servers answer it by ignoring the update
+   * or by closing the document, and either one leaves the server answering
+   * every later query from text the user has already replaced. It used to be
+   * the literal `1` on every didChange.
+   */
+  const openDocuments: Map<string, { server: string; version: number }> = new Map();
+
+  /**
+   * What each server last published, keyed by server then document URI.
+   *
+   * The instance has advertised `publishDiagnostics` in its initialize
+   * capabilities since the port and never registered a handler for one, so a
+   * server reporting a broken build was talking to nobody: the only way to
+   * learn what a language server thought was to ask it a question it does not
+   * answer. This is that missing half.
+   *
+   * Insertion order doubles as recency — every write re-inserts the key, so
+   * the first entry is the least recently published and the one evicted.
+   */
+  const diagnosticsByServer: Map<
+    string,
+    Map<string, { publishedAt: number; diagnostics: LspDiagnostic[] }>
+  > = new Map();
 
   function fileUriFor(filePath: string): string {
     return pathToFileURL(resolve(filePath)).href;
+  }
+
+  function toDiagnostic(raw: unknown): LspDiagnostic | null {
+    if (!raw || typeof raw !== "object") return null;
+    const entry = raw as {
+      range?: { start?: { line?: number; character?: number } };
+      severity?: number;
+      message?: unknown;
+      code?: string | number;
+      source?: string;
+    };
+    if (typeof entry.message !== "string") return null;
+
+    const start = entry.range?.start;
+    const diagnostic: LspDiagnostic = {
+      severity: typeof entry.severity === "number" ? entry.severity : 1,
+      message: entry.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_CHARS),
+      line: (start?.line ?? 0) + 1,
+      character: (start?.character ?? 0) + 1,
+    };
+    if (entry.code !== undefined) diagnostic.code = entry.code;
+    if (entry.source !== undefined) diagnostic.source = entry.source;
+    return diagnostic;
+  }
+
+  function recordDiagnostics(serverName: string, params: unknown): void {
+    const payload = params as { uri?: unknown; diagnostics?: unknown } | undefined;
+    const uri = payload?.uri;
+    if (typeof uri !== "string") return;
+
+    const raw = Array.isArray(payload?.diagnostics) ? payload.diagnostics : [];
+    const diagnostics = raw
+      .map(toDiagnostic)
+      .filter((d): d is LspDiagnostic => d !== null)
+      .slice(0, MAX_DIAGNOSTICS_PER_FILE);
+
+    let byFile = diagnosticsByServer.get(serverName);
+    if (!byFile) {
+      byFile = new Map();
+      diagnosticsByServer.set(serverName, byFile);
+    }
+
+    // Re-insert rather than update in place, so this file becomes the most
+    // recently published and the eviction below takes the oldest instead.
+    byFile.delete(uri);
+    // An empty list is how a server retracts: the file is clean now. The
+    // entry stays, because `publishedAt` is the clock an edit-time baseline
+    // compares against — deleting it would make a clean file look like one
+    // the server never answered for.
+    byFile.set(uri, { publishedAt: Date.now(), diagnostics });
+
+    while (byFile.size > MAX_DIAGNOSED_FILES_PER_SERVER) {
+      const oldest = byFile.keys().next();
+      if (oldest.done) break;
+      byFile.delete(oldest.value);
+    }
+  }
+
+  function getDiagnostics(filePath: string): LspFileDiagnostics[] {
+    const fileUri = fileUriFor(filePath);
+    const found: LspFileDiagnostics[] = [];
+    for (const [serverName, byFile] of diagnosticsByServer) {
+      const entry = byFile.get(fileUri);
+      if (!entry) continue;
+      found.push({
+        server: serverName,
+        publishedAt: entry.publishedAt,
+        diagnostics: entry.diagnostics,
+      });
+    }
+    return found;
+  }
+
+  /**
+   * Wait for a publish newer than `afterMs`, or give up after `timeoutMs`.
+   *
+   * Polling, not an event: the caller is a tool that has already done its
+   * work and only needs to know whether a fresh report has landed yet. The
+   * loop returns on the first fresh publish, so a server that answers in 30ms
+   * costs 30ms — the timeout is the ceiling, not the cost.
+   */
+  async function waitForDiagnostics(
+    filePath: string,
+    options?: { afterMs?: number; timeoutMs?: number },
+  ): Promise<LspFileDiagnostics[]> {
+    const afterMs = options?.afterMs ?? 0;
+    const deadline = Date.now() + (options?.timeoutMs ?? DEFAULT_DIAGNOSTICS_TIMEOUT_MS);
+
+    for (;;) {
+      const fresh = getDiagnostics(filePath).filter((entry) => entry.publishedAt > afterMs);
+      if (fresh.length > 0) return fresh;
+      if (Date.now() >= deadline) return [];
+      await sleep(DIAGNOSTICS_POLL_INTERVAL_MS);
+    }
   }
 
   
@@ -1019,9 +1197,16 @@ export function createLSPServerManager(): LSPServerManager {
         
         instance.onRequest("workspace/configuration", (params: unknown) => {
           debugLog(`LSP: Received workspace/configuration request from ${serverName}`);
-          
+
           const items = (params as { items?: Array<{ section?: string }> })?.items;
           return Array.isArray(items) ? items.map(() => null) : [];
+        });
+
+        // Handler registration lives on the client, which is created once per
+        // instance and survives restarts — so this subscription outlives a
+        // crash-and-restart of the server without being re-registered.
+        instance.onNotification("textDocument/publishDiagnostics", (params: unknown) => {
+          recordDiagnostics(serverName, params);
         });
       } catch (error) {
         logError(
@@ -1044,7 +1229,8 @@ export function createLSPServerManager(): LSPServerManager {
 
     servers.clear();
     extensionMap.clear();
-    openedFiles.clear();
+    openDocuments.clear();
+    diagnosticsByServer.clear();
 
     const errors = results
       .map((r, i) =>
@@ -1121,19 +1307,48 @@ export function createLSPServerManager(): LSPServerManager {
     return servers;
   }
 
+  /**
+   * Tell an already-running server that a document's text is now `content`.
+   *
+   * `version` is the caller's to supply because only the caller knows whether
+   * this is the document's second state or its tenth — the counter lives in
+   * `openDocuments`, and this function is the one place that advances it.
+   */
+  async function sendChange(
+    server: LSPServerInstance,
+    fileUri: string,
+    version: number,
+    content: string,
+    filePath: string,
+  ): Promise<void> {
+    await server.sendNotification("textDocument/didChange", {
+      textDocument: { uri: fileUri, version },
+      contentChanges: [{ text: content }],
+    });
+    openDocuments.set(fileUri, { server: server.name, version });
+    debugLog(`LSP: Sent didChange for ${filePath} (version ${version})`);
+  }
+
   async function openFile(filePath: string, content: string): Promise<void> {
     const server = await ensureServerStarted(filePath);
     if (!server) return;
 
     const fileUri = fileUriFor(filePath);
+    const alreadyOpen = openDocuments.get(fileUri);
 
-    
-    if (openedFiles.get(fileUri) === server.name) {
-      debugLog(`LSP: File already open, skipping didOpen for ${filePath}`);
+    // Already open means the caller is telling us what the file holds *now*,
+    // which is a change and not an open. Re-sending didOpen would be a
+    // protocol error, and doing nothing — what this used to do — leaves the
+    // server answering every later query from the text it was first given.
+    if (alreadyOpen?.server === server.name) {
+      try {
+        await sendChange(server, fileUri, alreadyOpen.version + 1, content, filePath);
+      } catch (error) {
+        throw new Error(`Failed to sync file change ${filePath}: ${errorMessage(error)}`);
+      }
       return;
     }
 
-    
     const languageId = server.config.languageId || "plaintext";
 
     try {
@@ -1145,37 +1360,39 @@ export function createLSPServerManager(): LSPServerManager {
           text: content,
         },
       });
-      
-      openedFiles.set(fileUri, server.name);
+      openDocuments.set(fileUri, { server: server.name, version: 1 });
       debugLog(`LSP: Sent didOpen for ${filePath} (languageId: ${languageId})`);
     } catch (error) {
       throw new Error(`Failed to sync file open ${filePath}: ${errorMessage(error)}`);
     }
   }
 
+  /**
+   * Sync an edit onto the server — and only onto a server that is already up.
+   *
+   * Deliberately not `openFile`: that one starts a server when none is
+   * running, which is right for a query the user asked for and wrong here.
+   * Every file an Edit or a Write touches would otherwise be able to spawn a
+   * language server, so a session that never mentioned LSP would pay for one
+   * process per language written, and the user would have no idea why.
+   *
+   * A file the running server has never seen is opened rather than changed:
+   * that costs nothing (the process exists) and is the only way the server can
+   * report on a file it does not yet hold.
+   */
   async function changeFile(filePath: string, content: string): Promise<void> {
     const server = getServerForFile(filePath);
-    if (!server || server.state !== "running") {
-      return openFile(filePath, content);
-    }
+    if (!server || server.state !== "running") return;
 
     const fileUri = fileUriFor(filePath);
-
-    
-    
-    if (openedFiles.get(fileUri) !== server.name) {
-      return openFile(filePath, content);
-    }
+    const alreadyOpen = openDocuments.get(fileUri);
 
     try {
-      await server.sendNotification("textDocument/didChange", {
-        textDocument: {
-          uri: fileUri,
-          version: 1,
-        },
-        contentChanges: [{ text: content }],
-      });
-      debugLog(`LSP: Sent didChange for ${filePath}`);
+      if (alreadyOpen?.server === server.name) {
+        await sendChange(server, fileUri, alreadyOpen.version + 1, content, filePath);
+        return;
+      }
+      await openFile(filePath, content);
     } catch (error) {
       throw new Error(`Failed to sync file change ${filePath}: ${errorMessage(error)}`);
     }
@@ -1211,8 +1428,8 @@ export function createLSPServerManager(): LSPServerManager {
           uri: fileUri,
         },
       });
-      
-      openedFiles.delete(fileUri);
+
+      openDocuments.delete(fileUri);
       debugLog(`LSP: Sent didClose for ${filePath}`);
     } catch (error) {
       throw new Error(`Failed to sync file close ${filePath}: ${errorMessage(error)}`);
@@ -1221,7 +1438,7 @@ export function createLSPServerManager(): LSPServerManager {
 
   function isFileOpen(filePath: string): boolean {
     const fileUri = fileUriFor(filePath);
-    return openedFiles.has(fileUri);
+    return openDocuments.has(fileUri);
   }
 
   return {
@@ -1236,6 +1453,8 @@ export function createLSPServerManager(): LSPServerManager {
     saveFile,
     closeFile,
     isFileOpen,
+    getDiagnostics,
+    waitForDiagnostics,
   };
 }
 

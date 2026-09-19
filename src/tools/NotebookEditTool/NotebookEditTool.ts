@@ -70,6 +70,7 @@ function buildCell(cellType: CellType, source: string): NotebookCell {
 
 export const NotebookEditTool = buildTool({
   name: "NotebookEdit",
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema,
 

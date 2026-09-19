@@ -3,15 +3,65 @@
 
 
 import { resolve, relative, dirname } from "path";
+import { homedir } from "os";
 import { mkdir } from "fs/promises";
 import { diffLines } from "diff";
 
 
+/**
+ * Input keys whose values name a real filesystem path.
+ *
+ * Shared by the permission matcher (`extractSubjects`) and the pre-execution
+ * normalizer, so the two cannot drift apart — a key the matcher reads as a path
+ * but the normalizer leaves raw is exactly the RB-2 evasion.
+ */
+export const PATH_INPUT_KEYS = [
+  "file_path",
+  "filePath",
+  "path",
+  "notebook_path",
+] as const;
 
+
+/**
+ * Resolve a model-supplied path to the real file it names.
+ *
+ * `resolve` collapses `.` and `..` and normalizes absolute paths too; on top of
+ * that we expand a leading `~`. Nothing expanded `~` before, so `~/notes.md`
+ * resolved to `<cwd>/~/notes.md` and read back as a missing file.
+ */
 export function resolvePath(workingDir: string, p: string | undefined | null): string {
   const cwd = resolve(workingDir);
   if (!p || typeof p !== "string") return cwd;
-  return p.startsWith("/") ? p : resolve(cwd, p);
+  if (p === "~") return resolve(homedir());
+  if (p.startsWith("~/")) return resolve(homedir(), p.slice(2));
+  return resolve(cwd, p);
+}
+
+
+/**
+ * The input a hook should observe: every path-valued field resolved to the file
+ * it actually names, so a hook that allowlists an absolute path cannot be
+ * handed a relative or `~` form of that same file.
+ *
+ * Only path fields are rewritten — Glob/Grep patterns are not paths and must
+ * stay as written. Returns the original object when there is nothing to
+ * rewrite. Callers must keep passing the *original* input to `tool.call()`:
+ * the model wrote one path and should see that one echoed back.
+ */
+export function normalizePathInputs(
+  workingDir: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  let clone: Record<string, unknown> | null = null;
+  for (const key of PATH_INPUT_KEYS) {
+    const value = input[key];
+    if (typeof value === "string" && value.length > 0) {
+      if (!clone) clone = { ...input };
+      clone[key] = resolvePath(workingDir, value);
+    }
+  }
+  return clone ?? input;
 }
 
 export function getCwd(workingDir: string): string {

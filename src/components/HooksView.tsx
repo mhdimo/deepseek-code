@@ -1,10 +1,12 @@
-
 import React, { useMemo, useState } from "react";
+import { join } from "path";
+import { homedir } from "os";
 import { Box, Text, useInput } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { Select } from "../ui/design-system/Select.js";
 import InputDialog from "./InputDialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
+import { dataDir } from "../utils/dataDir.js";
 import {
   HOOK_EVENTS,
   countHooks,
@@ -45,6 +47,7 @@ interface HookRow {
 }
 
 type Mode =
+  | "events"
   | "list"
   | "add-event"
   | "add-matcher"
@@ -52,20 +55,26 @@ type Mode =
   | "detail";
 
 /**
- * Interactive /hooks manager (Claude Code HooksConfigMenu equivalent): hooks
- * grouped by lifecycle event with add, delete, enable/disable, and an inspect
- * view for full command/matcher/type details. Changes save to settings.json
- * and take effect immediately.
+ * Interactive /hooks manager (Claude Code HooksConfigMenu equivalent): the
+ * first screen lists the lifecycle events — each with its hook count and a dim
+ * description, as the reference's SelectEventMode does — and selecting one
+ * drills into its hooks with add, delete, enable/disable, and an inspect view
+ * for full command/matcher/type details. Changes save to settings.json and
+ * take effect immediately.
  */
 export default function HooksView({ onClose }: HooksViewProps): React.ReactElement {
   const [config, setConfig] = useState<HooksConfig>(() => loadHooks());
+  const [mode, setMode] = useState<Mode>("events");
+  const [eventIndex, setEventIndex] = useState(0);
+  const [activeEvent, setActiveEvent] = useState<HookEvent>(HOOK_EVENTS[0]!);
   const [focusIndex, setFocusIndex] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
-  const [mode, setMode] = useState<Mode>("list");
   const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [addEvent, setAddEvent] = useState<HookEvent>("PreToolUse");
   const [addMatcher, setAddMatcher] = useState("*");
   const [note, setNote] = useState<string | null>(null);
+  /** Screen the add flow returns to when it is cancelled. */
+  const [returnMode, setReturnMode] = useState<Mode>("list");
 
   const counts = useMemo(() => countHooks(config), [config]);
 
@@ -89,6 +98,16 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
     return out;
   }, [config]);
 
+  /** Rows belonging to the event the user drilled into, with their row indices. */
+  const visibleRows = useMemo(
+    () =>
+      rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ row }) => row.event === activeEvent),
+    [rows, activeEvent],
+  );
+  const focusedVisibleIndex = Math.min(focusIndex, Math.max(0, visibleRows.length - 1));
+
   const commit = (next: HooksConfig) => {
     setConfig(next);
     saveSettings({ hooks: next });
@@ -110,7 +129,7 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
     const next = { ...config, [row.event]: groups };
     commit(next);
     setPendingDelete(null);
-    setFocusIndex((prev) => Math.min(prev, Math.max(0, rows.length - 2)));
+    setFocusIndex((prev) => Math.min(prev, Math.max(0, visibleRows.length - 2)));
     setNote(`Removed ${row.event} hook: ${getHookDisplayText(row.hook)}`);
   };
 
@@ -142,10 +161,47 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
     }
     commit({ ...config, [addEvent]: groups });
     setNote(`Added ${addEvent} hook: ${command}`);
+    setActiveEvent(addEvent);
     setMode("list");
   };
 
+  const openAddFlow = (event: HookEvent) => {
+    setAddEvent(event);
+    setMode(NO_MATCHER_EVENTS.includes(event) ? "add-command" : "add-matcher");
+  };
+
   useInput((input, key) => {
+    // First screen: the event menu (reference SelectEventMode).
+    if (mode === "events") {
+      if (key.escape) {
+        onClose();
+        return;
+      }
+      if (key.upArrow) {
+        setEventIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setEventIndex((prev) => Math.min(HOOK_EVENTS.length - 1, prev + 1));
+        return;
+      }
+      if (key.return) {
+        const event = HOOK_EVENTS[eventIndex];
+        if (event) {
+          setActiveEvent(event);
+          setFocusIndex(0);
+          setPendingDelete(null);
+          setMode("list");
+        }
+        return;
+      }
+      if (input === "a") {
+        setReturnMode("events");
+        setMode("add-event");
+      }
+      return;
+    }
+
     if (mode !== "list") return; // Select/InputDialog/Dialog own the keys elsewhere.
 
     if (key.escape) {
@@ -153,7 +209,8 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
         setPendingDelete(null);
         return;
       }
-      onClose();
+      setPendingDelete(null);
+      setMode("events");
       return;
     }
     if (key.upArrow) {
@@ -162,15 +219,20 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
       return;
     }
     if (key.downArrow) {
-      setFocusIndex((prev) => Math.min(Math.max(0, rows.length - 1), prev + 1));
+      setFocusIndex((prev) => Math.min(Math.max(0, visibleRows.length - 1), prev + 1));
       setPendingDelete(null);
       return;
     }
-    if (rows.length === 0) {
-      if (input === "a") setMode("add-event");
+    if (visibleRows.length === 0) {
+      if (input === "a") {
+        setReturnMode("list");
+        openAddFlow(activeEvent);
+      }
       return;
     }
-    const index = Math.min(focusIndex, rows.length - 1);
+    const entry = visibleRows[focusedVisibleIndex];
+    if (!entry) return;
+    const index = entry.index;
 
     if (pendingDelete === index && (input === "d" || input === "y")) {
       deleteRow(index);
@@ -190,14 +252,15 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
       return;
     }
     if (input === "a") {
-      setMode("add-event");
+      setReturnMode("list");
+      openAddFlow(activeEvent);
       return;
     }
     if (pendingDelete !== null) setPendingDelete(null);
   });
 
-  const focusedRow = rows.length > 0 ? rows[Math.min(focusIndex, rows.length - 1)] : null;
   const detailRow = detailIndex !== null ? rows[detailIndex] : null;
+  const eventMenuIndex = Math.min(eventIndex, HOOK_EVENTS.length - 1);
 
   return (
     <>
@@ -205,7 +268,7 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
         <Dialog
           title="Add hook"
           subtitle="Which lifecycle event should fire the hook?"
-          onCancel={() => setMode("list")}
+          onCancel={() => setMode(returnMode)}
           footer="↑↓ to choose · enter to continue · esc to cancel"
         >
           <Select
@@ -216,15 +279,9 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
             }))}
             defaultValue={addEvent}
             onChange={(value) => {
-              setAddEvent(value);
-              // Runtime never evaluates matchers for these events — skip the step.
-              if (NO_MATCHER_EVENTS.includes(value)) {
-                setMode("add-command");
-              } else {
-                setMode("add-matcher");
-              }
+              openAddFlow(value);
             }}
-            onCancel={() => setMode("list")}
+            onCancel={() => setMode(returnMode)}
           />
         </Dialog>
       )}
@@ -244,7 +301,7 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
             setAddMatcher(value.trim() || "*");
             setMode("add-command");
           }}
-          onCancel={() => setMode("list")}
+          onCancel={() => setMode(returnMode)}
         />
       )}
 
@@ -254,7 +311,7 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
           subtitle="Shell command to run. Payload arrives on stdin as JSON; PreToolUse can block with exit code 2"
           placeholder="./scripts/notify.sh"
           onSubmit={(value) => addHook(value)}
-          onCancel={() => setMode("list")}
+          onCancel={() => setMode(returnMode)}
         />
       )}
 
@@ -262,22 +319,24 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
         <Dialog
           title="Hook details"
           onCancel={() => setMode("list")}
-          footer="esc to close"
+          footer="Esc to go back"
         >
           <Box flexDirection="column" gap={1}>
             <Box flexDirection="column">
               <Text>
                 Event: <Text bold>{detailRow.event}</Text>
               </Text>
-              <Text>
-                Matcher: <Text bold>{detailRow.matcher}</Text>
-                {!eventSupportsMatcher(detailRow.event) && (
-                  <Text dimColor>{" (ignored at runtime)"}</Text>
-                )}
-              </Text>
+              {eventSupportsMatcher(detailRow.event) && (
+                <Text>
+                  Matcher: <Text bold>{detailRow.matcher || "(all)"}</Text>
+                </Text>
+              )}
               <Text>
                 Type: <Text bold>{getHookTypeLabel(detailRow.hook)}</Text>
                 {!detailRow.enabled && <Text dimColor>{" (disabled)"}</Text>}
+              </Text>
+              <Text>
+                Source: <Text dimColor>{hookSourceLabel()}</Text>
               </Text>
             </Box>
             <Box flexDirection="column">
@@ -286,62 +345,86 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
                 <Text wrap="wrap">{getHookDisplayText(detailRow.hook)}</Text>
               </Box>
             </Box>
-            <Text dimColor>To modify, edit ~/.deepseek-code/settings.json directly.</Text>
+            <Text dimColor>
+              To modify or remove this hook, edit settings.json directly or ask DeepSeek Code
+              to help.
+            </Text>
+          </Box>
+        </Dialog>
+      )}
+
+      {mode === "events" && (
+        <Dialog
+          title="Hooks"
+          subtitle={`${counts.total} ${counts.total === 1 ? "hook" : "hooks"} configured`}
+          onCancel={onClose}
+        >
+          <Box flexDirection="column">
+            {HOOK_EVENTS.map((event, i) => {
+              const count = counts.perEvent[event] ?? 0;
+              const focused = i === eventMenuIndex;
+              return (
+                <Box key={event} flexDirection="column">
+                  <Box>
+                    <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>
+                      {focused ? "❯ " : "  "}
+                    </Text>
+                    <Text bold={focused}>
+                      {event}
+                      {count > 0 && (
+                        <Text color={resolveColor(theme.suggestion)}> ({count})</Text>
+                      )}
+                    </Text>
+                  </Box>
+                  <Box marginLeft={2}>
+                    <Text dimColor>{EVENT_DESCRIPTIONS[event]}</Text>
+                  </Box>
+                </Box>
+              );
+            })}
           </Box>
         </Dialog>
       )}
 
       {mode === "list" && (
         <Dialog
-          title="Lifecycle hooks"
-          subtitle={`${counts.total} ${counts.total === 1 ? "hook" : "hooks"} configured · fires shell commands on app events · saved to settings.json`}
-          onCancel={onClose}
+          title={activeEvent}
+          subtitle={EVENT_DESCRIPTIONS[activeEvent]}
+          onCancel={() => setMode("events")}
+          cancelActive={false}
           footer={
             <Text>
-              <Text bold>↑↓</Text> focus · <Text bold>a</Text> add · <Text bold>e</Text> enable/disable · <Text bold>d</Text> delete · <Text bold>v</Text> inspect · <Text bold>esc</Text> close
+              <Text bold>↑↓</Text> focus · <Text bold>a</Text> add · <Text bold>e</Text> enable/disable · <Text bold>d</Text> delete · <Text bold>v</Text> inspect · <Text bold>esc</Text> back
             </Text>
           }
         >
-          {rows.length === 0 ? (
+          {visibleRows.length === 0 ? (
             <Text dimColor>
-              No hooks configured. Press <Text bold>a</Text> to add one, or edit
+              No hooks configured for this event. Press <Text bold>a</Text> to add one, or edit
               ~/.deepseek-code/settings.json directly.
             </Text>
           ) : (
             <Box flexDirection="column">
-              {HOOK_EVENTS.map((event) => {
-                const eventRows = rows
-                  .map((row, index) => ({ row, index }))
-                  .filter(({ row }) => row.event === event);
-                if (eventRows.length === 0) return null;
+              {visibleRows.map(({ row, index }) => {
+                const focused = index === visibleRows[focusedVisibleIndex]?.index;
                 return (
-                  <Box flexDirection="column" key={event}>
-                    <Text bold color={resolveColor(theme.suggestion)}>
-                      {event} ({counts.perEvent[event] ?? 0})
+                  <Box key={`${row.groupIdx}-${row.hookIdx}`}>
+                    <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>
+                      {focused ? "❯ " : "  "}
                     </Text>
-                    {eventRows.map(({ row, index }) => {
-                      const focused = index === Math.min(focusIndex, rows.length - 1);
-                      return (
-                        <Box key={`${row.groupIdx}-${row.hookIdx}`}>
-                          <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>
-                            {focused ? "❯ " : "  "}
-                          </Text>
-                          <Text dimColor>{`[${row.matcher}] `}</Text>
-                          <Text dimColor>{`[${getHookTypeLabel(row.hook)}] `}</Text>
-                          <Text
-                            color={row.enabled ? (focused ? resolveColor(theme.claude) : undefined) : resolveColor(theme.inactive)}
-                            dimColor={!row.enabled}
-                            wrap="truncate-end"
-                          >
-                            {getHookDisplayText(row.hook)}
-                          </Text>
-                          {!row.enabled && <Text dimColor>{" (disabled)"}</Text>}
-                          {pendingDelete === index && (
-                            <Text color={resolveColor(theme.error)}>{"  ✂ delete? press d/y"}</Text>
-                          )}
-                        </Box>
-                      );
-                    })}
+                    <Text dimColor>{`[${row.matcher}] `}</Text>
+                    <Text dimColor>{`[${getHookTypeLabel(row.hook)}] `}</Text>
+                    <Text
+                      color={row.enabled ? (focused ? resolveColor(theme.claude) : undefined) : resolveColor(theme.inactive)}
+                      dimColor={!row.enabled}
+                      wrap="truncate-end"
+                    >
+                      {getHookDisplayText(row.hook)}
+                    </Text>
+                    {!row.enabled && <Text dimColor>{" (disabled)"}</Text>}
+                    {pendingDelete === index && (
+                      <Text color={resolveColor(theme.error)}>{"  ✂ delete? press d/y"}</Text>
+                    )}
                   </Box>
                 );
               })}
@@ -350,11 +433,6 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
           {note && (
             <Box marginTop={1}>
               <Text dimColor>{note}</Text>
-            </Box>
-          )}
-          {focusedRow && (
-            <Box marginTop={1}>
-              <Text dimColor>{EVENT_DESCRIPTIONS[focusedRow.event]}</Text>
             </Box>
           )}
           <Box marginTop={1}>
@@ -366,4 +444,13 @@ export default function HooksView({ onClose }: HooksViewProps): React.ReactEleme
       )}
     </>
   );
+}
+
+/** Which settings scope a hook came from — /hooks reads the user settings
+ *  file only (see loadHooks), so every row reports the same source. */
+function hookSourceLabel(): string {
+  const dir = dataDir();
+  const home = homedir();
+  const shown = home && dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir;
+  return `User settings (${join(shown, "settings.json")})`;
 }

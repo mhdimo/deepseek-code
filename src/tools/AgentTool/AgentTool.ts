@@ -1,7 +1,12 @@
 
 
 import { z } from "zod";
-import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
+import {
+  buildTool,
+  type PermissionDecision,
+  type ToolUseContext,
+  type ToolResult,
+} from "../../Tool.js";
 import { DESCRIPTION } from "./prompt.js";
 
 import { agentManager } from "../../services/agent/index.js";
@@ -32,6 +37,15 @@ function formatDuration(ms: number): string {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** "explore" is an alias for the read-only plan agent; everything else resolves
+ *  as a built-in or a discovered `.claude/agents` custom agent. Used by the
+ *  call, the read-only check and the capability check — all three have to agree
+ *  on which agent a name refers to. */
+function resolveSubagent(subagentType: string) {
+  const resolvedName = subagentType === "explore" ? "plan" : subagentType;
+  return agentManager.resolveConfig(resolvedName);
 }
 
 /** Shared event drain: builds the activity log, tracks tool-use/token counts,
@@ -99,6 +113,7 @@ async function drainAgent(
 
 export const AgentTool = buildTool({
   name: "Agent",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 
@@ -107,10 +122,7 @@ export const AgentTool = buildTool({
     context: ToolUseContext,
   ): Promise<ToolResult<string>> {
     const subagentType = args.subagent_type;
-    // "explore" is an alias for the read-only plan agent; everything else
-    // resolves as a built-in or a discovered .claude/agents custom agent.
-    const resolvedName = subagentType === "explore" ? "plan" : subagentType;
-    const resolvedConfig = agentManager.resolveConfig(resolvedName);
+    const resolvedConfig = resolveSubagent(subagentType);
     if (!resolvedConfig) {
       return {
         data: `✗ Unknown sub-agent type "${subagentType}". Available: ${agentManager.listAgentNames().join(", ")}`,
@@ -130,6 +142,11 @@ export const AgentTool = buildTool({
       context.workingDir,
       context.requestPermission,
       (toolName, input) => activityRef.current?.(toolName, input),
+      // Foreground runs belong to the turn: ESC must stop the sub-agent too,
+      // not just abandon the call while it keeps streaming and spending
+      // tokens. Background runs deliberately get nothing, so they outlive the
+      // interrupt and are stopped with TaskStop — Claude Code's split.
+      args.run_in_background ? undefined : context.abortController?.signal,
     );
 
     // Background mode: register a trackable task, return immediately, and
@@ -167,6 +184,18 @@ export const AgentTool = buildTool({
             acc.error
               ? { status: "error", endedAt: Date.now(), error: acc.error }
               : { status: "done", endedAt: Date.now(), exitCode: 0 },
+            // The turn that launched this subagent is the one that wants its
+            // answer. The notification carries the reply itself, so the model
+            // can act on a finished background agent without a second round
+            // trip just to find out what it said.
+            {
+              result: acc.reply || undefined,
+              usage: {
+                totalTokens: acc.tokens,
+                toolUses: acc.toolUses,
+                durationMs: acc.durationMs,
+              },
+            },
           );
         }
         context.onSystemMessage?.(
@@ -205,9 +234,14 @@ export const AgentTool = buildTool({
       context.onToolOutput?.("Agent", line);
       appendTaskOutput(task.id, line);
     }, activityRef);
+    // The turn was interrupted: the run above stops, but it stops *early*, so
+    // reporting "done" would leave a truncated sub-agent reading as a finished
+    // one in the task pill.
+    const interrupted = !killed && (context.abortController?.signal.aborted ?? false);
+
     updateTaskState(
       task.id,
-      killed
+      killed || interrupted
         ? { status: "error", endedAt: Date.now(), error: "Terminated by user." }
         : acc.error
           ? { status: "error", endedAt: Date.now(), error: acc.error }
@@ -215,8 +249,14 @@ export const AgentTool = buildTool({
     );
     appendTaskOutput(
       task.id,
-      `\n${killed ? "✗ Terminated by user." : acc.error ? `✗ ${acc.error}` : `Done (${acc.toolUses} tool uses · ${acc.tokens.toLocaleString()} tokens · ${formatDuration(acc.durationMs)})`}\n`,
+      `\n${killed || interrupted ? "✗ Terminated by user." : acc.error ? `✗ ${acc.error}` : `Done (${acc.toolUses} tool uses · ${acc.tokens.toLocaleString()} tokens · ${formatDuration(acc.durationMs)})`}\n`,
     );
+
+    // Usually moot — the wrapper abandons this call when the turn aborts — but
+    // if this result does reach the model it must not read as a finished run.
+    if (interrupted) {
+      return { data: `✗ Sub-agent (${subagentType}) interrupted with the turn.` };
+    }
 
     if (acc.error) {
       return { data: `✗ Sub-agent (${subagentType}) failed: ${acc.error}` };
@@ -239,9 +279,59 @@ export const AgentTool = buildTool({
 
   isEnabled: () => true,
 
+  /**
+   * A sub-agent may never hold a capability its parent does not.
+   *
+   * This tool had no permission check at all, so every spawn was auto-approved
+   * — and the plan/review agents, which are read-only precisely so a
+   * "look but don't touch" mode is trustworthy, could call
+   * `Agent(subagent_type: "code")` and get a full write+execute agent running
+   * with their requestPermission. Plan mode's whole guarantee leaked through
+   * one tool call. Capability, unlike the safety floor, is a floor on the
+   * *input*, which is why it lives here rather than in a `requiredPermission`
+   * on the tool.
+   */
+  checkCapability: (
+    input: z.infer<typeof inputSchema>,
+    context: ToolUseContext,
+  ): PermissionDecision | null => {
+    const config = resolveSubagent(input.subagent_type);
+    // Unknown name: call() reports it with the list of valid ones.
+    if (!config) return null;
+
+    // Plan mode is a property of the turn, not of the spawning agent: `code`
+    // in plan mode (Shift+Tab) is read-only too, and it must not reach write
+    // access by delegating. Read-only sub-agents stay available — that is what
+    // plan mode is for.
+    if (
+      context.getPlanMode() &&
+      (config.permissions.allowWrite || config.permissions.allowExecute)
+    ) {
+      return {
+        approved: false,
+        feedback:
+          `plan mode is read-only, and sub-agent "${config.name}" can write or ` +
+          `execute. Spawn a read-only sub-agent (explore, plan), or leave plan ` +
+          `mode (Shift+Tab) to delegate work that changes things.`,
+      };
+    }
+
+    const missing = (
+      ["allowRead", "allowWrite", "allowExecute", "allowNetwork"] as const
+    ).find((flag) => config.permissions[flag] && !context.permissions[flag]);
+    if (!missing) return null;
+    return {
+      approved: false,
+      feedback:
+        `sub-agent "${config.name}" needs the ${missing} capability and this agent ` +
+        `does not have it — a sub-agent cannot be given more access than the agent ` +
+        `that spawns it. Use a read-only sub-agent (explore, plan), or switch to an ` +
+        `agent with ${missing}.`,
+    };
+  },
+
   isReadOnly: (input: z.infer<typeof inputSchema>) => {
-    const resolvedName = input.subagent_type === "explore" ? "plan" : input.subagent_type;
-    const config = agentManager.resolveConfig(resolvedName);
+    const config = resolveSubagent(input.subagent_type);
     if (config) return !config.permissions.allowWrite && !config.permissions.allowExecute;
     return input.subagent_type === "plan";
   },

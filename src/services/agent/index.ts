@@ -8,11 +8,9 @@
 import { Agent } from "./base.ts";
 import type { AgentConfig, AgentName, ProviderConfig } from "../../types/index.js";
 import {
+  configFromDiscovered,
   getDiscoveredAgent,
   listDiscoveredAgents,
-  toolGrantsExecute,
-  toolGrantsWrite,
-  type DiscoveredAgentDef,
 } from "../agents/agentDiscovery.js";
 import { colorForAgent } from "../teams/teamService.js";
 
@@ -196,25 +194,5 @@ export class AgentManager {
 }
 
 export const agentManager = new AgentManager();
-
-/** Turn a discovered `.claude/agents` def into a runnable AgentConfig: the
- *  prompt body becomes the systemPrompt; frontmatter tools decide write and
- *  execute access (default read-only). */
-function configFromDiscovered(def: DiscoveredAgentDef): AgentConfig {
-  return {
-    name: def.name,
-    displayName: def.name,
-    description: def.description || "Custom agent",
-    systemPrompt: def.prompt || def.description || "Custom agent",
-    temperature: 0.3,
-    maxSteps: 25,
-    permissions: {
-      allowRead: true,
-      allowWrite: toolGrantsWrite(def.tools),
-      allowExecute: toolGrantsExecute(def.tools),
-      allowNetwork: false,
-    },
-  };
-}
 
 export { Agent } from "./base.ts";

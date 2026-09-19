@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { Select, type SelectOption } from "../ui/design-system/Select.js";
 import {
@@ -55,23 +55,29 @@ export default function OutputStylePicker({
 
   return (
     <Dialog
-      title="Select output style"
-      subtitle="Styles adjust how responses are framed and explained"
+      title="Preferred output style"
       onCancel={onCancel}
       footer="↑↓ to choose · enter to apply · esc to cancel"
     >
-      {isLoading ? (
-        <Text dimColor>Loading output styles…</Text>
-      ) : (
-        <Select
-          options={options}
-          defaultValue={current ?? DEFAULT_OUTPUT_STYLE_NAME}
-          onChange={onSelect}
-          onCancel={onCancel}
-          enableNumberKeys
-          visibleOptionCount={10}
-        />
-      )}
+      <Box flexDirection="column" gap={1}>
+        {/* Reference OutputStylePicker: the explanation is a dim body line
+            above the list, not a subtitle under the heading. */}
+        <Box marginTop={1}>
+          <Text dimColor>This changes how DeepSeek Code communicates with you</Text>
+        </Box>
+        {isLoading ? (
+          <Text dimColor>Loading output styles…</Text>
+        ) : (
+          <Select
+            options={options}
+            defaultValue={current ?? DEFAULT_OUTPUT_STYLE_NAME}
+            onChange={onSelect}
+            onCancel={onCancel}
+            enableNumberKeys
+            visibleOptionCount={10}
+          />
+        )}
+      </Box>
     </Dialog>
   );
 }

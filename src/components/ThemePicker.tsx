@@ -11,7 +11,7 @@ import type { StructuredPatchHunk } from "diff";
 import { theme, resolveColor, type ThemeSetting } from "../utils/theme.js";
 import { usePreviewTheme } from "../ui/design-system/ThemeProvider.js";
 import { Select } from "../ui/design-system/Select.js";
-import { StructuredDiff } from "./StructuredDiff.js";
+import { DASHED_BORDER, StructuredDiff } from "./StructuredDiff.js";
 
 
 const DEMO_PATCH: StructuredPatchHunk = {
@@ -67,9 +67,18 @@ export default function ThemePicker({
     onCancel();
   };
 
-  const diffWidth = Math.max(20, (process.stdout.columns || 80) - 3);
+  const columns = process.stdout.columns || 80;
+  // The demo preview fills the frame it sits in, and the frame fills the box
+  // it is given — which is the whole terminal when /theme opens the picker,
+  // and two columns narrower during onboarding, where Onboarding wraps this
+  // component in a marginX={1} box. A preview wider than its container is not
+  // merely clipped: ink wraps each row, and the wrap takes the row's +/- sigil
+  // with it, so the preview has to be the width it actually has. (Same
+  // subtraction the reference makes in FileWriteToolDiff, which passes
+  // columns - 2 inside a paddingX={1} frame.)
+  const demoWidth = showIntroText ? columns - 2 : columns;
 
-  return (
+  const content = (
     <Box flexDirection="column" gap={1}>
       {showIntroText ? (
         <Text>Let&apos;s get started.</Text>
@@ -88,13 +97,47 @@ export default function ThemePicker({
         onCancel={handleCancel}
         onFocus={(value) => setPreviewTheme(value as ThemeSetting)}
         defaultValue={initialTheme}
+        // All seven at once, as the reference does — the shared default (5)
+        // would window them to five and add "and 2 more…".
+        visibleOptionCount={THEME_OPTIONS.length}
       />
       {}
-      <Box flexDirection="column">
-        <Text color={resolveColor(theme.subtle)}>{"┄".repeat(diffWidth)}</Text>
-        <StructuredDiff patch={DEMO_PATCH} dim={false} width={diffWidth} />
-        <Text color={resolveColor(theme.subtle)}>{"┄".repeat(diffWidth)}</Text>
+      <Box flexDirection="column" width="100%">
+        <Box
+          flexDirection="column"
+          borderTop
+          borderBottom
+          borderLeft={false}
+          borderRight={false}
+          borderStyle={DASHED_BORDER}
+          borderColor={resolveColor(theme.subtle)}
+        >
+          <StructuredDiff patch={DEMO_PATCH} dim={false} width={demoWidth} />
+        </Box>
+        {}
+        <Text dimColor>
+          {" "}
+          Syntax highlighting is not available for diffs
+        </Text>
       </Box>
     </Box>
   );
+
+
+  if (!showIntroText) {
+    return (
+      <>
+        <Box flexDirection="column">{content}</Box>
+        <Box marginTop={1}>
+          <Box>
+            <Text dimColor italic>
+              Enter to select · Esc to cancel
+            </Text>
+          </Box>
+        </Box>
+      </>
+    );
+  }
+
+  return content;
 }

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Box, Text } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { Select, type SelectOption } from "../ui/design-system/Select.js";
 import { homedir } from "node:os";
@@ -23,6 +24,10 @@ export interface MemoryCandidate {
   label: string;
   description: string;
   kind: "user" | "project";
+  /** The built-in rows the reference names ("User memory" / "Project memory")
+   *  instead of labelling with a path. Only path-labelled rows take the
+   *  "(new)" marker. */
+  named?: boolean;
 }
 
 /** Candidate instruction files: user memory first, then project files. */
@@ -33,18 +38,14 @@ export function memoryCandidates(workingDirectory: string): MemoryCandidate[] {
       label: "User memory",
       description: "Saved in ~/.deepseek-code/CLAUDE.md",
       kind: "user",
+      named: true,
     },
     {
       path: resolve(workingDirectory, "CLAUDE.md"),
-      label: "CLAUDE.md (project)",
+      label: "Project memory",
       description: "Project memory — loaded into context for future sessions",
       kind: "project",
-    },
-    {
-      path: resolve(workingDirectory, "DEEP.md"),
-      label: "DEEP.md (project)",
-      description: "Loaded into context for future sessions",
-      kind: "project",
+      named: true,
     },
     {
       path: resolve(workingDirectory, "AGENTS.md"),
@@ -72,8 +73,9 @@ export function buildMemoryOptions(workingDirectory: string): SelectOption<strin
         : isProjectClaudeMd
           ? `${isGit ? "Checked in at" : "Saved in"} ./CLAUDE.md`
           : candidate.description;
+    const newMarker = candidate.named || exists ? "" : " (new)";
     return {
-      label: `${candidate.label}${exists ? "" : " (new)"}`,
+      label: `${candidate.label}${newMarker}`,
       value: candidate.path,
       description,
     };
@@ -94,22 +96,25 @@ export default function MemoryPicker({
   const initialValue =
     lastSelectedPath && options.some((o) => o.value === lastSelectedPath) ? lastSelectedPath : options[0]?.value;
 
+  // Reference /memory: titled "Memory" in the remember colour, with no
+  // subtitle, and guided by the dialog's own Enter/Esc row rather than a
+  // bespoke footer.
   return (
-    <Dialog
-      title="Memory files"
-      subtitle="Instructions files that steer the agent in this project"
-      onCancel={onClose}
-      footer="↑↓ to choose · enter to open in $EDITOR · esc to cancel"
-    >
+    <Dialog title="Memory" color="remember" onCancel={onClose}>
       <Select
         options={options}
         defaultValue={initialValue}
+        // No visibleOptionCount: the reference passes none on this screen, so
+        // Select's own default window (5) applies.
         onChange={(value) => {
           lastSelectedPath = value;
           onOpenInEditor(value);
         }}
         onCancel={onClose}
       />
+      <Box marginTop={1}>
+        <Text dimColor>Learn more: https://api-docs.deepseek.com</Text>
+      </Box>
     </Dialog>
   );
 }

@@ -9,6 +9,7 @@
 
 import type { z } from "zod";
 import type { AskUserQuestion, PermissionRuleset, ProviderConfig } from "./types/index.js";
+import type { ReadStateStore } from "./services/readState.js";
 
 
 
@@ -42,6 +43,16 @@ export interface ToolResult<T = unknown> {
   data: T;
 }
 
+/**
+ * The answer to "may this call run at all", which is a different question from
+ * "is the user willing" — and is asked first, so a call that cannot work never
+ * reaches the prompt. The message is written for the model, since the model is
+ * who reads it.
+ */
+export type ValidationResult =
+  | { result: true }
+  | { result: false; message: string };
+
 export interface ToolUseContext {
   
   providerConfig: ProviderConfig;
@@ -55,7 +66,15 @@ export interface ToolUseContext {
   requestPermission: PermissionCallback;
   
   messages: readonly import("./types/index.js").Message[];
-  
+
+  /**
+   * What the model has been shown on disk this session — the registry Edit and
+   * Write consult before touching a file, and the stale-file notice reads.
+   * Required rather than optional: a context without one would silently skip
+   * the read-before-edit guard, which is the failure mode this exists to stop.
+   */
+  readFileState: ReadStateStore;
+
   lastPermissionWaitMs: number;
   
   recordPermissionWait(ms: number): void;
@@ -78,6 +97,18 @@ export interface ToolUseContext {
   askUserQuestions?: AskUserQuestionsCallback;
   
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
+
+  /**
+   * A call the permission layer refused, with the reason the model was given.
+   *
+   * Only the refusals that happen *before* execution — the safety floor, the
+   * capability floor, a deny rule, plan mode, and the user answering no. A
+   * headless run has nobody watching and reports success by exit code, so
+   * without this a `--print` job that was quietly denied half its work is
+   * indistinguishable from one that did it. Interactive runs already show the
+   * refusal on screen; this is the channel for the ones that do not.
+   */
+  onPermissionDenied?: (toolName: string, reason: string) => void;
 
   onToolOutput?: (toolName: string, text: string) => void;
 
@@ -106,11 +137,57 @@ export interface Tool<
   call(args: z.infer<Input>, context: ToolUseContext): Promise<ToolResult<Output>>;
   
   isConcurrencySafe(input: z.infer<Input>): boolean;
-  
+
   isReadOnly(input: z.infer<Input>): boolean;
-  
+
   isEnabled(): boolean;
-  
+
+  /**
+   * The ruleset flag this tool cannot run without.
+   *
+   * Declared rather than derived from `isReadOnly`, which takes the input and
+   * answers per call — a Write with a given path, a Config read vs write. Pool
+   * membership has to be decidable without an input, and it has to agree with
+   * enforcement, so both read this one field: agents without the flag never
+   * see the tool, and no allow rule can hand it back (see tools.ts).
+   *
+   * The four flags are the agent's grants, not the user's rules: `code` has
+   * write and execute, `plan` and `review` have read only.
+   */
+  readonly requiredPermission: keyof PermissionRuleset;
+
+  /**
+   * A constraint that holds regardless of the rule engine — evaluated ahead of
+   * every allow/deny/ask, so no setting can lift it. Return a decision to
+   * settle the call here, or null to fall through to the rules and prompt.
+   *
+   * For limits that depend on the input (which sub-agent is being spawned),
+   * where the static `requiredPermission` flag cannot express them. Tools that
+   * deny here should say why: the message is what the model reads.
+   */
+  checkCapability?(
+    input: z.infer<Input>,
+    context: ToolUseContext,
+  ): PermissionDecision | null;
+
+  /**
+   * Whether this call is answerable at all, before permissions are consulted
+   * and before the user is asked. A tool that returns `result: false` here
+   * settles the call: the message is handed back to the model as the tool
+   * result, and nothing — no rule, no approval — runs it anyway.
+   *
+   * The read-before-edit guard is the reason this slot exists (see
+   * `services/readState.ts`): the check needs the input *and* the session's
+   * read state, which is exactly what `checkPermissions` also has, but a
+   * permission answer is a yes/no about the user and gets a prompt in front of
+   * it, and "you never read this file" is not something to ask a user to
+   * decide.
+   */
+  validateInput?(
+    input: z.infer<Input>,
+    context: ToolUseContext,
+  ): Promise<ValidationResult>;
+
   checkPermissions(
     input: z.infer<Input>,
     context: ToolUseContext,

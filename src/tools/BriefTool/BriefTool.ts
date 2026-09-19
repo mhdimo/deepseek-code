@@ -71,6 +71,7 @@ function renderBrief(input: BriefInput): string {
 
 export const BriefTool = buildTool({
   name: BRIEF_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: BriefInputSchema,
 

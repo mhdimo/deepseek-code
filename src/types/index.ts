@@ -47,10 +47,22 @@ export interface Message {
   timestamp?: number;
   toolUse?: ToolUseBlock[];
   isError?: boolean;
-  
+
   thinking?: string;
-  
+
   blocks?: MessageBlock[];
+  /**
+   * Set on the message that replaced a transcript at a /compact boundary.
+   * It replays into the native session as a user turn (the model must read it
+   * as context it was given), but it is not something the user typed, and the
+   * UI says so.
+   */
+  compaction?: {
+    /** How many messages were folded into this summary. */
+    summarized: number;
+    /** Where the pre-compaction transcript was written, if it was. */
+    archivedTo?: string;
+  };
 }
 
 
@@ -97,7 +109,13 @@ export type QueryEvent =
   | { type: "tool-call-end"; toolCallId: string; toolName: string }
   | { type: "tool-call-result"; toolCallId: string; toolName: string; result: string; duration: number }
   | { type: "step-finish"; stepTokens: { prompt: number; completion: number } }
+  /** Not yet emitted: the engine reports usage on `finish` and has no
+   *  separate usage event. Kept as the shape it would take. */
   | { type: "token-usage"; usage: TokenUsage; cost: CostEstimate }
+  /** Not yet emitted: the engine compacts inside the native session and
+   *  reports nothing when it does — no StreamEvent member exists for it yet,
+   *  so an eviction is currently visible only as prompt tokens shrinking.
+   *  Requirement filed against ai-sdk-cpp. */
   | { type: "compact"; reason: string; messagesBefore: number; messagesAfter: number }
   | { type: "finish"; usage: TokenUsage; cost: CostEstimate; finishReason: string }
   | { type: "error"; error: string };
@@ -140,6 +158,15 @@ export interface AgentConfig {
   maxTokens?: number;
   maxSteps?: number;
   permissions: PermissionRuleset;
+  /**
+   * The exact tool names this agent asked for — `.claude/agents/*.md`
+   * frontmatter `tools:`. Narrows the pool to those names (intersected with
+   * the grants above) so an agent that listed `Read, Grep` does not also get
+   * every other tool its grants would allow. Absent means "no name filter":
+   * built-in agents, and definitions that omitted `tools:`, get the whole
+   * pool their grants admit.
+   */
+  allowedTools?: readonly string[];
 }
 
 export interface PermissionRuleset {
@@ -184,6 +211,18 @@ export interface MCPServerConfig {
 
 
 
+/**
+ * Permission rules as they are stored: in `~/.deepseek-code/settings.json` for
+ * the user's own scope, and in a workspace's `.deepseek-code.json` for the
+ * project's. `/permissions` writes both — the second one only for a trusted
+ * workspace, which is also the only state in which it is read.
+ */
+export interface ConfigPermissionRules {
+  allow?: string[];
+  deny?: string[];
+  ask?: string[];
+}
+
 export interface DeepSeekCodeConfig {
   provider: ProviderType;
   model: string;
@@ -192,10 +231,12 @@ export interface DeepSeekCodeConfig {
   maxSteps?: number;
   defaultAgent?: AgentName;
   dangerouslySkipPermissions?: boolean;
-  
+
   profiles?: Record<string, ModelProfile>;
-  
+
   mcpServers?: Record<string, MCPServerConfig>;
+
+  permissions?: ConfigPermissionRules;
 }
 
 

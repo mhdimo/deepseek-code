@@ -59,7 +59,10 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "mpeg",
   "mpg",
   "m2ts",
-  "ts",
+  // Not "ts": that extension is TypeScript, and this list is how a file
+  // becomes invisible — FileReadTool refuses a gated file outright, and an
+  // unread file cannot be edited either. A transport stream has NUL bytes in
+  // its first packets, so `hasBinaryContent` still catches the real thing.
   "3gp",
   "vob",
   
@@ -129,7 +132,7 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "img",
   "vdi",
   "vmdk",
-  "vhd",
+  // Not "vhd": that one is VHDL, for the same reason as "ts" above.
   "qcow2",
   "vhdx",
   

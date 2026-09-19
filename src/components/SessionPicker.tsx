@@ -130,11 +130,12 @@ function PreviewTranscript({ session, columns }: { session: SessionData; columns
 }
 
 /**
- * Interactive /resume session picker (Claude Code SessionsScreen equivalent).
- * Self-contained: ↑↓/j/k navigation, type-to-filter (exact-substring before
- * fuzzy subsequence, Esc clears the query before closing), Enter opens a
- * transcript preview (Enter resumes, Esc returns without resuming), ctrl+a
- * toggles this-project ⇄ all-projects scope, ctrl+r renames inline.
+ * Interactive /resume session picker (Claude Code LogSelector + SessionPreview
+ * equivalent). Self-contained: ↑↓/j/k navigation, type-to-filter
+ * (exact-substring before fuzzy subsequence, Esc clears the query before
+ * closing), Enter resumes the focused session, ctrl+v opens its transcript
+ * preview (Enter there resumes, Esc returns to the list), ctrl+a toggles
+ * this-project ⇄ all-projects scope, ctrl+r renames inline.
  */
 export default function SessionPicker({
   sessions,
@@ -213,6 +214,11 @@ export default function SessionPicker({
       else if (key.escape) setPreviewSession(null);
       return;
     }
+    if (key.ctrl && input === "v") {
+      // Ctrl+V previews; Enter (Select's onChange) resumes, like the reference.
+      if (focusedSession) setPreviewSession(focusedSession);
+      return;
+    }
     if (key.ctrl && input === "a") {
       // This-project ⇄ all-projects scope.
       setScope((s) => (s === "local" ? "all" : "local"));
@@ -230,7 +236,8 @@ export default function SessionPicker({
         return;
       }
       if (key.return) {
-        if (focusedSession) setPreviewSession(focusedSession);
+        // Reference search-mode hint: "Enter to select" — Enter resumes.
+        if (focusedSession) onResume(focusedSession);
         return;
       }
       if (key.upArrow || (key.ctrl && input === "p")) {
@@ -267,7 +274,7 @@ export default function SessionPicker({
 
   if (sessions.length === 0) {
     return (
-      <Dialog title="Resume a session" subtitle="Sessions live in ~/.deepseek-code/sessions" onCancel={onClose}>
+      <Dialog title="Resume Session" subtitle="Sessions live in ~/.deepseek-code/sessions" onCancel={onClose}>
         <Text dimColor>No saved sessions found — start a conversation and it will appear here.</Text>
       </Dialog>
     );
@@ -301,34 +308,44 @@ export default function SessionPicker({
 
   return (
     <Dialog
-      title={previewSession ? deriveSessionTitle(previewSession) : "Resume a session"}
+      title={
+        previewSession
+          ? deriveSessionTitle(previewSession)
+          : `Resume Session${
+              displayed.length > MAX_VISIBLE
+                ? ` (${Math.max(1, displayed.findIndex((s) => s.hash === focusedSession?.hash) + 1)} of ${displayed.length})`
+                : ""
+            }`
+      }
       subtitle={
         previewSession
-          ? `${formatRelativeTimeAgo(previewSession.updatedAt || previewSession.createdAt)} · ${previewSession.messages.length} message${previewSession.messages.length === 1 ? "" : "s"}`
+          ? undefined
           : `${scope === "local" ? "This project" : "All projects"} — type to filter`
       }
       onCancel={onClose}
       cancelActive={false}
       footer={
         previewSession ? (
-          <>
-            <Text bold>enter</Text> to resume · <Text bold>esc</Text> back to list
-          </>
+          "Enter to resume · Esc to cancel"
         ) : query ? (
-          <>
-            type to filter · <Text bold>↑↓</Text> navigate · <Text bold>enter</Text> preview · <Text bold>esc</Text> clears
-          </>
+          "Type to Search · Enter to select · Esc to clear"
         ) : (
-          <>
-            <Text bold>↑↓</Text> navigate · <Text bold>enter</Text> preview · type to filter ·{" "}
-            <Text bold>ctrl+a</Text> {scope === "local" ? "all projects" : "this project"} ·{" "}
-            <Text bold>ctrl+r</Text> rename · <Text bold>esc</Text> dismiss
-          </>
+          `Ctrl+A to show ${scope === "local" ? "all projects" : "current dir"} · Ctrl+V to preview · Ctrl+R to rename · Type to search · Esc to cancel`
         )
       }
     >
       {previewSession ? (
-        <PreviewTranscript session={previewSession} columns={columns} />
+        <Box flexDirection="column">
+          <PreviewTranscript session={previewSession} columns={columns} />
+          {/* Reference SessionPreview: the age/count line sits under the transcript. */}
+          <Box marginTop={1}>
+            <Text>
+              {formatRelativeTimeAgo(previewSession.updatedAt || previewSession.createdAt)} ·{" "}
+              {previewSession.messages.length} messages
+              {previewSession.branch ? ` · ${previewSession.branch}` : ""}
+            </Text>
+          </Box>
+        </Box>
       ) : (
         <Select
           key={query ? `filter-${query}-${focusedHash ?? ""}` : `list-${scope}`}
@@ -337,8 +354,9 @@ export default function SessionPicker({
           onFocus={(value) => setFocusedHash(value)}
           onCancel={onClose}
           onChange={(value) => {
+            // Enter resumes the focused session; Ctrl+V previews (above).
             const session = sessionsInScope.find((s) => s.hash === value);
-            if (session) setPreviewSession(session);
+            if (session) onResume(session);
           }}
           keysActive={query === ""}
           highlightText={query || undefined}

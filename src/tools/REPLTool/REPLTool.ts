@@ -195,6 +195,7 @@ function executeCode(code: string, sessionState: REPLSession): unknown {
 
 export const REPLTool = buildTool({
   name: REPL_TOOL_NAME,
+  requiredPermission: "allowExecute",
   description: DESCRIPTION,
   inputSchema: REPLInputSchema,
 
@@ -212,18 +213,11 @@ export const REPLTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  checkPermissions: async (input, context) => {
-    if (!context.permissions.allowExecute) {
-      return {
-        approved: false,
-        feedback: "Execute permission denied for this agent.",
-      };
-    }
-    return context.requestPermission(
+  checkPermissions: async (input, context) =>
+    context.requestPermission(
       "REPL",
       `Execute JS/TS in persistent interpreter:\n${input.code}`,
-    );
-  },
+    ),
 
   call: async (input, _context) => {
     const { code, reset } = input;

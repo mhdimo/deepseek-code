@@ -1,11 +1,73 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import { Box, type DOMElement } from "ink";
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Box, Text, type DOMElement } from "ink";
 import type { Message, ToolUseBlock, MessageBlock } from "../types/index.js";
 import MessageView, { type BlockReport } from "./MessageView.js";
 import WelcomeScreen from "./WelcomeScreen.js";
 import { buildStreamingAssistantMessage } from "./streamingMessage.js";
 import type { ContentSelection } from "./useMouseSelection.js";
 import { rowText, sliceTextByCols } from "../services/selection/lineModel.js";
+import { resolveColor, getTheme } from "../utils/theme.js";
+import { useTheme } from "../ui/design-system/ThemeProvider.js";
+
+/** Figures.pointer — the prompt-glyph the sticky header and the user prompt
+ *  both lead with. */
+const PROMPT_POINTER = "❯";
+
+/** Label for the scrolled-up pill: `N new messages` / `Jump to bottom`
+ *  (FullscreenLayout.tsx:512). */
+export function newMessagesPillLabel(count: number): string {
+  if (count <= 0) return "Jump to bottom";
+  return `${count} new ${count === 1 ? "message" : "messages"}`;
+}
+
+/** A tool-use-only assistant entry carries no text, so it is not what a user
+ *  reads as "a new message" (FullscreenLayout.tsx:206). */
+export function assistantHasVisibleText(m: Message): boolean {
+  if (m.role !== "assistant") return false;
+  if ((m.content ?? "").trim() !== "") return true;
+  return (m.blocks ?? []).some((b) => b.type === "text" && (b.content ?? "").trim() !== "");
+}
+
+/** Counts assistant turns in messages[dividerIndex..end): one API response can
+ *  produce several entries (thinking + tool_use + text), but the user thinks of
+ *  it as one message. Ported from FullscreenLayout.tsx:198. */
+export function countUnseenAssistantTurns(messages: readonly Message[], dividerIndex: number): number {
+  let count = 0;
+  let prevWasAssistant = false;
+  for (let i = Math.max(0, dividerIndex); i < messages.length; i++) {
+    const m = messages[i]!;
+    if (m.role === "assistant" && !assistantHasVisibleText(m)) continue;
+    const isAssistant = m.role === "assistant";
+    if (isAssistant && !prevWasAssistant) count++;
+    prevWasAssistant = isAssistant;
+  }
+  return count;
+}
+
+/** What a message contributes to the sticky header, or null when it has no
+ *  prompt to show — a compaction summary was not typed by the user
+ *  (VirtualMessageList.tsx:133 skips meta entries the same way). */
+export function stickyPromptText(m: Message): string | null {
+  if (m.role !== "user" || m.compaction) return null;
+  const text = (m.content ?? "").trim();
+  return text === "" ? null : text;
+}
+
+/** The most recent prompt whose "❯" row has scrolled above the viewport top.
+ *  The prompt's own box starts at startRow and its "❯" sits one row below it
+ *  (the marginTop row), so a prompt whose pointer is still on screen would just
+ *  repeat a line the user can already see (VirtualMessageList.tsx:948). */
+export function stickyPromptFor(
+  entries: readonly { text: string; startRow: number }[],
+  scrollTop: number,
+): string | null {
+  if (scrollTop <= 0) return null;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.startRow + 1 < scrollTop) return entry.text;
+  }
+  return null;
+}
 
 export interface ViewportInfo {
   /** Screen rows above content row 0 (banner/padding chain). */
@@ -102,6 +164,25 @@ export default React.memo(
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(0);
     const [viewportWidth, setViewportWidth] = useState(0);
+    const [themeName] = useTheme();
+    const colorTheme = useMemo(() => getTheme(themeName), [themeName]);
+
+    /** Index into visibleMessages where the user last left the bottom. New
+     *  turns from there on feed the "N new messages" pill; null while pinned
+     *  to the bottom (FullscreenLayout.tsx's useUnseenDivider). The ref mirrors
+     *  the state for the once-created imperative handle, whose closures would
+     *  otherwise read a stale value. */
+    const [dividerIndex, setDividerIndex] = useState<number | null>(null);
+    const dividerIndexRef = useRef<number | null>(null);
+    const markScrollAway = useCallback((messageCount: number) => {
+      if (dividerIndexRef.current !== null) return;
+      dividerIndexRef.current = messageCount;
+      setDividerIndex(messageCount);
+    }, []);
+    const markRepinned = useCallback(() => {
+      dividerIndexRef.current = null;
+      setDividerIndex(null);
+    }, []);
 
     // Span registry: message key → BlockReport[] (reported by children in
     // their layout effects, which run before this component's effects).
@@ -225,6 +306,7 @@ export default React.memo(
     // (a message whose spans are still missing counts as 0 for one frame —
     // it is always the last message, so nothing follows it).
     const starts = new Map<string, number>();
+    let contentRows = 0;
     {
       let acc = 0;
       for (let i = 0; i < visibleMessages.length; i++) {
@@ -232,7 +314,35 @@ export default React.memo(
         starts.set(key, acc);
         acc += spanTotal(key);
       }
+      contentRows = acc;
     }
+
+    // /clear, rewind and a mid-scroll compaction all replace the transcript —
+    // a divider pointing past the new end would count turns that are gone.
+    useEffect(() => {
+      if (dividerIndex !== null && visibleMessages.length < dividerIndex) markRepinned();
+    }, [dividerIndex, visibleMessages.length, markRepinned]);
+
+    const maxScroll = Math.max(0, contentRows - viewportHeight);
+    /** Off the bottom: pinned to it the whole transcript is what you are
+     *  reading, so neither scrolled-up affordance belongs on screen. */
+    const scrolledUp = scrollTop < maxScroll;
+    const unseenCount = dividerIndex === null ? 0 : countUnseenAssistantTurns(visibleMessages, dividerIndex);
+    /** The pill lingers while the viewport is off the bottom, showing
+     *  "Jump to bottom" until something new actually arrives
+     *  (FullscreenLayout.tsx:466). */
+    const pillVisible = dividerIndex !== null && scrolledUp;
+    const promptEntries: { text: string; startRow: number }[] = [];
+    for (let i = 0; i < visibleMessages.length; i++) {
+      const text = stickyPromptText(visibleMessages[i]!);
+      if (text !== null) {
+        promptEntries.push({ text, startRow: starts.get(messageKey(visibleMessages[i]!, i)) ?? 0 });
+      }
+    }
+    // The tracker only pins a prompt once sticky scroll has broken
+    // (VirtualMessageList.tsx:948) — at the bottom the header would just sit
+    // above the transcript you are already following.
+    const stickyPrompt = scrolledUp ? stickyPromptFor(promptEntries, scrollTop) : null;
 
     useImperativeHandle(
       ref,
@@ -254,16 +364,34 @@ export default React.memo(
           const vw = viewportRef.current?.yogaNode?.getComputedWidth() ?? 0;
           return { vh, vw, max: Math.max(0, realContent - vh) };
         };
+        /** Snapshot the unseen-divider on the FIRST scroll away from the
+         *  bottom, clear it on any re-pin. Nothing below the viewport means
+         *  nothing to jump to, so a scroll action that stays at max is a
+         *  re-pin, not a scroll-away (a wheel-up on a fresh session used to
+         *  show the pill for an empty transcript). */
+        const trackSticky = () => {
+          const { max } = measure();
+          if (scrollTopRef.current >= max) {
+            stickyRef.current = true;
+            markRepinned();
+          } else {
+            stickyRef.current = false;
+            markScrollAway(liveRef.current.visibleMessages.length);
+          }
+        };
         const scrollBy = (dy: number) => {
           const { max } = measure();
           const next = Math.max(0, Math.min(scrollTopRef.current + dy, max));
           stickyRef.current = next >= max;
+          if (stickyRef.current) markRepinned();
+          else markScrollAway(liveRef.current.visibleMessages.length);
           applyScroll(next);
         };
         return {
           scrollBy,
           snapBackAfterCollapse() {
             stickyRef.current = true;
+            markRepinned();
             // Parent's yoga height is stable across the transcript toggle
             // (only the chat content box changes), so it is valid at call
             // time — even mid-render, before the collapse commits.
@@ -272,11 +400,12 @@ export default React.memo(
             applyScroll(max);
           },
           scrollToTop() {
-            stickyRef.current = false;
             applyScroll(0);
+            trackSticky();
           },
           scrollToBottom() {
             stickyRef.current = true;
+            markRepinned();
             const { max } = measure();
             applyScroll(max);
           },
@@ -395,29 +524,73 @@ export default React.memo(
           </Box>
         )}
 
-        <Box
-          ref={contentRef}
-          flexDirection="column"
-          flexGrow={1}
-          flexShrink={0}
-          minHeight={0}
-          marginTop={scrollTop > 0 ? -scrollTop : 0}
-        >
-          {visibleMessages.map((m, idx) => (
-            <MessageView
-              key={messageKey(m, idx)}
-              message={m}
-              selectedToolCallId={selectedToolCallId}
-              isTranscriptMode={isTranscriptMode}
-              isStreaming={streamingMessage === m}
-              contentWidth={viewportWidth > 0 ? viewportWidth : 80}
-              selection={selection}
-              messageStartRow={starts.get(messageKey(m, idx)) ?? 0}
-              blockKeyBase={messageKey(m, idx)}
-              onBlockReport={onBlockReport}
-            />
-          ))}
+        {/* Context breadcrumb: scrolled up into history, the prompt the current
+            turn is answering stays pinned to the top of the viewport, so you
+            know what is being answered without scrolling back
+            (FullscreenLayout.tsx:551-580). Normal flow, exactly like the
+            reference's header — the transcript gives up the row. */}
+        {stickyPrompt && (
+          <Box
+            flexShrink={0}
+            width="100%"
+            height={1}
+            paddingRight={1}
+            backgroundColor={resolveColor(colorTheme.userMessageBackground)}
+          >
+            <Text color={resolveColor(colorTheme.subtle)} wrap="truncate-end">
+              {PROMPT_POINTER} {stickyPrompt}
+            </Text>
+          </Box>
+        )}
+
+        {/* The transcript's own clip region, so the header above keeps its row:
+            the content is translated up by scrollTop, and without this box the
+            row scrolled just past the top would land on the header and paint
+            over it (Ink draws children in tree order). */}
+        <Box flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden">
+          <Box
+            ref={contentRef}
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={0}
+            minHeight={0}
+            marginTop={scrollTop > 0 ? -scrollTop : 0}
+          >
+            {visibleMessages.map((m, idx) => (
+              <MessageView
+                key={messageKey(m, idx)}
+                message={m}
+                selectedToolCallId={selectedToolCallId}
+                isTranscriptMode={isTranscriptMode}
+                isStreaming={streamingMessage === m}
+                contentWidth={viewportWidth > 0 ? viewportWidth : 80}
+                selection={selection}
+                messageStartRow={starts.get(messageKey(m, idx)) ?? 0}
+                blockKeyBase={messageKey(m, idx)}
+                onBlockReport={onBlockReport}
+              />
+            ))}
+          </Box>
         </Box>
+
+        {/* Arrival affordance: scrolled away from the bottom, a centered band
+            floats over the last row with how much arrived since — or just how
+            to get back when nothing has (FullscreenLayout.tsx:520-529).
+            Absolutely positioned, so it never costs the transcript a row. */}
+        {pillVisible && (
+          <Box
+            position="absolute"
+            width="100%"
+            marginTop={Math.max(0, viewportHeight - 1)}
+            justifyContent="center"
+          >
+            <Text backgroundColor={resolveColor(colorTheme.userMessageBackground)} dimColor>
+              {" "}
+              {newMessagesPillLabel(unseenCount)}
+              {" ↓ "}
+            </Text>
+          </Box>
+        )}
       </Box>
     );
   }),

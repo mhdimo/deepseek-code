@@ -33,6 +33,7 @@ const inputSchema = z.object({
 
 export const AskUserQuestionTool = buildTool({
   name: "AskUserQuestion",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

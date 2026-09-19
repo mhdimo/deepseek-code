@@ -55,6 +55,9 @@ export default function WorkflowsMenu({ onRun, onClose }: WorkflowsMenuProps): R
       ) : (
         <Select
           options={options}
+          // One row per saved workflow — a list the user grows, so it gets a
+          // taller window than the shared default.
+          visibleOptionCount={8}
           onChange={(name) => {
             const workflow = workflows.find((w) => w.name === name);
             if (workflow) onRun(workflow, "");

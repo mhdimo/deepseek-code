@@ -19,6 +19,7 @@ While the Bash tool can do similar things, it's better to use the built-in tools
  - Always quote file paths that contain spaces with double quotes in your command (e.g., cd "path with spaces/file.txt")
  - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd. You may use cd if the User explicitly requests it.
  - You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
+ - If a command produces more output than fits in the result, you get the beginning of it and the result names a file holding the rest. Read that file for the full output — the command itself still ran to completion.
  - You can use the run_in_background parameter to run the command in the background. Only use this if you don't need the result immediately and are OK being notified when the command completes later. You do not need to check the output right away - you'll be notified when it finishes. You do not need to use & at the end of the command when using this parameter.
  - Write a clear, concise description of what your command does. For simple commands, keep it brief (5-10 words).
  - When issuing multiple commands:

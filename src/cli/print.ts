@@ -25,6 +25,15 @@
 
 
 import { getOrCreateMemorySession } from "../services/agent/agentSession.js";
+import { protectedWriteReason } from "../services/protectedPaths.js";
+import { EMPTY_FINISH_REASON, emptyTurnMessage, isEmptyTurn } from "../services/recovery.js";
+import { LIMIT_FINISH_REASON, reachedStepLimit, stepLimitError } from "../services/stepLimit.js";
+import {
+  formatTaskNotifications,
+  pendingTaskNotificationCount,
+  takeTaskNotifications,
+} from "../services/tasks/notifications.js";
+import type { PermissionCallback } from "../Tool.js";
 import { agentManager } from "../services/agent/index.js";
 import type { StreamEvent } from "ai-sdk-cpp";
 import { homedir } from "node:os";
@@ -64,6 +73,11 @@ export interface PrintOptions {
   verbose?: boolean;
   
   streamText?: boolean;
+
+  /** `--dangerously-skip-permissions`: also let headless approval through for
+   *  protected paths (.git, ~/.zshrc, .claude/settings.json). Off by default,
+   *  so an unattended run cannot rewrite them just by not being watched. */
+  dangerouslySkipPermissions?: boolean;
 }
 
 
@@ -84,12 +98,52 @@ export interface PrintResult {
     totalTokens: number;
   };
   finishReason: string;
-  
+
   durationMs: number;
+
+  /**
+   * Every call the permission layer refused, in the order it refused them.
+   *
+   * Nothing here was approved: the entry means the tool did NOT run. A headless
+   * run reports success by exit code and stdout, so without this a job that was
+   * quietly denied its writes looks exactly like one that made them — the model
+   * is told (it gets the refusal as the tool result) and the operator is not.
+   */
+  permissionDenials: Array<{ tool: string; reason: string }>;
 }
 
 
 
+
+/**
+ * The permission callback for a run with nobody to ask.
+ *
+ * Everything is approved — that is what `--print` means — except a write the
+ * protected-path guard would have prompted for. A protected file must not
+ * change *because* no one was there to say no, so those are refused instead,
+ * with the reason handed back to the model as the tool result. The escape
+ * hatch is the explicit one (`--dangerously-skip-permissions`): the same grant
+ * of authority, and gated the same way in index.tsx (`assertBypassSafe`).
+ */
+export function createHeadlessApprover(workingDir: string, allowProtected = false): PermissionCallback {
+  return async (toolName, _description, input) => {
+    if (allowProtected) return { approved: true };
+    const reason = protectedWriteReason(
+      toolName,
+      input as Record<string, unknown> | undefined,
+      workingDir,
+    );
+    if (reason) {
+      return {
+        approved: false,
+        feedback:
+          `${reason}, and --print has no one to ask. ` +
+          `Make the change yourself, or pass --dangerously-skip-permissions if you mean it.`,
+      };
+    }
+    return { approved: true };
+  };
+}
 
 export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
   const {
@@ -106,6 +160,7 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
     mcpServers,
     verbose = false,
     streamText = outputFormat === "text",
+    dangerouslySkipPermissions: skipProtectedWrites = false,
   } = opts;
 
   
@@ -119,10 +174,18 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
     : providerConfig;
 
   
-  
-  const autoApprove = async () => ({ approved: true });
 
-  const { session } = getOrCreateMemorySession({
+  const autoApprove = createHeadlessApprover(workingDir, skipProtectedWrites);
+
+  const { session } = await getOrCreateMemorySession({
+    // Headless has nothing to repaint, so the value here is different: the
+    // connect is synchronous and has no timeout, so a server that never
+    // answers stops the process *before it prints anything at all*. One line
+    // on stderr is the difference between a CI job that is stuck and one that
+    // says what it is stuck on.
+    onMcpConnect: (name) => {
+      process.stderr.write(`[mcp] connecting to "${name}"…\n`);
+    },
     providerConfig: providerCfg,
     agentConfig,
     workingDir,
@@ -132,6 +195,13 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
     mcpServers,
     history,
     abortController: new AbortController(),
+    // Refusals the model was told about and the operator was not. Collected
+    // here and reported in the envelope below; stderr too, because a JSON
+    // consumer that only checks the exit code should still see it in a log.
+    onPermissionDenied: (toolName, reason) => {
+      permissionDenials.push({ tool: toolName, reason });
+      process.stderr.write(`\n[denied] ${toolName}: ${reason}\n`);
+    },
     onToolResult: (toolName, input, output, isError) => {
       if (verbose) {
         
@@ -147,6 +217,7 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
   const startedAt = Date.now();
   const textParts: string[] = [];
   const toolCalls: PrintResult["toolCalls"] = [];
+  const permissionDenials: PrintResult["permissionDenials"] = [];
   
   const inflight = new Map<string, { name: string; input: Record<string, unknown>; startedAt: number }>();
 
@@ -157,12 +228,30 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
   };
   let finishReason = "stop";
   let streamError: string | null = null;
+  let steps = 0;
+  // A turn that produced nothing is indistinguishable from a completed one on
+  // the wire, so count the model's own output — see services/recovery.ts.
+  let outputEvents = 0;
+
+  // A background task that finishes while the run is going is news the model
+  // has never seen — the tool descriptions promise it will be told, and the
+  // TUI tells it before the next prompt (App.tsx: takeTaskNotifications). With
+  // no drain here, `--print` discarded the queue at exit and a CI job whose
+  // background command failed reported success.
+  //
+  // Each drained round is another send, so it is bounded: a run cannot be
+  // extended indefinitely by tasks that keep finishing.
+  const MAX_NOTIFICATION_TURNS = 4;
+  let nextPrompt = prompt;
+  let notificationTurns = 0;
 
   try {
-    for await (const ev of session.sendStream(prompt) as AsyncGenerator<StreamEvent>) {
-      switch (ev.type) {
+    for (;;) {
+      for await (const ev of session.sendStream(nextPrompt) as AsyncGenerator<StreamEvent>) {
+        switch (ev.type) {
         case "text_delta": {
           const chunk = ev.text || "";
+          if (chunk) outputEvents += 1;
           textParts.push(chunk);
           if (streamText) {
             process.stdout.write(chunk);
@@ -170,6 +259,7 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
           break;
         }
         case "tool_call_start": {
+          outputEvents += 1;
           const id = ev.toolCallId || syntheticId();
           inflight.set(id, {
             name: ev.toolName || "(unknown)",
@@ -215,6 +305,10 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
           }
           break;
         }
+        case "step_finish": {
+          steps += 1;
+          break;
+        }
         case "finish": {
           if (ev.usage) {
             usage = {
@@ -229,11 +323,39 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
           streamError = ev.text || "stream error";
           break;
         }
-        
-        
-        default:
-          break;
+
+
+          default:
+            break;
+        }}
+
+      // The turn is over. Deliver whatever finished during it — the same queue
+      // and the same formatter the TUI uses, so headless and interactive runs
+      // tell the model the same thing. Sending is the only way to say
+      // anything: the engine owns history (services/tasks/notifications.ts).
+      const news = formatTaskNotifications(takeTaskNotifications());
+      if (!news || streamError || reachedStepLimit(steps, agentConfig.maxSteps)) break;
+      if (notificationTurns >= MAX_NOTIFICATION_TURNS) {
+        // Say what was dropped rather than discarding it in silence.
+        process.stderr.write(
+          `\n[task] ${pendingTaskNotificationCount()} background-task notification(s) ` +
+            `were not delivered: the run already used its ${MAX_NOTIFICATION_TURNS} ` +
+            `follow-up turns.\n`,
+        );
+        break;
       }
+      notificationTurns += 1;
+      // The run's output is now more than one turn's worth. Without a break the
+      // two answers run together — "…nothing else to report.Started the…" —
+      // which reads as a stutter rather than as two replies.
+      if (textParts.length > 0) {
+        textParts.push("\n\n");
+        if (streamText) process.stdout.write("\n\n");
+      }
+      if (verbose) {
+        process.stderr.write(`\r[K[task] reporting a finished background task to the model\n`);
+      }
+      nextPrompt = news;
     }
   } catch (err) {
     streamError = (err as Error).message || String(err);
@@ -263,6 +385,7 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
         usage,
         finishReason: "error",
         durationMs,
+        permissionDenials,
       };
       process.stdout.write(JSON.stringify({ ...result, error: streamError }) + "\n");
       throw new Error(streamError);
@@ -271,13 +394,32 @@ export async function runPrint(opts: PrintOptions): Promise<PrintResult> {
     throw new Error(streamError);
   }
 
+  // A run that spent its whole step budget may have stopped mid-task, and
+  // "printed something, exited 0" is how CI learns a truncated refactor went
+  // fine. Say so on stderr (text mode) and in finishReason (json mode); the
+  // caller turns that into a non-zero exit.
+  const hitStepLimit = reachedStepLimit(steps, agentConfig.maxSteps);
+  // Same argument for a run that produced nothing: a rejected request ends the
+  // stream exactly like a finished one, and printing nothing while exiting 0
+  // would let CI read a dead API key as a successful no-op.
+  const emptyTurn = !hitStepLimit && isEmptyTurn(usage.totalTokens, outputEvents);
+  if (hitStepLimit) finishReason = LIMIT_FINISH_REASON;
+  else if (emptyTurn) finishReason = EMPTY_FINISH_REASON;
+
   const result: PrintResult = {
     text,
     toolCalls,
     usage,
     finishReason,
     durationMs,
+    permissionDenials,
   };
+
+  if (hitStepLimit) {
+    process.stderr.write(`\n${stepLimitError(agentConfig.maxSteps!)}\n`);
+  } else if (emptyTurn) {
+    process.stderr.write(`\nError: ${emptyTurnMessage(providerCfg.model)}\n`);
+  }
 
   if (outputFormat === "json") {
     

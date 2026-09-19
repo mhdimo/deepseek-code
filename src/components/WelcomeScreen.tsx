@@ -114,9 +114,8 @@ export default function WelcomeScreen({
               </Text>
               <Text dimColor> v{version}</Text>
             </Text>
-            <Text dimColor>
-              {model} · {cwdDisplay}
-            </Text>
+            <Text dimColor>{model}</Text>
+            <Text dimColor>{cwdDisplay}</Text>
           </Box>
         </Box>
 

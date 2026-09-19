@@ -7,8 +7,10 @@ import { tool as bindingTool, type ToolDefinition } from "ai-sdk-cpp";
 import type { Tool, Tools, ToolUseContext, PermissionDecision } from "./Tool.js";
 import type { PermissionRuleset } from "./types/index.js";
 import { runPreToolUse, runHooksFireAndForget } from "./services/hooks.js";
-import { parsePermissionSettings, matchDecision } from "./services/permissions.js";
-import { loadSettings } from "./state/storage.js";
+import { parsePermissionSettings, matchDecision, loadEffectivePermissions } from "./services/permissions.js";
+import { normalizePathInputs } from "./utils/toolUtils.js";
+import { checkDangerousOperation } from "./services/dangerousOps.js";
+import { protectedWriteReason } from "./services/protectedPaths.js";
 
 
 import { FileReadTool } from "./tools/FileReadTool/FileReadTool.js";
@@ -111,8 +113,22 @@ export function getAllBaseTools(): Tools {
 
 
 
-export function getTools(permissions: PermissionRuleset): Tools {
-  return getAllBaseTools().filter((tool) => tool.isEnabled());
+/**
+ * The tools this agent may be offered.
+ *
+ * Scoped to the agent's grants, so a read-only agent (plan, review, any
+ * `.claude/agents/*.md` without write tools) is never *shown* Write, Edit or
+ * Bash — enforcement alone left the model calling tools it could not use, and
+ * every deny-then-retry burned a step. `allowedTools`, when set, narrows it
+ * further to the names an agent definition asked for.
+ */
+export function getTools(permissions: PermissionRuleset, allowedTools?: readonly string[]): Tools {
+  return getAllBaseTools().filter(
+    (tool) =>
+      tool.isEnabled() &&
+      permissions[tool.requiredPermission] &&
+      (!allowedTools || allowedTools.includes(tool.name)),
+  );
 }
 
 
@@ -146,6 +162,10 @@ export function toolsToBindingFormat(
 
         let resultString = "";
         let isError = false;
+        // Set by every branch below that refuses the call rather than running
+        // it, so the refusal can be reported to a caller that cannot see the
+        // screen (see ToolUseContext.onPermissionDenied).
+        let deniedBy: string | null = null;
         try {
           
           
@@ -154,7 +174,7 @@ export function toolsToBindingFormat(
           let ruleDenied = false;
           let ruleAllowed = false;
           try {
-            const perms = loadSettings().permissions;
+            const perms = loadEffectivePermissions(context.workingDir);
             if (perms && (perms.allow?.length || perms.deny?.length || perms.ask?.length)) {
               const rules = parsePermissionSettings(perms);
               const d = matchDecision(rules, tool.name, input, context.workingDir);
@@ -165,14 +185,92 @@ export function toolsToBindingFormat(
             
           }
 
-          if (ruleDenied) {
+          // Protected paths are the other half of that idea, one step down
+          // from the floor: the edit may well be wanted, but it is never
+          // approved *automatically*. This does not deny anything — it only
+          // stops an allow rule from short-circuiting the prompt below, so
+          // `permissions.allow: ["Write"]` cannot be the reason .git/hooks or
+          // ~/.zshrc changed. The prompt itself is raised by the tool's own
+          // checkPermissions, which the UI also holds to this rule.
+          const protectedReason = protectedWriteReason(
+            tool.name,
+            input as Record<string, unknown>,
+            context.workingDir,
+          );
+
+          // The safety floor, evaluated ahead of every rule and prompt. It is
+          // not configurable: an allow rule, a session approval or headless
+          // auto-approval must not be able to reach these.
+          const safetyBlock = checkDangerousOperation(
+            tool.name,
+            input as Record<string, unknown>,
+            context.workingDir,
+          );
+
+          // The capability floor, in the same position and for the same reason
+          // as the safety floor above: nothing configurable may lift it.
+          // `requiredPermission` is the agent's own grant, and a settings rule
+          // is written for a *tool* ("allow Bash(npm test)"), not as a grant of
+          // capabilities to an agent that was configured read-only — without
+          // this, `permissions.allow: ["Write"]` handed the plan agent file
+          // mutation, because an allow rule short-circuits checkPermissions
+          // and the per-tool guards lived inside it.
+          //
+          // Optional-chain on `permissions` so a context missing the field (an
+          // incomplete fixture, an old caller) fails closed with a legible
+          // message instead of a raw TypeError that reads as an engine bug.
+          const capability: PermissionDecision | null =
+            !context.permissions?.[tool.requiredPermission]
+              ? {
+                  approved: false,
+                  feedback:
+                    `the ${tool.requiredPermission} capability is not enabled for this ` +
+                    `agent, so ${tool.name} is not available.`,
+                }
+              : (tool.checkCapability?.(input, context) ?? null);
+
+          // Whether the call is answerable at all. The model is the one who
+          // has to fix a bad input, so this sits ahead of the permission
+          // prompt: a question the user cannot usefully answer is not worth
+          // asking. It is evaluated here, before the chain below, but its
+          // *answer* comes after the floors in that chain — a call the user
+          // may never make reports that, not a detail of how it was written.
+          const validation = tool.validateInput
+            ? await tool.validateInput(input as any, context)
+            : null;
+          const invalidInput = validation && !validation.result ? validation.message : null;
+
+          if (safetyBlock) {
+            resultString =
+              `Refused by the safety floor: ${safetyBlock}. ` +
+              `No permission rule can override this — run it yourself if you mean it.`;
+            isError = true;
+            deniedBy = `safety floor: ${safetyBlock}`;
+          } else if (capability && !capability.approved) {
+            resultString = capability.feedback
+              ? `Permission denied: ${capability.feedback}`
+              : "Permission denied by capability.";
+            isError = true;
+            deniedBy = capability.feedback
+              ? `capability: ${capability.feedback}`
+              : "capability";
+          } else if (ruleDenied) {
             resultString = `Permission denied by rule (see settings.json permissions.deny).`;
             isError = true;
+            deniedBy = "settings.json permissions.deny";
           } else if (context.getPlanMode() && !tool.isReadOnly(input)) {
-            resultString = `Permission denied: Tool ${tool.name} is a write/execute action, which is disabled in plan mode (read-only). Please write your plan or exit plan mode to modify files.`;
+            // Ahead of the rules on purpose: plan mode is a mode, not a rule
+            // the user can allowlist their way out of. This covers both states
+            // behind getPlanMode() — the tool-entered one and the UI's
+            // Shift+Tab one (see agentSession).
+            resultString = `Permission denied: Tool ${tool.name} is a write/execute action, which is disabled in plan mode (read-only). Please write your plan, or leave plan mode (Shift+Tab) to modify files.`;
+            isError = true;
+            deniedBy = "plan mode";
+          } else if (invalidInput) {
+            resultString = invalidInput;
             isError = true;
           } else {
-            const decision: PermissionDecision = ruleAllowed
+            const decision: PermissionDecision = ruleAllowed && !protectedReason
               ? { approved: true }
               : await Promise.race([
                   tool.checkPermissions(input as any, context),
@@ -183,9 +281,16 @@ export function toolsToBindingFormat(
                 ? `Permission denied: ${decision.feedback}`
                 : "Permission denied by user.";
               isError = true;
+              deniedBy = decision.feedback ?? "refused by the user";
             } else {
               
-              const pre = await runPreToolUse(tool.name, input, context.workingDir);
+              // Hooks observe resolved paths (RB-2): a hook that allowlists an
+              // absolute path must not be evadable by handing it a relative or
+              // `~` form of that same file. `tool.call()` below still receives
+              // the original input — the model wrote one path, and it should see
+              // that one echoed back.
+              const observed = normalizePathInputs(context.workingDir, input);
+              const pre = await runPreToolUse(tool.name, observed, context.workingDir);
               if (pre.blocked) {
                 resultString = `Blocked by PreToolUse hook: ${pre.reason ?? ""}`.trim();
                 isError = true;
@@ -226,6 +331,10 @@ export function toolsToBindingFormat(
           if (abortHandler) {
             context.abortController.signal.removeEventListener("abort", abortHandler);
           }
+        }
+
+        if (deniedBy) {
+          context.onPermissionDenied?.(tool.name, deniedBy);
         }
 
         if (context.onToolResult) {

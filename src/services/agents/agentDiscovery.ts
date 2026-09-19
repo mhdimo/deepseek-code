@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import type { AgentConfig } from "../../types/index.js";
 
 /**
  * Custom-agent discovery — the Claude Code `.claude/agents/*.md` convention:
@@ -156,4 +157,32 @@ export function listDiscoveredAgents(cwd: string = process.cwd()): DiscoveredAge
 
 export function getDiscoveredAgent(name: string, cwd: string = process.cwd()): DiscoveredAgentDef | undefined {
   return listDiscoveredAgents(cwd).find((d) => d.name === name);
+}
+
+/** Turn a discovered `.claude/agents` def into a runnable AgentConfig: the
+ *  prompt body becomes the systemPrompt; frontmatter tools decide write and
+ *  execute access (default read-only), and — when the frontmatter named any —
+ *  the exact set of tools the agent may use. An agent that asked for
+ *  `Read, Grep` used to get every read tool in the app (WebFetch, Agent,
+ *  TodoWrite …): the list was read only for the two capability booleans, so
+ *  the rest of what the definition said was silently ignored. */
+export function configFromDiscovered(def: DiscoveredAgentDef): AgentConfig {
+  return {
+    name: def.name,
+    displayName: def.name,
+    description: def.description || "Custom agent",
+    systemPrompt: def.prompt || def.description || "Custom agent",
+    temperature: 0.3,
+    maxSteps: 25,
+    permissions: {
+      allowRead: true,
+      allowWrite: toolGrantsWrite(def.tools),
+      allowExecute: toolGrantsExecute(def.tools),
+      allowNetwork: false,
+    },
+    // `tools:` omitted entirely means "no restriction", matching the rest of
+    // the file's defaults; a listed set is a restriction, and unknowns were
+    // already dropped at discovery time.
+    ...(def.tools.length > 0 ? { allowedTools: def.tools } : {}),
+  };
 }

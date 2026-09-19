@@ -7,13 +7,21 @@
 
 
 
-import { Agent, Session, mcpToolsetFromServer, type StandardToolSet } from "ai-sdk-cpp";
+import {
+  Agent,
+  Session,
+  mcpToolsetFromServer,
+  supportsApprover,
+  withPermissions,
+  type StandardToolSet,
+} from "ai-sdk-cpp";
+import { createMcpPermissionGate } from "./mcpPermissions.js";
+import { createReadState } from "../readState.js";
 import { createModel } from "../provider/registry.js";
 import { getTools, toolsToBindingFormat } from "../../tools.js";
 import type { AskUserQuestionsCallback, ToolUseContext, PermissionCallback } from "../../Tool.js";
 import type { AgentConfig, ProviderConfig, MCPServerConfig, TodoItem, TaskItem, Message } from "../../types/index.js";
-import { readFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendMemoryFiles, memoryFileCandidates } from "../memoryFiles.js";
 import { spawnSync } from "node:child_process";
 import { assembleSystemPromptSync } from "../../constants/prompts.js";
 import { composeWithSystemPrompt, loadCustomOutputStylesSync } from "../../services/outputStyles.js";
@@ -23,9 +31,21 @@ import { getEffortLevel, effortToProviderOptions } from "../effort.js";
 export interface MemorySession {
   agent: Agent;
   session: Session;
+  /** The context the tool wrapper closes over — the session's permissions,
+   *  callbacks and plan state. Exposed so callers (and tests) can ask the
+   *  session what it currently believes, instead of assuming. */
+  context: ToolUseContext;
 }
 
-interface CacheEntry { key: string; ms: MemorySession; context: ToolUseContext; }
+interface CacheEntry {
+  key: string;
+  ms: MemorySession;
+  context: ToolUseContext;
+  /** The caller's plan-mode provider, swappable on every call. The context
+   *  closes over this box, so a cached session follows the UI's *current*
+   *  permission mode rather than the one it happened to be built under. */
+  isPlanMode: { current?: () => boolean };
+}
 // Multi-entry cache keyed by the session key string. The previous single-entry
 // cache evicted the MAIN session whenever a subagent created its own session —
 // the JS Agent wrapper (which owns the native ToolSet) then lost its last
@@ -63,7 +83,58 @@ function trimCache(protectedKey: string): void {
   }
 }
 
-export function getOrCreateMemorySession(opts: {
+/**
+ * The MCP servers a build would actually attach, as a string.
+ *
+ * Part of the session key, because the servers are: each one contributes tools,
+ * and a tool set is fixed when the Agent is constructed. `/mcp enable|disable`
+ * says the change takes effect on the next message, and without this the
+ * cached session answered with the servers it was built with — the toggle
+ * looked like it had done nothing at all until the process restarted.
+ *
+ * Disabled servers are left out rather than hashed as disabled. A list where
+ * every server is switched off *is* a session with no servers, and it should
+ * share that session's entry instead of growing an entry of its own.
+ *
+ * The whole config, not just the name: editing a server's command or args in
+ * the file is the same class of change (the still-cached session is running
+ * the old process) and gets the same rebuild.
+ */
+export function mcpServersKey(mcpServers?: Record<string, MCPServerConfig>): string {
+  if (!mcpServers) return "";
+  return Object.keys(mcpServers)
+    .filter((name) => mcpServers[name]?.enabled !== false)
+    .sort()
+    .map((name) => `${name}=${JSON.stringify(mcpServers[name])}`)
+    .join(",");
+}
+
+/** The user's output-style setting, or undefined when it cannot be read. Read
+ *  once per build: it is composed into the instructions below and it is part of
+ *  the session key, and those two must be the same value. */
+function readOutputStyle(): string | undefined {
+  try {
+    return loadSettings().outputStyle;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build the native Agent + Session for these options, or return the cached one.
+ *
+ * Async because building can mean *talking to a server*: `mcpToolsetFromServer`
+ * spawns each configured MCP server and completes the handshake on the calling
+ * thread. That is a synchronous native call — there is no timeout and no way to
+ * cancel it — so on the submit path the UI thread is the one that stops, mid
+ * keystroke, with nothing on screen to say why. Nothing here can interrupt the
+ * block, but the reason for it can be on screen before it starts, which is what
+ * `onMcpConnect` is for.
+ *
+ * A cache hit never suspends — it returns before the first `await` — so the
+ * per-turn path keeps its old shape.
+ */
+export async function getOrCreateMemorySession(opts: {
   providerConfig: ProviderConfig;
   agentConfig: AgentConfig;
   workingDir: string;
@@ -71,9 +142,33 @@ export function getOrCreateMemorySession(opts: {
   maxContextTokens?: number;
   requestPermission?: PermissionCallback;
   askUserQuestions?: AskUserQuestionsCallback;
+  /**
+   * Whether the UI is currently in plan mode (Shift+Tab).
+   *
+   * Plan mode exists twice in this app: the tool-entered one, which the
+   * session owns via EnterPlanMode/ExitPlanMode, and the UI's permission mode.
+   * Only the first was visible to the execute wrapper, so Shift+Tab's plan
+   * mode was enforced solely inside the permission prompt — and an allow rule
+   * skips the prompt, so it was enforced not at all. Read fresh on each call.
+   */
+  isPlanMode?: () => boolean;
   mcpServers?: Record<string, MCPServerConfig>;
+  /**
+   * Called once per MCP server, immediately before that server is contacted,
+   * and awaited.
+   *
+   * The connect that follows is synchronous and uninterruptible, so a server
+   * that accepts the connection and then never answers stops this call until
+   * the OS times it out — which, on the way to a first message, means the app
+   * stops repainting with no way to tell a hang from slow work. A caller that
+   * returns a promise here gets to put the reason on screen first (the TUI
+   * repaints on the yield; headless writes a line to stderr).
+   */
+  onMcpConnect?: (name: string) => void | Promise<void>;
   abortController?: AbortController;
   onToolResult?: (toolName: string, input: any, output: string, isError: boolean) => void;
+  /** A call the permission layer refused, and why — see ToolUseContext. */
+  onPermissionDenied?: (toolName: string, reason: string) => void;
   onToolOutput?: (toolName: string, text: string) => void;
   onToolActivity?: (toolName: string, input: Record<string, unknown>) => void;
   onTodosChange?: (todos: TodoItem[]) => void;
@@ -86,18 +181,30 @@ export function getOrCreateMemorySession(opts: {
   /** Cache-key salt. Subagents pass a unique value to get their own fresh
    *  native session (concurrent-safe; evicts the cached entry). */
   sessionKey?: string;
-}): MemorySession {
-  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, askUserQuestions, abortController, onToolResult, onToolOutput, onToolActivity, onTodosChange } = opts;
+}): Promise<MemorySession> {
+  const { providerConfig, agentConfig, workingDir, memoryDir, maxContextTokens, requestPermission, askUserQuestions, abortController, onToolResult, onPermissionDenied, onToolOutput, onToolActivity, onTodosChange } = opts;
 
 
 
   const effort = (opts.effortOverride as ReturnType<typeof getEffortLevel> | undefined) ?? getEffortLevel();
   const providerOptions = effortToProviderOptions(effort);
 
+  // Grants belong in the key: the tool pool is derived from them, and a
+  // `.claude/agents/*.md` file edited between turns changes them without
+  // changing the agent's name.
+  const grants = (["allowRead", "allowWrite", "allowExecute", "allowNetwork"] as const)
+    .map((flag) => (agentConfig.permissions[flag] ? "1" : "0"))
+    .join("");
+  const allowed = agentConfig.allowedTools ? agentConfig.allowedTools.join(",") : "*";
+  const outputStyle = readOutputStyle();
+
   const key = [
     providerConfig.type, providerConfig.model || "", providerConfig.baseURL || "",
     workingDir, agentConfig.name, memoryDir,
     effort || "off",
+    grants, allowed,
+    outputStyle ?? "",
+    mcpServersKey(opts.mcpServers),
     opts.sessionKey ?? "",
   ].join("|");
   const cached = cache.get(key);
@@ -113,6 +220,9 @@ export function getOrCreateMemorySession(opts: {
     if (onToolResult) {
       cached.context.onToolResult = onToolResult;
     }
+    if (onPermissionDenied) {
+      cached.context.onPermissionDenied = onPermissionDenied;
+    }
     if (onToolOutput) {
       cached.context.onToolOutput = onToolOutput;
     }
@@ -125,6 +235,7 @@ export function getOrCreateMemorySession(opts: {
     if (opts.onSystemMessage) {
       cached.context.onSystemMessage = opts.onSystemMessage;
     }
+    cached.isPlanMode.current = opts.isPlanMode;
     return cached.ms;
   }
 
@@ -135,6 +246,7 @@ export function getOrCreateMemorySession(opts: {
   let todos: TodoItem[] = [];
   let tasks: TaskItem[] = [];
   let planMode = false;
+  const isPlanMode: { current?: () => boolean } = { current: opts.isPlanMode };
 
   const context: ToolUseContext = {
     providerConfig,
@@ -144,30 +256,49 @@ export function getOrCreateMemorySession(opts: {
     requestPermission: requestPermission ?? (() => Promise.resolve({ approved: true })),
     askUserQuestions,
     messages: [],
+    // Born empty and dies with the session: a "read" from a previous
+    // conversation is not evidence about this one, which is why
+    // `resetMemorySession` (dropping this context) is enough to clear it.
+    readFileState: createReadState(),
     getTodos: () => todos,
     setTodos: (t) => { todos = t; },
     getTasks: () => tasks,
     setTasks: (t) => { tasks = t; },
-    getPlanMode: () => planMode,
+    // Either plan state makes the turn read-only: the one a tool entered, and
+    // the one the UI is sitting in.
+    getPlanMode: () => planMode || (isPlanMode.current?.() ?? false),
     setPlanMode: (m) => { planMode = m; },
     lastPermissionWaitMs: 0,
     recordPermissionWait: () => {},
     consumePermissionWaitMs: () => 0,
     onToolResult,
+    onPermissionDenied,
     onToolOutput,
     onToolActivity,
     onTodosChange,
     onSystemMessage: opts.onSystemMessage,
   };
-  const tools = toolsToBindingFormat(getTools(agentConfig.permissions), context);
+  const tools = toolsToBindingFormat(
+    getTools(agentConfig.permissions, agentConfig.allowedTools),
+    context,
+  );
 
   
   const extraToolSets: StandardToolSet[] = [];
   if (opts.mcpServers) {
-    for (const [, srv] of Object.entries(opts.mcpServers)) {
+    for (const [name, srv] of Object.entries(opts.mcpServers)) {
       if (srv.enabled === false) continue;
       try {
+        // Awaited, and before the connect rather than after: the point is to
+        // be visible *while* the thread is blocked below, not to report once
+        // it is over.
+        if (opts.onMcpConnect) await opts.onMcpConnect(name);
         const configJson = JSON.stringify({
+          // Required, and not sent to the server: it qualifies every tool the
+          // server exposes as `mcp__<name>__<tool>`. That qualified name is
+          // what the model is offered and what the gate below sees, so it is
+          // also the name a permission rule has to key on.
+          name,
           transport: srv.command ? "stdio" : "http",
           command: srv.command,
           args: srv.args,
@@ -176,8 +307,29 @@ export function getOrCreateMemorySession(opts: {
           headers: (srv as any).headers,
         });
         const ts = mcpToolsetFromServer(configJson);
-        if (ts) extraToolSets.push(ts);
-      } catch {  }
+        if (!ts) continue;
+        // Every MCP tool is gated by the app's own permission pipeline — see
+        // mcpPermissions.ts. Without an addon that can carry the approver the
+        // gate would fail closed on every undecided call, which the user would
+        // read as "this server is broken"; refuse the toolset instead and say
+        // so once, plainly.
+        if (!supportsApprover) {
+          opts.onSystemMessage?.(
+            `MCP server "${name}" was not attached: this build of ai-sdk-cpp cannot ` +
+              `route MCP tool approvals through the permission prompt. Rebuild the SDK.`,
+          );
+          continue;
+        }
+        const gate = createMcpPermissionGate(context, name);
+        extraToolSets.push(withPermissions(ts, gate.policy, gate.approver));
+      } catch (err) {
+        // A server that will not start must not vanish silently: the tools it
+        // was supposed to provide are simply absent from the agent, and the
+        // model has no way to find out why.
+        opts.onSystemMessage?.(
+          `MCP server "${name}" could not be attached: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
@@ -203,7 +355,7 @@ export function getOrCreateMemorySession(opts: {
     identity: agentConfig.systemPrompt || "",
     cwd: workingDir,
     model: providerConfig.model,
-    tools: getTools(agentConfig.permissions),
+    tools: getTools(agentConfig.permissions, agentConfig.allowedTools),
     gitBranch: gitBranch ?? undefined,
   });
 
@@ -214,34 +366,15 @@ export function getOrCreateMemorySession(opts: {
     try {
       loadCustomOutputStylesSync(workingDir);
     } catch {  }
-    instructions = composeWithSystemPrompt(instructions, loadSettings().outputStyle);
+    instructions = composeWithSystemPrompt(instructions, outputStyle);
   } catch {
 
   }
 
-  
-  for (const doc of ["CLAUDE.md", "DEEP.md", "AGENTS.md"]) {
-    const docPath = `${workingDir}/${doc}`;
-    if (existsSync(docPath)) {
-      try {
-        const content = readFileSync(docPath, "utf-8");
-        if (content.trim()) {
-          instructions += `\n\n--- ${doc} (project context) ---\n${content}`;
-        }
-      } catch {  }
-    }
-  }
-
-  // User-level memory (~/.deepseek-code/CLAUDE.md), loaded after project docs.
-  const userMemoryPath = `${homedir()}/.deepseek-code/CLAUDE.md`;
-  if (existsSync(userMemoryPath)) {
-    try {
-      const content = readFileSync(userMemoryPath, "utf-8");
-      if (content.trim()) {
-        instructions += `\n\n--- CLAUDE.md (user memory) ---\n${content}`;
-      }
-    } catch {  }
-  }
+  // Project + user memory, appended last so it reads as the most specific
+  // instruction in the prompt. The list itself lives in services/memoryFiles.ts
+  // so `/doctor` reports exactly the files this line reads.
+  instructions = appendMemoryFiles(instructions, memoryFileCandidates(workingDir));
 
   
   
@@ -265,8 +398,8 @@ export function getOrCreateMemorySession(opts: {
     }
   }
 
-  const ms: MemorySession = { agent, session };
-  cache.set(key, { key, ms, context });
+  const ms: MemorySession = { agent, session, context };
+  cache.set(key, { key, ms, context, isPlanMode });
   trimCache(key);
   return ms;
 }

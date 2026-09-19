@@ -10,6 +10,7 @@ const inputSchema = z.object({}) satisfies z.ZodType;
 
 export const TaskListTool = buildTool({
   name: "TaskList",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  addRuleToScope,
   behaviorLabel,
   computeShadowedMap,
   describeRule,
   findShadowingRules,
+  removeRuleFromScope,
   ruleCovers,
   type RuleEntry,
 } from "./permissionsRuleUtils.js";
@@ -142,5 +144,48 @@ describe("computeShadowedMap", () => {
       { section: "allow", text: "Read(src/**)" },
     ];
     expect(computeShadowedMap(entries)).toEqual({ "Bash(ls:*)": ["Bash"] });
+  });
+});
+
+/**
+ * The permissions view edits two rule sets that live in two different files —
+ * the user's settings and the workspace's config, the second of them
+ * trust-gated. Each edit therefore has to touch one of them and only one: a
+ * write that carried the other scope along would move rules the user never
+ * touched, and for a workspace would push them through a file the app may not
+ * be allowed to write at all.
+ */
+describe("editing one rule scope", () => {
+  test("adding a rule leaves the other sections as they were", () => {
+    const scope = { allow: ["Read"], ask: ["Bash(git push:*)"], deny: ["Bash(rm:*)"] };
+    expect(addRuleToScope(scope, "deny", "Edit(.git/**)")).toEqual({
+      allow: ["Read"],
+      ask: ["Bash(git push:*)"],
+      deny: ["Bash(rm:*)", "Edit(.git/**)"],
+    });
+  });
+
+  test("adding to an empty scope creates only that section", () => {
+    const next = addRuleToScope({}, "allow", "Bash(npm test:*)");
+    expect(next).toEqual({ allow: ["Bash(npm test:*)"] });
+  });
+
+  test("removing a rule leaves the rest of its section", () => {
+    const scope = { allow: ["Read", "Glob", "Read"], deny: ["Bash(rm:*)"] };
+    expect(removeRuleFromScope(scope, "allow", "Read")).toEqual({
+      allow: ["Glob"],
+      deny: ["Bash(rm:*)"],
+    });
+  });
+
+  test("removing a rule that is not there changes nothing", () => {
+    expect(removeRuleFromScope({ allow: ["Read"] }, "allow", "Glob")).toEqual({ allow: ["Read"] });
+  });
+
+  test("neither edit mutates the scope it was given", () => {
+    const scope = { allow: ["Read"] };
+    addRuleToScope(scope, "allow", "Glob");
+    removeRuleFromScope(scope, "allow", "Read");
+    expect(scope).toEqual({ allow: ["Read"] });
   });
 });

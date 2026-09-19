@@ -4,6 +4,9 @@
  * and a minimal ANSI-to-ink mapper for rendering the command's output.
  */
 
+import { DEFAULT_CONTEXT_WINDOW } from "../services/contextManager.js";
+import { APP_VERSION } from "./version.js";
+
 // ── ANSI → ink segments ──────────────────────────────────────────────────────
 
 /** Ink-safe color names the mapper emits (basic 16 + gray). */
@@ -257,7 +260,7 @@ export function buildStatusLineCommandInput(opts: StatusLineInputOptions): Statu
   const totalInput = opts.inputTokens ?? 0;
   const totalOutput = opts.outputTokens ?? 0;
   const currentUsage = opts.currentUsage ?? totalInput + totalOutput;
-  const contextWindowSize = opts.contextWindowSize ?? 1_000_000;
+  const contextWindowSize = opts.contextWindowSize ?? DEFAULT_CONTEXT_WINDOW;
   const usedPercentage =
     opts.usedPercentage ??
     (contextWindowSize > 0 ? Math.min(100, (currentUsage / contextWindowSize) * 100) : 0);
@@ -268,7 +271,7 @@ export function buildStatusLineCommandInput(opts: StatusLineInputOptions): Statu
       project_dir: opts.projectDir ?? opts.currentDir,
       added_dirs: opts.addedDirs ?? [],
     },
-    version: opts.version ?? "0.1.0",
+    version: opts.version ?? APP_VERSION,
     output_style: { name: opts.outputStyleName ?? "default" },
     cost: {
       total_cost_usd: opts.costUsd ?? 0,

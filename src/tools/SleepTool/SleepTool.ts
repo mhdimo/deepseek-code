@@ -57,6 +57,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 export const SleepTool = buildTool({
   name: SLEEP_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: SleepInputSchema,
 

@@ -174,6 +174,8 @@ export default function TeamsDialog({ onClose }: TeamsDialogProps): React.ReactE
       >
         <Select
           options={options}
+          // One row per available agent, a list this app's own roster sizes.
+          visibleOptionCount={8}
           onChange={(name) => {
             addTeammate(detailName, name);
             setNote(`Added ${name}.`);

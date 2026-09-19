@@ -1,12 +1,13 @@
 
-import React, { useMemo, useState } from "react";
-import { Box, Text } from "ink";
+import React, { useEffect, useMemo, useState } from "react";
+import { Box, Text, useInput } from "ink";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { Select } from "../ui/design-system/Select.js";
 import { theme, resolveColor } from "../utils/theme.js";
+import { activeProjectConfigPaths } from "../utils/config.js";
 import Spinner from "./Spinner.js";
 import type { DeepSeekCodeConfig, MCPServerConfig } from "../types/index.js";
 
@@ -19,20 +20,29 @@ export interface McpViewProps {
   onClose: () => void;
 }
 
-/** Config file lookup order — mirrors the merge order in utils/config.ts. */
-const MCP_CONFIG_PATHS = [
-  join(process.cwd(), ".deepseek-code.json"),
-  join(homedir(), ".config", "deepseek-code", "config.json"),
-  join(homedir(), ".deepseek-code.json"),
-  join(process.cwd(), ".zcode.json"),
-  join(homedir(), ".config", "z-code", "config.json"),
-  join(homedir(), ".zcode.json"),
-];
+/**
+ * Config file lookup order — mirrors the merge order in utils/config.ts, since
+ * a toggle has to persist into the same file the app reads back.
+ *
+ * The workspace's own files are only in this list once the directory is
+ * trusted. Reading an untrusted workspace's config here would list servers the
+ * app has refused to load, and writing to it would drop the user's toggle into
+ * a file that is ignored until the day it isn't.
+ */
+function mcpConfigPaths(): string[] {
+  return [
+    ...activeProjectConfigPaths(),
+    join(homedir(), ".config", "deepseek-code", "config.json"),
+    join(homedir(), ".deepseek-code.json"),
+    join(homedir(), ".config", "z-code", "config.json"),
+    join(homedir(), ".zcode.json"),
+  ];
+}
 
 /** Minimum spinner dwell so a synchronous session reset still paints once. */
 const RECONNECT_MIN_MS = 350;
 
-type Notice =
+export type Notice =
   | { kind: "reconnect-ok" }
   | { kind: "reconnect-fail"; detail?: string }
   | { kind: "persist-ok"; enabled: boolean }
@@ -53,7 +63,7 @@ export interface ScopeGroup {
 
 /** Resolve the first existing config file in the documented lookup order. */
 export function findExistingConfigFiles(): string[] {
-  return MCP_CONFIG_PATHS.filter((p) => existsSync(p));
+  return mcpConfigPaths().filter((p) => existsSync(p));
 }
 
 export function resolveMcpConfigFile(): string | null {
@@ -72,6 +82,23 @@ export function scopeLabel(file: string | null): string {
   if (file === join(homedir(), ".config", "deepseek-code", "config.json")) return "user";
   if (file === join(homedir(), ".deepseek-code.json")) return "home";
   return "legacy";
+}
+
+/** Bold group label plus its dim, parenthesized path — the reference's scope
+ *  headings ("Project MCPs" + "(.deepseek-code.json)"). The scope names are
+ *  ours; the shape is the reference's. */
+export function scopeHeading(file: string | null): { label: string; path?: string } {
+  if (!file) return { label: "Dynamic MCPs", path: "not in a config file" };
+  if (file === join(process.cwd(), ".deepseek-code.json"))
+    return { label: "Project MCPs", path: ".deepseek-code.json" };
+  if (file === join(homedir(), ".config", "deepseek-code", "config.json"))
+    return { label: "User MCPs", path: "~/.config/deepseek-code/config.json" };
+  if (file === join(homedir(), ".deepseek-code.json"))
+    return { label: "User MCPs", path: "~/.deepseek-code.json" };
+  if (file === join(process.cwd(), ".zcode.json")) return { label: "Legacy MCPs", path: ".zcode.json" };
+  if (file === join(homedir(), ".config", "z-code", "config.json"))
+    return { label: "Legacy MCPs", path: "~/.config/z-code/config.json" };
+  return { label: "Legacy MCPs", path: "~/.zcode.json" };
 }
 
 /** Human-readable config provenance, e.g. "project — .deepseek-code.json". */
@@ -221,12 +248,30 @@ export default function McpView({
   const configFiles = useMemo(() => findExistingConfigFiles(), []);
   const groups = useMemo(() => groupServersByScope(servers, configFiles), [servers, configFiles]);
   const names = useMemo(() => groups.flatMap((g) => g.names), [groups]);
-  const enabledCount = useMemo(
-    () => names.filter((n) => servers[n]!.enabled !== false).length,
-    [names, servers],
-  );
 
   const server = selectedName ? servers[selectedName] : undefined;
+
+  // The list is a plain cursor, not a Select: the reference renders scope
+  // headings (bold label + dim path) that a Select option cannot carry.
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  useEffect(() => {
+    if (selectedIndex >= names.length) setSelectedIndex(Math.max(0, names.length - 1));
+  }, [names.length, selectedIndex]);
+
+  useInput((input, key) => {
+    if (selectedName || names.length === 0) return;
+    if (key.upArrow || input === "k") {
+      setSelectedIndex((i) => (i - 1 + names.length) % names.length);
+    } else if (key.downArrow || input === "j") {
+      setSelectedIndex((i) => (i + 1) % names.length);
+    } else if (key.return) {
+      const name = names[selectedIndex];
+      if (name) {
+        setNotice(null);
+        setSelectedName(name);
+      }
+    }
+  });
 
   // --- empty state ---------------------------------------------------------
   if (names.length === 0) {
@@ -253,46 +298,58 @@ export default function McpView({
 
   // --- list view -----------------------------------------------------------
   if (!selectedName || !server) {
-    const options = groups.flatMap((group) => [
-      ...(groups.length > 1
-        ? [{ label: `▪ ${group.heading}`, value: `__scope:${group.file ?? "dynamic"}`, disabled: true }]
-        : []),
-      ...group.names.map((name) => {
-        const enabled = servers[name]!.enabled !== false;
-        const args = (servers[name]!.args ?? []).join(" ");
-        return {
-          label: `${enabled ? "●" : "○"} ${name}`,
-          value: name,
-          description: `${servers[name]!.command ?? "(url)"}${args ? ` ${args}` : ""} · ${scopeLabel(group.file)}`,
-        };
-      }),
-    ]);
-
     return (
-      <Dialog
-        title="MCP servers"
-        subtitle={`${enabledCount} of ${names.length} enabled`}
-        onCancel={onClose}
-        footer={
-          <Text>
-            <Text bold>enter</Text> details · <Text bold>esc</Text> close
-          </Text>
-        }
-      >
-        <Select
-          options={options}
-          onChange={(name) => {
-            setNotice(null);
-            setSelectedName(name);
-          }}
+      <>
+        <Dialog
+          title="Manage MCP servers"
+          subtitle={`${names.length} server${names.length === 1 ? "" : "s"}`}
           onCancel={onClose}
-          enableNumberKeys
-          visibleOptionCount={6}
-        />
-        <Box marginTop={1}>
-          <Text dimColor>Toggling persists to the config file and applies on your next message.</Text>
+          hideInputGuide
+        >
+          <Box flexDirection="column">
+            {groups.map((group) => {
+              const heading = scopeHeading(group.file);
+              return (
+                <Box key={group.file ?? "dynamic"} flexDirection="column" marginBottom={1}>
+                  <Box paddingLeft={2}>
+                    <Text bold>{heading.label}</Text>
+                    {heading.path !== undefined && <Text dimColor> ({heading.path})</Text>}
+                  </Box>
+                  {group.names.map((name) => {
+                    const index = names.indexOf(name);
+                    const isSelected = index === selectedIndex;
+                    const enabled = servers[name]!.enabled !== false;
+                    return (
+                      <Box key={name}>
+                        <Text color={isSelected ? resolveColor(theme.suggestion) : undefined}>
+                          {isSelected ? "❯ " : "  "}
+                        </Text>
+                        <Text color={isSelected ? resolveColor(theme.suggestion) : undefined}>
+                          {name}
+                        </Text>
+                        {!enabled && (
+                          <Text dimColor={!isSelected}>
+                            {" · "}
+                            <Text color={resolveColor(theme.inactive)}>○</Text>
+                            {" "}
+                          </Text>
+                        )}
+                        {!enabled && <Text dimColor={!isSelected}>disabled</Text>}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              );
+            })}
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>Toggling persists to the config file and applies on your next message.</Text>
+          </Box>
+        </Dialog>
+        <Box paddingX={1}>
+          <Text dimColor italic>↑↓ to navigate · Enter to confirm · Esc to cancel</Text>
         </Box>
-      </Dialog>
+      </>
     );
   }
 
@@ -333,12 +390,6 @@ export default function McpView({
     onToggle(selectedName, !enabled);
   };
 
-  const actionOptions = [
-    ...(enabled ? [{ label: "Reconnect", value: "reconnect" }] : []),
-    { label: enabled ? "Disable" : "Enable", value: "toggle" },
-    { label: "Back", value: "back" },
-  ];
-
   const handleAction = (value: string): void => {
     if (value === "reconnect") void handleReconnect();
     else if (value === "toggle") handleToggle();
@@ -346,13 +397,61 @@ export default function McpView({
   };
 
   return (
+    <McpServerDetail
+      name={selectedName}
+      server={server}
+      configScope={group ? group.heading : null}
+      reconnecting={reconnecting}
+      notice={notice}
+      onReconnect={handleAction}
+      onBack={backToList}
+    />
+  );
+}
+
+export interface McpServerDetailProps {
+  name: string;
+  server: MCPServerConfig;
+  /** Present when the server comes from a config file; null for a dynamic one. */
+  configScope: string | null;
+  reconnecting: boolean;
+  notice: Notice;
+  onReconnect: (action: string) => void;
+  onBack: () => void;
+}
+
+/**
+ * Per-server detail pane: capitalized "<Name> MCP Server" header (the reference
+ * names the server, not the raw id), Status/Command/Args/Config location rows,
+ * the reconnect spinner or a notice, and the Reconnect / Enable|Disable / Back
+ * menu.
+ */
+export function McpServerDetail({
+  name,
+  server,
+  configScope,
+  reconnecting,
+  notice,
+  onReconnect,
+  onBack,
+}: McpServerDetailProps): React.ReactElement {
+  const enabled = server.enabled !== false;
+  const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1);
+  const actionOptions = [
+    ...(enabled ? [{ label: "Reconnect", value: "reconnect" }] : []),
+    { label: enabled ? "Disable" : "Enable", value: "toggle" },
+    { label: "Back", value: "back" },
+  ];
+
+  return (
     <Dialog
-      title={selectedName}
-      subtitle={group ? group.heading : "dynamic — not in a config file"}
-      onCancel={backToList}
+      title={`${capitalizedName} MCP Server`}
+      subtitle={configScope ?? "dynamic — not in a config file"}
+      onCancel={onBack}
       footer={
         <Text>
-          <Text bold>enter</Text> select · <Text bold>esc</Text> back
+          <Text bold>↑↓</Text> to navigate · <Text bold>Enter</Text> to select · <Text bold>Esc</Text> to
+          back
         </Text>
       }
     >
@@ -376,24 +475,24 @@ export default function McpView({
           </Box>
         )}
         <Box>
-          <Text bold>Config: </Text>
-          <Text dimColor>{group?.file ?? "not in a config file (dynamic)"}</Text>
+          <Text bold>Config location: </Text>
+          <Text dimColor>{configScope ?? "not in a config file (dynamic)"}</Text>
         </Box>
       </Box>
 
       {reconnecting ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text>Reconnecting to <Text bold>{selectedName}</Text></Text>
+          <Text>Reconnecting to <Text bold>{name}</Text></Text>
           <Spinner label="Restarting MCP server process" />
           <Text dimColor>This may take a few moments.</Text>
         </Box>
       ) : (
         <>
           {notice && (
-            <Box marginTop={1}>{renderNotice(notice, selectedName)}</Box>
+            <Box marginTop={1}>{renderNotice(notice, name)}</Box>
           )}
           <Box marginTop={1}>
-            <Select options={actionOptions} onChange={handleAction} onCancel={backToList} visibleOptionCount={3} />
+            <Select options={actionOptions} onChange={onReconnect} onCancel={onBack} visibleOptionCount={3} />
           </Box>
         </>
       )}

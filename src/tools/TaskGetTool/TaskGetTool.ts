@@ -12,6 +12,7 @@ const inputSchema = z.object({
 
 export const TaskGetTool = buildTool({
   name: "TaskGet",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

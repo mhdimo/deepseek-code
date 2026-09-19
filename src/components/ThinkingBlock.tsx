@@ -1,11 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import Markdown from "./Markdown.js";
 import type { ContentSelection } from "./useMouseSelection.js";
 
+/** The reference label is a constant (AssistantThinkingMessage.tsx): the
+ *  collapsed block says "∴ Thinking", the expanded one adds an ellipsis.
+ *  There is no elapsed time anywhere in it. */
+const THINKING_LABEL = "∴ Thinking";
+
 interface ThinkingBlockProps {
   content: string;
   isTranscriptMode?: boolean;
+  /** Accepted for callers (MessageView passes the live flag); the label no
+   *  longer varies with it. */
   isStreaming?: boolean;
   /** Content width in cols (used to wrap the transcript markdown). */
   width: number;
@@ -13,52 +20,23 @@ interface ThinkingBlockProps {
   selection?: ContentSelection | null;
   /** Global content row where this block begins (label row). */
   startRow?: number;
-  /** When the block's thinking started / ended (ms epoch) — the streaming
-   *  label shows a live incrementing timer; finalized blocks show the total. */
+  /** Accepted for callers; the reference shows no elapsed time, so these are
+   *  no longer rendered. */
   thinkingStart?: number;
   thinkingEnd?: number;
-}
-
-/** "42s" or "2m 03s" (thinking can run for minutes). */
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
 export default function ThinkingBlock({
   content,
   isTranscriptMode,
-  isStreaming,
   width,
   selection = null,
   startRow = 0,
-  thinkingStart,
-  thinkingEnd,
 }: ThinkingBlockProps) {
-  // Tick every second while thinking is streaming, so the timer increments
-  // even when the engine is idle between reasoning deltas (no renders).
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!isStreaming || thinkingStart === undefined) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [isStreaming, thinkingStart]);
-
-  const hasElapsed = thinkingStart !== undefined;
-  const elapsed =
-    thinkingStart === undefined
-      ? null
-      : (isStreaming ? now : thinkingEnd ?? now) - thinkingStart;
-  const timer = hasElapsed && elapsed !== null ? ` ${formatElapsed(elapsed)}` : "";
-
-  const label = isStreaming ? `∴ Thinking…${timer}` : `∴ Thought${hasElapsed ? ` · ${formatElapsed(elapsed!)}` : ""}`;
-
   if (isTranscriptMode) {
     return (
       <Box flexDirection="column" gap={1} width="100%">
-        <Text dimColor italic>{label}</Text>
+        <Text dimColor italic>{`${THINKING_LABEL}…`}</Text>
         <Box paddingLeft={2}>
           <Markdown
             dim
@@ -76,7 +54,7 @@ export default function ThinkingBlock({
   return (
     <Box>
       <Text dimColor italic>
-        {label} <Text dimColor>(ctrl+o to expand)</Text>
+        {THINKING_LABEL} <Text dimColor>(ctrl+o to expand)</Text>
       </Text>
     </Box>
   );

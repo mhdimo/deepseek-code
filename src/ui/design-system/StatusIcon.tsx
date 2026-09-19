@@ -21,11 +21,13 @@ const STATUS_CONFIG: Record<
   Status,
   { icon: string; color: "success" | "error" | "warning" | "suggestion" | undefined }
 > = {
+  // Glyphs are figures' values, which the reference reads from the package:
+  // tick ✔, cross ✘, warning ⚠, info ℹ, circle ◯.
   success: { icon: "✔", color: "success" },
-  error: { icon: "✖", color: "error" },
-  warning: { icon: "!", color: "warning" },
+  error: { icon: "✘", color: "error" },
+  warning: { icon: "⚠", color: "warning" },
   info: { icon: "ℹ", color: "suggestion" },
-  pending: { icon: "○", color: undefined },
+  pending: { icon: "◯", color: undefined },
   loading: { icon: "…", color: undefined },
 };
 
