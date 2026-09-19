@@ -12,7 +12,7 @@ DeepSeek Code is a terminal-native AI coding agent built with Bun, Ink (React TU
 bun run dev          # Development mode (hot-reload via Ink)
 bun run build        # Build executable to ./dist/index.js (+ copies bundled skills to dist/bundled)
 bun run typecheck    # TypeScript type checking (no emit)
-bun test             # Tests (not configured yet — contributions welcome!)
+bun run test         # Tests (bun test --isolate — see "Bun conventions")
 
 bun dist/index.js --version                      # Print version (verifies the native addon loads)
 bun dist/index.js --effort high                  # Launch with reasoning effort (off|low|medium|high|max)
@@ -116,7 +116,7 @@ src/
 
 **Tool system**: Each tool lives in its own directory under `src/tools/<ToolName>/` using `buildTool()` from `Tool.ts` with Zod schemas. The registry (`src/tools.ts`) adapts them for the binding and wires the permission pipeline. Registered tools include: FileRead (with PDF/notebook/image support), FileWrite, FileEdit, Bash (with `run_in_background` → background-task registry), Glob, Grep (rich rg-based with output_mode/context/multiline), LS, WebFetch, WebSearch, NotebookEdit, TodoWrite, TaskCreate/Get/Update/List, Agent, AskUserQuestion, Enter/ExitPlanMode, Config, Sleep, ScheduleCron, Enter/ExitWorktree, PowerShell, Brief, REPL, ToolSearch, TaskOutput, TaskStop, and Skill. Keep each tool in its own folder — organization makes everyone happy!
 
-**Permission engine**: `src/services/permissions.ts` parses `settings.permissions` rules in `Tool(spec:pattern)` syntax (allow/deny/ask). The tools.ts execute wrapper consults rules FIRST (a global deny hard-blocks without prompting; a global allow auto-approves), then falls through to the per-tool `checkPermissions()` and the interactive `<PermissionPrompt>` with diff preview. Plan mode denies write/execute tools. User feedback (Tab on Yes/No) is embedded in the tool result as `💬 User note: ...` so the model sees it immediately.
+**Permission engine**: `src/services/permissions.ts` parses `settings.permissions` rules in `Tool(spec:pattern)` syntax (allow/deny/ask). The tools.ts execute wrapper consults rules FIRST (a global deny hard-blocks without prompting; a global allow auto-approves), then falls through to the per-tool `checkPermissions()` and the interactive `<PermissionPrompt>` with diff preview. Ahead of the prompt sits `validateInput()` (see `src/services/readState.ts`): the read-before-edit guard, which refuses an Edit or Write to a file the model has not read — or one that changed since it did — instead of asking the user to approve a guess. The same registry feeds the stale-file notice (`src/services/fileChangeNotice.ts`), which tells the model about files it read that changed on disk, ahead of the next prompt, through the background-task notification channel. Plan mode denies write/execute tools. User feedback (Tab on Yes/No) is embedded in the tool result as `💬 User note: ...` so the model sees it immediately.
 
 **Background tasks**: `BashTool(run_in_background: true)` registers the process via `src/services/tasks/backgroundFramework.ts` (process-group SIGTERM→SIGKILL kill semantics). The model reads tails with `TaskOutput` and kills with `TaskStop`.
 
@@ -143,7 +143,12 @@ src/
 
 - Use `bun <file>` instead of `node` or `ts-node` — it's fast and modern!
 - Use `bun install` instead of npm/yarn/pnpm — enjoy the speed
-- Use `bun test` when we finally have tests (contributions welcome!)
+- Run tests with `bun run test` (= `bun test --isolate`). Bare `bun test` shares
+  one module registry across files, and `mock.module()` from one file is still in
+  place for every file after it — Bun does not undo it. The isolation flag is the
+  difference between a suite that is order-independent and one that fails when a
+  new file lands in the middle. Prefer sandboxing real state (a temp
+  `DEEPSEEK_CODE_DATA_DIR`, `mkdtempSync` working dirs) over mocking a module.
 - Bun auto-loads `.env` files — no dotenv required, how convenient!
 - Prefer `Bun.file()` over `node:fs` readFile/writeFile for new code
 - This is a TUI app, not a web server — let's leave `Bun.serve()` for the web folks

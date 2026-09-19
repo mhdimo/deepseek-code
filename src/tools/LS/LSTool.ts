@@ -34,6 +34,7 @@ export function formatDirectoryTree(entries: readonly DirectoryEntryLike[]): str
 
 export const LSTool = buildTool({
   name: LS_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: LSInputSchema,
 
@@ -47,13 +48,6 @@ export const LSTool = buildTool({
   isConcurrencySafe: () => true,
 
   maxResultSizeChars: 100_000,
-
-  checkPermissions: async (_input, context) => {
-    if (!context.permissions.allowRead) {
-      return { approved: false, feedback: "Read permission denied for this agent." };
-    }
-    return { approved: true };
-  },
 
   call: async (input, context) => {
     const fullPath = resolvePath(context.workingDir, input.path);

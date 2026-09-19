@@ -16,6 +16,17 @@ import {
   previewRawBlock,
 } from "../../utils/toolUtils.js";
 import { getPatchFromContents, hunksToDiffText } from "../../utils/diff.js";
+import {
+  writeGuard,
+  recordKnownState,
+  statForGuard,
+} from "../../services/readState.js";
+import { syncEditedFile } from "../../services/lsp/editedFile.js";
+import {
+  captureDiagnosticsBaseline,
+  collectNewDiagnostics,
+  formatNewDiagnostics,
+} from "../../services/lsp/editDiagnostics.js";
 import { FILE_WRITE_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 
 
@@ -33,6 +44,7 @@ const FileWriteInputSchema = z.object({
 
 export const FileWriteTool = buildTool({
   name: FILE_WRITE_TOOL_NAME,
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema: FileWriteInputSchema,
 
@@ -48,11 +60,23 @@ export const FileWriteTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  checkPermissions: async (input, context) => {
-    if (!context.permissions.allowWrite) {
-      return { approved: false, feedback: "Write permission denied for this agent." };
-    }
+  /**
+   * A Write replaces whatever is there, so it may not be aimed at a file the
+   * model has not looked at — the one op that can destroy content the model
+   * never knew existed. Creating a file stays allowed: there is nothing to
+   * have read.
+   */
+  validateInput: async (input, context) => {
+    const fullPath = resolvePath(context.workingDir, input.file_path);
+    const verdict = writeGuard({
+      read: context.readFileState?.get(fullPath),
+      modifiedMs: await statForGuard(fullPath),
+    });
 
+    return verdict.ok ? { result: true } : { result: false, message: verdict.message };
+  },
+
+  checkPermissions: async (input, context) => {
     const fullPath = resolvePath(context.workingDir, input.file_path);
     const relPath = relativePath(context.workingDir, fullPath);
 
@@ -99,9 +123,27 @@ export const FileWriteTool = buildTool({
       exists = false;
     }
 
+    // Same reason as Edit, and the same caveat: this is only the pre-change
+    // state, so it is only taken for a file that has one. A brand-new file has
+    // nothing to regress from.
+    const diagnosticsBaseline = exists
+      ? await captureDiagnosticsBaseline(fullPath, previousContent)
+      : [];
+
     try {
       await ensureDir(fullPath);
       await writeFile(fullPath, content, "utf-8");
+
+      // The model knows what it just wrote, so the file counts as read. Left
+      // unrecorded, the next per-tool check would refuse a Write the model
+      // itself just made — the registry has to move with the file.
+      await recordKnownState(context.readFileState, fullPath, content);
+
+      // Same reason as Edit: a running server still holds the old text, and
+      // a Write is the edit that invalidates the most of it at once.
+      await syncEditedFile(fullPath, content);
+
+      const findings = await collectNewDiagnostics(fullPath, diagnosticsBaseline);
 
       // Real hunks against the previous content for overwrites; plain
       // added-lines preview for brand-new files.
@@ -114,7 +156,10 @@ export const FileWriteTool = buildTool({
         "",
         diffHunks && diffHunks.length > 0 ? "Diff preview:" : "Added lines:",
         diffHunks && diffHunks.length > 0 ? hunksToDiffText(diffHunks) : asAddedLines(content, 80),
-      ].join("\n");
+        formatNewDiagnostics(findings),
+      ]
+        .filter((part): part is string => part !== null)
+        .join("\n");
 
       return { data: result };
     } catch (error) {

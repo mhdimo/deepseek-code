@@ -10,16 +10,20 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { memoryFileCandidates, presentMemoryFiles } from "../services/memoryFiles.js";
 import type { PersistedSettings } from "../state/storage.js";
 import { loadSettings } from "../state/storage.js";
 import {
+  loadEffectivePermissions,
   matchGlob,
   matchShellCommand,
   matchWildcardPattern,
   parsePermissionSettings,
   type ParsedRule,
+  type PermissionSettings,
 } from "../services/permissions.js";
 import { estimateTokens } from "./limits.js";
+import { dataDir } from "./dataDir.js";
 import { listDiscoveredAgents } from "../services/agents/agentDiscovery.js";
 import { loadConfig } from "./config.js";
 
@@ -71,30 +75,17 @@ export interface MemoryFile {
   content: string;
 }
 
-/** Memory docs that land in the agent's context (same surface as
- *  agentSession's CLAUDE.md/DEEP.md/AGENTS.md injection, plus the
- *  .claude variants Claude Code reads). */
+/** Memory docs that land in the agent's context.
+ *
+ *  The list comes from services/memoryFiles.ts — the same one the session
+ *  builder appends to the system prompt — rather than a copy kept here. It
+ *  used to be a copy, and it drifted: /doctor counted files the session never
+ *  opened, so the screen reported context the model did not have. */
 export function getMemoryFiles(cwd: string = process.cwd()): MemoryFile[] {
-  const home = homedir();
-  const candidates = [
-    join(cwd, ".claude", "CLAUDE.md"),
-    join(cwd, ".claude", "CLAUDE.local.md"),
-    join(cwd, "CLAUDE.md"),
-    join(cwd, "DEEP.md"),
-    join(cwd, "AGENTS.md"),
-    join(home, ".claude", "CLAUDE.md"),
-    join(home, ".claude", "CLAUDE.local.md"),
-    join(home, ".deepseek-code", "CLAUDE.md"),
-  ];
-  const out: MemoryFile[] = [];
-  for (const path of candidates) {
-    try {
-      if (existsSync(path)) out.push({ path, content: readFileSync(path, "utf-8") });
-    } catch {
-      // unreadable files are not context warnings
-    }
-  }
-  return out;
+  return presentMemoryFiles(memoryFileCandidates(cwd)).map(({ path, content }) => ({
+    path,
+    content,
+  }));
 }
 
 /** Files larger than MAX_MEMORY_CHARACTER_COUNT chars, largest first. */
@@ -281,7 +272,7 @@ export function detectShadowedRules(rules: readonly ParsedRule[]): ShadowedRule[
 }
 
 export function checkUnreachablePermissionRules(
-  permissions: PersistedSettings["permissions"] = loadSettings().permissions,
+  permissions: PermissionSettings | null | undefined = loadEffectivePermissions(),
 ): ContextWarning | null {
   const shadowed = detectShadowedRules(parsePermissionSettings(permissions ?? {}));
   if (shadowed.length === 0) return null;
@@ -360,8 +351,7 @@ export function collectAgentParseErrors(cwd: string = process.cwd()): FileError[
  *  Mirrors pluginService's directory layout and manifest precedence. */
 export function collectPluginErrors(): FileError[] {
   const errors: FileError[] = [];
-  const dataDir = process.env.DEEPSEEK_CODE_DATA_DIR?.trim() || join(homedir(), ".deepseek-code");
-  const pluginsDir = join(dataDir, "plugins");
+  const pluginsDir = join(dataDir(), "plugins");
 
   let names: string[] = [];
   try {

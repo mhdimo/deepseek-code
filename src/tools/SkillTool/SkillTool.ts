@@ -34,6 +34,7 @@ function getSkillDescription(): string {
 
 export const SkillTool = buildTool({
   name: SKILL_TOOL_NAME,
+  requiredPermission: "allowRead",
   
   
   

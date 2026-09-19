@@ -37,6 +37,7 @@ import {
   truncateToTokenBudget,
 } from "../../utils/limits.js";
 import { FILE_READ_TOOL_NAME, DESCRIPTION, MAX_LINES_TO_READ } from "./prompt.js";
+import { checkReadAccess } from "../../services/readPermissions.js";
 import {
   extractPDFText,
   PDF_MAX_PAGES_PER_READ,
@@ -68,6 +69,7 @@ const FileReadInputSchema = z.object({
 
 export const FileReadTool = buildTool({
   name: FILE_READ_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: FileReadInputSchema,
 
@@ -83,12 +85,9 @@ export const FileReadTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  checkPermissions: async (_input, context) => {
-    if (!context.permissions.allowRead) {
-      return { approved: false, feedback: "Read permission denied for this agent." };
-    }
-    return { approved: true };
-  },
+  // A read outside the working directory is the user's call, not the
+  // session's: see services/readPermissions.
+  checkPermissions: (input, context) => checkReadAccess(FILE_READ_TOOL_NAME, input, context),
 
   call: async (input, context) => {
     const { file_path, offset, limit } = input;
@@ -113,12 +112,28 @@ export const FileReadTool = buildTool({
       
       const sizeBytes = Number(stats.size);
 
-      
-      if (ext === "ipynb") return readNotebookResult(fullPath, sizeBytes, limits);
+      // A read is what Edit and Write are checked against, so every read of
+      // real text records what the model was shown (see services/readState).
+      // Images and PDFs are not recorded: what the model gets back is a
+      // summary or an extracted transcription, not the file, so "the model has
+      // seen this" would be false — and it would be false in the direction
+      // that lets an edit overwrite bytes nobody looked at.
+      const record = (content: string, isPartialView: boolean): void => {
+        context.readFileState?.record(fullPath, {
+          // The mtime from before the read. If the file moved between this
+          // stat and the read, the recorded time is the older one, which
+          // reads as "modified since read" — the safe way to be wrong.
+          timestamp: stats.mtimeMs,
+          content,
+          isPartialView,
+        });
+      };
+
+      if (ext === "ipynb") return readNotebookResult(fullPath, sizeBytes, limits, record);
       if (ext === "pdf") return readPDFResult(fullPath, sizeBytes, limits);
       if (IMAGE_EXTENSIONS.has(ext)) return readImageResult(fullPath, sizeBytes);
 
-      return readTextResult(fullPath, sizeBytes, { offset, limit }, limits);
+      return readTextResult(fullPath, sizeBytes, { offset, limit }, limits, record);
     } catch (error) {
       return { data: `Error reading file: ${(error as Error).message}` };
     }
@@ -138,11 +153,15 @@ function renderLine(lineNo: number, line: string): string {
   );
 }
 
+/** Records what the model was shown, for the read-before-edit guard. */
+type RecordRead = (content: string, isPartialView: boolean) => void;
+
 async function readTextResult(
   fullPath: string,
   sizeBytes: number,
   range: { offset?: number; limit?: number },
   limits: { maxTokens: number; maxSizeBytes: number },
+  record: RecordRead,
 ): Promise<ToolResult<string>> {
   const { offset, limit } = range;
 
@@ -164,7 +183,7 @@ async function readTextResult(
   // size, stream the file and keep only the requested line window.
   const rangeRequested = offset !== undefined || limit !== undefined;
   if (rangeRequested && sizeBytes > 4 * 1024 * 1024) {
-    return readRangedBounded(fullPath, offset, limit, limits);
+    return readRangedBounded(fullPath, offset, limit, limits, record);
   }
 
   const buf = await readFile(fullPath);
@@ -185,6 +204,15 @@ async function readTextResult(
   }
 
   const content = buf.toString("utf-8");
+
+  // Recorded as the whole file even when the response below is cut short by
+  // the line or token budget, and marked partial only for a *requested* range.
+  // The distinction is what the guard is for: `old_string` has to match text
+  // the model has seen, and an exact match is its own proof. Marking an
+  // implicitly truncated read partial would be worse than useless — every
+  // re-read truncates the same way, so a long file could never be edited.
+  record(content, offset !== undefined || limit !== undefined);
+
   const lines = content.split("\n");
   
   
@@ -246,6 +274,7 @@ async function readNotebookResult(
   fullPath: string,
   sizeBytes: number,
   limits: { maxTokens: number; maxSizeBytes: number },
+  record: RecordRead,
 ): Promise<ToolResult<string>> {
   if (sizeBytes > limits.maxSizeBytes) {
     return {
@@ -259,6 +288,9 @@ async function readNotebookResult(
   }
 
   const { text, cellCount } = await readNotebookText(fullPath);
+  // The rendering, not the file: always a partial view of the JSON on disk,
+  // which is also why NotebookEdit does not lean on this entry.
+  record(text, true);
   let result = `Jupyter notebook: ${fullPath} (${cellCount} cell${cellCount === 1 ? "" : "s"})\n\n${text}`;
 
   const trunc = truncateToTokenBudget(result, limits.maxTokens);
@@ -342,6 +374,7 @@ async function readRangedBounded(
   offset: number | undefined,
   limit: number | undefined,
   limits: { maxTokens: number; maxSizeBytes: number },
+  record: RecordRead,
 ): Promise<ToolResult<string>> {
   const { open } = await import("fs/promises");
   const MAX_SCAN_BYTES = 64 * 1024 * 1024;
@@ -387,6 +420,8 @@ async function readRangedBounded(
       total++;
       if (lineNo >= startIdx && lineNo < endIdx && out.length < want) out.push(carried);
     }
+    // Always a window of the file — that is what this path is for.
+    record(out.join("\n"), true);
     if (startIdx >= total && reachedEnd) {
       return { data: `Warning: the file exists but is shorter than the provided offset (${offset}). The file has ${total} lines.` };
     }

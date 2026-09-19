@@ -19,7 +19,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
-import { isMouseSequence } from "./useMouseWheelScroll.js";
+import { isMouseSequence, stripMouseSequences } from "./useMouseWheelScroll.js";
+import { closesPaste, normalizePaste, opensPaste, pasteInFlight } from "./paste.js";
 import { findUltrathinkPositions, type KeywordRange } from "../utils/thinkingKeywords.js";
 
 
@@ -30,6 +31,11 @@ interface MultilineTextInputProps {
   focus: boolean;
   placeholder?: string;
   isPickerActive?: boolean;
+  /** Colour for the typed text. Unset (the default) leaves the terminal's own
+   *  foreground; the permission dialog's focused input row passes the
+   *  `suggestion` token so the label, its separator and the value read as one
+   *  editable field. */
+  color?: string;
 }
 
 
@@ -113,6 +119,31 @@ export function moveCursorVertically(value: string, pos: number, dir: -1 | 1): n
   return Math.min(start + col, end);
 }
 
+/**
+ * Stitch a chunk onto the one before it when a read boundary landed between
+ * the CR and the LF of a line break.
+ *
+ * A terminal writes CRLF for a pasted line ending, and it writes more than one
+ * line at a time, so the OS hands us whatever a read happened to end at — which
+ * for a paste of any size is regularly *mid-break*: one chunk ends on the CR,
+ * the next begins with the LF. Each half normalises to a line feed of its own
+ * (paste.ts sees one chunk at a time and cannot know the other half exists), so
+ * a 4KB read size doubles a break every 4KB of paste — a hundred-line paste
+ * pasted from a file with CRLF endings came out with its lines spaced out.
+ *
+ * The pair has to be remembered *across* events, which is why the state is here
+ * rather than in the normaliser: the two halves arrive as two calls.
+ *
+ * `pendingCR` says the previous chunk ended on a bare CR — a chunk ending in
+ * CRLF does not set it, that break is already whole.
+ */
+export function joinChunk(text: string, pendingCR: boolean): { text: string; pendingCR: boolean } {
+  return {
+    text: pendingCR && text.startsWith("\n") ? text.slice(1) : text,
+    pendingCR: text.endsWith("\r"),
+  };
+}
+
 
 
 
@@ -123,9 +154,10 @@ function renderPlaceholder(placeholder: string, focused: boolean): React.ReactNo
   }
   return (
     <Text>
-      <Text backgroundColor={resolveColor(theme.promptBorder)} color={resolveColor(theme.inverseText)}>
-        {ph[0] || " "}
-      </Text>
+      {/* The cursor block inverts the terminal's own colours (chalk.inverse in
+          the reference), so it follows the user's palette instead of painting
+          a fixed grey block. */}
+      <Text inverse>{ph[0] || " "}</Text>
       <Text dimColor>{ph.slice(1)}</Text>
     </Text>
   );
@@ -181,6 +213,7 @@ function renderRainbowSlice(
 function renderTextContent(
   value: string,
   cursorOffset: number,
+  color?: string,
 ): React.ReactNode {
   if (value === "") return null;
 
@@ -200,17 +233,15 @@ function renderTextContent(
       const cursorChar = line[colInLine] || " ";
       const after = line.slice(colInLine + 1);
       elements.push(
-        <Text key={lineIdx}>
+        <Text key={lineIdx} color={color}>
           {renderRainbowSlice(before, lineStartOff, ultrathinkRanges)}
-          <Text backgroundColor={resolveColor(theme.promptBorder)} color={resolveColor(theme.inverseText)}>
-            {cursorChar}
-          </Text>
+          <Text inverse>{cursorChar}</Text>
           {renderRainbowSlice(after, lineStartOff + colInLine + 1, ultrathinkRanges)}
         </Text>,
       );
     } else {
       elements.push(
-        <Text key={lineIdx}>{renderRainbowSlice(line || " ", lineStartOff, ultrathinkRanges)}</Text>,
+        <Text key={lineIdx} color={color}>{renderRainbowSlice(line || " ", lineStartOff, ultrathinkRanges)}</Text>,
       );
     }
 
@@ -229,6 +260,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   focus,
   placeholder = "",
   isPickerActive = false,
+  color,
 }: MultilineTextInputProps) {
   
   
@@ -240,6 +272,16 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   const prevExternalValue = useRef(value);
   
   const internalChange = useRef(false);
+
+  // A bracketed paste that has opened and not yet closed, and when it was last
+  // heard from. While it is open an Enter is paste content rather than a
+  // submission — see paste.ts.
+  const pasteOpenRef = useRef(false);
+  const pasteOpenAtRef = useRef(0);
+
+  // Whether the last chunk handled ended on the CR of a CRLF, so the chunk
+  // after it may open with that line break's other half — see joinChunk.
+  const pendingCRRef = useRef(false);
 
   
   useEffect(() => {
@@ -277,16 +319,42 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
     (input: string, key: import("ink").Key) => {
       // Terminal mouse sequences reach every useInput handler as a raw string
       // like `[<64;10;15M` with an empty key name — never type them into the
-      // prompt buffer.
+      // prompt buffer. A chunk can also carry a report glued to real
+      // keystrokes (a click landing between two of them, or two reports
+      // batched into one read), so strip the reports rather than rejecting the
+      // chunk whole and losing what was typed alongside them.
       if (isMouseSequence(input)) return;
+      const typed = stripMouseSequences(input);
+      if (typed !== input) input = typed;
       const pos = cursorRef.current;
+
+      // The two halves of a split line break are adjacent reads, so a CR is
+      // only half of one if the very next event carries the LF. Anything in
+      // between means that CR ended a line on its own, and the next chunk's
+      // leading LF — if it has one — is a line feed of its own to keep. The
+      // chunk is rejoined before anything reads it, so every branch below works
+      // on the text the user actually typed rather than half of it; only an
+      // inserted chunk can leave a CR for the next one to pair with (the
+      // assignment in the insert branch), because an Enter that submitted is
+      // done with this paste's bytes.
+      const pendingCR = pendingCRRef.current;
+      pendingCRRef.current = false;
+      const rejoined = joinChunk(input, pendingCR);
+      input = rejoined.text;
 
 
       if (key.return && !key.meta) {
-        if (!isPickerActiveRef.current) {
-          onSubmitRef.current();
+        // Mid-paste an Enter is content, not a submission: a large paste is
+        // read in chunks and the split can land on a line break, so the lone
+        // CR arrives looking like the user hitting return. Past this check the
+        // event falls through to the insert branch below, which turns the CR
+        // into a line feed — the only place a bare CR is welcome.
+        if (!pasteInFlight(pasteOpenRef.current, pasteOpenAtRef.current, Date.now())) {
+          if (!isPickerActiveRef.current) {
+            onSubmitRef.current();
+          }
+          return;
         }
-        return;
       }
 
       
@@ -473,16 +541,22 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
 
 
       if (input && !key.ctrl && !key.meta) {
-        // Terminals wrap pasted text in bracketed-paste markers; ink may
-        // deliver them with the ESC intact or already stripped. Strip both
-        // forms so a paste lands as plain text instead of being dropped.
-        let text = input.replace(/\x1b\[200~|\x1b\[201~|\[200~|\[201~/g, "");
-        // Printable text (paste may carry newlines/tabs mid-chunk; only a
-        // leading control character disqualifies the whole event).
-        const isPrintable =
-          text.length > 0 &&
-          [...text].every((ch) => ch.charCodeAt(0) >= 32 || ch === "\n" || ch === "\r" || ch === "\t");
-        if (isPrintable) {
+        // A paste arrives here as one chunk. Normalise it — CR to LF, no
+        // bracketed-paste markers, no escape sequences — and insert whatever
+        // text is underneath. See paste.ts for the shapes ink actually
+        // delivers, and for what it cost to insert them raw.
+        const text = normalizePaste(input);
+        if (opensPaste(input)) {
+          pasteOpenRef.current = true;
+          pasteOpenAtRef.current = Date.now();
+        } else if (closesPaste(input)) {
+          pasteOpenRef.current = false;
+        } else if (pasteOpenRef.current) {
+          // A chunk inside an open paste: keep its claim on Enter fresh.
+          pasteOpenAtRef.current = Date.now();
+        }
+        if (text.length > 0) {
+          pendingCRRef.current = rejoined.pendingCR;
           const curVal = bufferRef.current;
           const newValue = curVal.slice(0, pos) + text + curVal.slice(pos);
           bufferRef.current = newValue;
@@ -510,7 +584,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
     <Box flexDirection="column" flexGrow={1}>
       {value === ""
         ? renderPlaceholder(placeholder, focus)
-        : renderTextContent(value, cursorOffset)}
+        : renderTextContent(value, cursorOffset, color)}
     </Box>
   );
 });

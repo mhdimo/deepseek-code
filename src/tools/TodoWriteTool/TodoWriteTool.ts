@@ -25,6 +25,7 @@ const inputSchema = z.object({
 
 export const TodoWriteTool = buildTool({
   name: "TodoWrite",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

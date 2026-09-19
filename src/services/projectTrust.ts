@@ -21,12 +21,16 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from "fs";
 import { join, resolve, sep } from "path";
-import { homedir } from "os";
+import { dataDir } from "../utils/dataDir.js";
 
 
 
-const DATA_DIR = join(homedir(), ".deepseek-code");
-const TRUSTED_DIRS_FILE = join(DATA_DIR, "trusted-dirs.json");
+
+// Beside settings.json and sessions/, and resolved the same way: a store that
+// picks its own location ignores DEEPSEEK_CODE_DATA_DIR, which is how a test
+// (or a user with the state on another volume) ends up granting trust in one
+// file while the app reads another.
+const TRUSTED_DIRS_FILE = (): string => join(dataDir(), "trusted-dirs.json");
 
 
 
@@ -49,17 +53,18 @@ function stripTrailingSep(p: string): string {
 
 function ensureDataDir(): void {
   try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    mkdirSync(dataDir(), { recursive: true });
   } catch {
-    
+
   }
 }
 
 
 function readTrustedDirs(): string[] {
+  const file = TRUSTED_DIRS_FILE();
   try {
-    if (!existsSync(TRUSTED_DIRS_FILE)) return [];
-    const raw = readFileSync(TRUSTED_DIRS_FILE, "utf-8");
+    if (!existsSync(file)) return [];
+    const raw = readFileSync(file, "utf-8");
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
@@ -82,7 +87,7 @@ function writeTrustedDirs(dirs: string[]): void {
   try {
     
     const unique = Array.from(new Set(dirs.map(stripTrailingSep))).sort();
-    writeFileSync(TRUSTED_DIRS_FILE, JSON.stringify(unique, null, 2), "utf-8");
+    writeFileSync(TRUSTED_DIRS_FILE(), JSON.stringify(unique, null, 2), "utf-8");
   } catch {
     
   }
@@ -141,5 +146,5 @@ export function shouldPromptTrust(cwd: string): boolean {
 
 
 export function getTrustedDirsFile(): string {
-  return TRUSTED_DIRS_FILE;
+  return TRUSTED_DIRS_FILE();
 }

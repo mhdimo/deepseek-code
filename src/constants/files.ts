@@ -59,7 +59,10 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "mpeg",
   "mpg",
   "m2ts",
-  "ts",
+  // Not "ts": that extension is TypeScript, and this list is how a file
+  // becomes invisible — FileReadTool refuses a gated file outright, and an
+  // unread file cannot be edited either. A transport stream has NUL bytes in
+  // its first packets, so `hasBinaryContent` still catches the real thing.
   "3gp",
   "vob",
   
@@ -129,7 +132,7 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "img",
   "vdi",
   "vmdk",
-  "vhd",
+  // Not "vhd": that one is VHDL, for the same reason as "ts" above.
   "qcow2",
   "vhdx",
   
@@ -168,48 +171,8 @@ export function hasBinaryExtension(filePath: string): boolean {
   return BINARY_EXTENSIONS.has(getExtension(filePath));
 }
 
-/** Extensions whose comments start with '#' (the code highlighter branches
- *  on these; everything else is treated as a C-like language). */
-const HASH_COMMENT_EXTENSIONS = new Set<string>([
-  "sh",
-  "bash",
-  "zsh",
-  "fish",
-  "py",
-  "rb",
-  "yml",
-  "yaml",
-  "toml",
-  "pl",
-  "r",
-  "ps1",
-  "ini",
-  "conf",
-  "properties",
-  "gitignore",
-]);
-
-const HASH_COMMENT_FILENAMES = new Set<string>([
-  "makefile",
-  "dockerfile",
-  "gemfile",
-  "rakefile",
-  ".gitignore",
-  ".dockerignore",
-  ".zshrc",
-  ".bashrc",
-  ".bash_profile",
-  ".profile",
-]);
-
-/** Map a file path to a syntax-highlighting language name ("" = C-like
- *  fallback, matching Markdown's code-block rendering). */
-export function getLanguageFromPath(filePath: string): string {
-  const base = (filePath.split("/").pop() ?? filePath).toLowerCase();
-  if (HASH_COMMENT_FILENAMES.has(base)) return base;
-  const ext = getExtension(filePath);
-  return HASH_COMMENT_EXTENSIONS.has(ext) ? ext : "";
-}
+/** The path → language resolver now lives with the grammars it feeds:
+ *  `languageFromPath` in components/codeHighlight.ts. */
 
 
 export function isDeviceOrProcPath(normalizedPath: string): boolean {

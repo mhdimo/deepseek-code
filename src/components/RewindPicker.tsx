@@ -64,7 +64,7 @@ export async function countFilesChanged(
   messageNumber: number,
   workingDirectory: string,
 ): Promise<number | null> {
-  if (!hasSnapshot(messageNumber)) return null;
+  if (!hasSnapshot(messageNumber, workingDirectory)) return null;
   const entries = await restoreSnapshot(messageNumber, workingDirectory);
   let changed = 0;
   for (const entry of entries) {
@@ -106,7 +106,9 @@ export default function RewindPicker({
   // Load the files-changed count for every option that has a snapshot.
   useEffect(() => {
     let cancelled = false;
-    const numbers = options.filter((o) => hasSnapshot(o.number)).map((o) => o.number);
+    const numbers = options
+      .filter((o) => hasSnapshot(o.number, workingDirectory))
+      .map((o) => o.number);
     void Promise.all(
       numbers.map(async (n) => {
         let count: number | null;
@@ -124,7 +126,9 @@ export default function RewindPicker({
   }, [options, workingDirectory]);
 
   const selected = options.find((o) => o.number === selectedNumber) ?? null;
-  const canRestoreCode = selected ? hasSnapshot(selected.number) : false;
+  const canRestoreCode = selected
+    ? hasSnapshot(selected.number, workingDirectory)
+    : false;
 
   const listOptions = useMemo(
     () =>
@@ -201,18 +205,14 @@ export default function RewindPicker({
 
   return (
     <Dialog
-      title={stage === "list" ? "Rewind conversation" : `Rewind to message #${selectedNumber}`}
-      subtitle={
-        stage === "list"
-          ? "Choose a past message — snapshotted files can be restored with it"
-          : "Choose what to restore"
-      }
+      title="Rewind"
       onCancel={onClose}
       cancelActive={false}
+      color="suggestion"
       footer={
         stage === "list" ? (
           <>
-            <Text bold>↑↓</Text> to choose · <Text bold>enter</Text> to select · <Text bold>esc</Text> to cancel
+            {!shownError && options.length > 0 && "Enter to continue · "}Esc to exit
           </>
         ) : (
           <>
@@ -222,27 +222,43 @@ export default function RewindPicker({
       }
     >
       {stage === "list" ? (
-        <Select
-          key="list"
-          options={listOptions}
-          defaultValue={listOptions[listOptions.length - 1]?.value}
-          onChange={handleSelectMessage}
-          onCancel={onClose}
-          visibleOptionCount={8}
-        />
+        <Box flexDirection="column">
+          {/* Reference MessageSelector's pick-list instruction, above the list. */}
+          <Text>Restore the code and/or conversation to the point before…</Text>
+          <Box marginTop={1}>
+            <Select
+              key="list"
+              options={listOptions}
+              defaultValue={listOptions[listOptions.length - 1]?.value}
+              onChange={handleSelectMessage}
+              onCancel={onClose}
+              visibleOptionCount={8}
+            />
+          </Box>
+        </Box>
       ) : (
         <>
+          {/* Reference MessageSelector's confirm heading, printed on every
+              confirm screen; only the "the conversation" fragment depends on
+              there being a snapshot to restore. */}
+          <Text>
+            Confirm you want to restore{' '}
+            {!canRestoreCode && "the conversation "}to the point before you sent this
+            message:
+          </Text>
           {selected && (
             <Box flexDirection="column" marginBottom={1}>
               <Text dimColor>{previewLine(selected.message)}</Text>
               {!canRestoreCode && <Text dimColor>⚠ No code restore</Text>}
             </Box>
           )}
-          <Box marginBottom={1}>
-            <Text color={resolveColor(theme.warning)}>
-              ⚠ Rewinding does not affect files edited manually or via bash.
-            </Text>
-          </Box>
+          {canRestoreCode && (
+            <Box marginBottom={1}>
+              <Text dimColor>
+                ⚠ Rewinding does not affect files edited manually or via bash.
+              </Text>
+            </Box>
+          )}
           <Select
             key="confirm"
             options={confirmOptions}

@@ -357,7 +357,6 @@ const NOTABLE_CONFIGS = [
 
 const AI_CONFIG_FILES = [
   "CLAUDE.md",
-  "DEEP.md",
   "AGENTS.md",
   ".cursorrules",
   "GEMINI.md",
@@ -581,7 +580,7 @@ export async function generateMarkdown(workingDir: string): Promise<string | nul
     return null;
   }
   const body = renderSummaryBody(summary);
-  const title = `# DEEP.md\n\nThis file provides guidance to DeepSeek Code when working with code in the \`${summary.name}\` repository.\n`;
+  const title = `# CLAUDE.md\n\nThis file provides guidance to coding agents when working with code in the \`${summary.name}\` repository.\n`;
   return `${title}\n${body}\n`;
 }
 
@@ -592,14 +591,14 @@ export async function buildInitPrompt(workingDir: string): Promise<string> {
   const draft = (await generateMarkdown(workingDir)) ?? "(project scan failed)";
   const summary = await generateProjectSummary(workingDir).catch(() => null);
   const alreadyHas =
-    summary?.existingAiConfigs.includes("DEEP.md") ||
+    summary?.existingAiConfigs.includes("AGENTS.md") ||
     summary?.existingAiConfigs.includes("CLAUDE.md");
 
   const existingClause = alreadyHas
-    ? `A CLAUDE.md or DEEP.md already exists in this repo. **Do NOT silently overwrite it.** Read the existing file, propose specific additions/improvements as diffs, and explain why each change helps. Preserve user-written content.`
-    : `No DEEP.md exists yet. Create one at the project root named \`DEEP.md\` (DeepSeek Code loads this like CLAUDE.md).`;
+    ? `A memory file already exists in this repo — CLAUDE.md or AGENTS.md. **Refine that file in place; do NOT silently overwrite it, and do NOT create a second one beside it.** (When both exist, CLAUDE.md is the one that gets read, so a second file would go unread.) Read the existing file, propose specific additions/improvements as diffs, and explain why each change helps. Preserve user-written content.`
+    : `No memory file exists yet. Create \`CLAUDE.md\` at the project root — that is the name DeepSeek Code reads, and the one other agents look for too.`;
 
-  return `## Task: generate / refine the project's DEEP.md
+  return `## Task: generate / refine the project's memory file
 
 ${existingClause}
 
@@ -623,14 +622,14 @@ You are given an auto-generated DRAFT below (produced by scanning package.json, 
 - Information that changes frequently — reference the source file instead.
 
 ### Steps
-1. Read the key files to verify the draft: manifest(s), README, build/CI config, and any existing DEEP.md/CLAUDE.md.
-2. Refine the DRAFT into a concise, accurate DEEP.md. Every line must pass: "Would removing this cause the agent to make mistakes?" If no, cut it.
+1. Read the key files to verify the draft: manifest(s), README, build/CI config, and any existing CLAUDE.md/AGENTS.md.
+2. Refine the DRAFT into a concise, accurate CLAUDE.md (or into the existing memory file, if the repo already has one). Every line must pass: "Would removing this cause the agent to make mistakes?" If no, cut it.
 3. Write the file with the Write tool (or propose diffs if one exists). Prefix it with:
 
 \`\`\`
-# DEEP.md
+# CLAUDE.md
 
-This file provides guidance to DeepSeek Code when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 \`\`\`
 
 4. Briefly tell the user what you included and what they should review next.

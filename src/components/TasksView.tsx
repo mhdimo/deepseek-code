@@ -51,18 +51,30 @@ export function groupTasksByType(tasks: TaskState[]): TaskSection[] {
   return sections;
 }
 
-function formatRuntime(task: TaskState): string {
-  const end = task.endedAt ?? Date.now();
-  const seconds = Math.max(0, Math.round((end - task.startedAt) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
+/** Reference `TaskStatusText` label for a row's trailing status: a finished
+ *  task reads "done", a failed one "error", a live one "running". (Upstream
+ *  also has "stopped" for killed tasks; this app has no killed status.) */
+export function taskStatusLabel(status: TaskState["status"]): string {
+  if (status === "done") return "done";
+  if (status === "error") return "error";
+  return "running";
 }
 
-function statusColor(status: TaskState["status"]): string {
-  if (status === "running") return resolveColor(theme.success);
-  if (status === "done") return resolveColor(theme.suggestion);
-  return resolveColor(theme.error);
+/** Reference `TaskStatusText` color: running is left uncolored, only finished
+ *  states are tinted. */
+function statusColor(status: TaskState["status"]): string | undefined {
+  if (status === "done") return resolveColor(theme.success);
+  if (status === "error") return resolveColor(theme.error);
+  return undefined;
+}
+
+/** Reference input guide — each hint reads "<key> to <action>", and the stop
+ *  hint only appears while the focused task is running. */
+export function inputGuide(canStop: boolean): string {
+  const parts = ["↑/↓ to select", "Enter to view"];
+  if (canStop) parts.push("x to stop");
+  parts.push("←/Esc to close");
+  return parts.join(" · ");
 }
 
 /**
@@ -138,20 +150,18 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
         title="Background tasks"
         onCancel={onClose}
         color="background"
-        footer={
-          <Text>
-            <Text bold>↑↓</Text> select · <Text bold>esc</Text> close
-          </Text>
-        }
+        footer={<Text>{inputGuide(false)}</Text>}
       >
         <Text dimColor>No tasks currently running</Text>
       </Dialog>
     );
   }
 
-  // Reference parity: per-category running counts in the subtitle ("2 active
-  // agents · 1 active shell") with bold numbers; single-section lists get no
-  // section header at all.
+  // Reference parity: per-category running counts in the subtitle ("1 active
+  // shell · 2 active agents") with bold numbers; single-section lists get no
+  // section header at all. The reference counts teammates, shells and agents —
+  // workflows and other task kinds are never in its subtitle, so they are not
+  // in ours either.
   const runningOf = (type: TaskType) =>
     tasks.filter((t) => t.type === type && t.status === "running").length;
   const subtitleParts: React.ReactNode[] = [];
@@ -165,9 +175,8 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
       );
     }
   };
-  pushCount(runningOf("agent"), "active agent", "agents");
   pushCount(runningOf("shell"), "active shell", "shells");
-  pushCount(runningOf("workflow"), "active workflow", "workflows");
+  pushCount(runningOf("agent"), "active agent", "agents");
   const subtitle = (
     <>
       {subtitleParts.map((part, i) => (
@@ -180,6 +189,8 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
   );
 
   const showHeaders = sections.length > 1;
+  // The stop hint tracks the focused row, as upstream's guide does.
+  const canStop = rows[selectedIndex]?.status === "running";
   let rowIndex = 0;
   return (
     <Dialog
@@ -187,11 +198,7 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
       subtitle={subtitleParts.length > 0 ? subtitle : undefined}
       onCancel={onClose}
       color="background"
-      footer={
-        <Text>
-          <Text bold>↑↓</Text> select · <Text bold>enter</Text> view · <Text bold>x</Text> stop · <Text bold>esc</Text> close
-        </Text>
-      }
+      footer={<Text>{inputGuide(canStop)}</Text>}
     >
       <Box flexDirection="column">
         {sections.map((section, sectionIdx) => (
@@ -210,13 +217,13 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
                   <Box>
                     <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>
                       {focused ? "❯ " : "  "}
-                      <Text color={statusColor(task.status)}>●</Text>
-                      {" "}
                     </Text>
                     <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused} wrap="truncate-end">
                       {taskDescriptionOf(task)}
                     </Text>
-                    <Text dimColor>{` · ${task.status} · ${formatRuntime(task)}`}</Text>
+                    <Text color={statusColor(task.status)} dimColor>
+                      {` (${taskStatusLabel(task.status)})`}
+                    </Text>
                   </Box>
                 </Box>
               );

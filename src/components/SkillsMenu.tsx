@@ -80,7 +80,6 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
   const [detail, setDetail] = useState<SkillContent | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [confirmedName, setConfirmedName] = useState<string | undefined>();
   const detailRef = useRef(detail);
   detailRef.current = detail;
 
@@ -112,7 +111,6 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
   const openSkill = (name: string) => {
     const skill = getSkill(name);
     if (!skill) return;
-    setConfirmedName(skill.name);
     setDetail(skill);
     setMode("detail");
   };
@@ -187,14 +185,12 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
     return (
       <Dialog
         title="Skills"
-        subtitle="SKILL.md instructions the agent can load on demand"
+        subtitle="No skills found"
         onCancel={onClose}
-        footer="esc to close"
+        hideInputGuide
       >
-        <Text dimColor>
-          No skills available. Add SKILL.md files to .claude/skills/&lt;name&gt;/ in this project
-          or ~/.claude/skills/&lt;name&gt;/ for user-wide skills.
-        </Text>
+        <Text dimColor>Create skills in .claude/skills/ or ~/.claude/skills/</Text>
+        <Text dimColor italic>Esc to close</Text>
       </Dialog>
     );
   }
@@ -226,19 +222,17 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
   }
 
   const focusColor = resolveColor(theme.claude);
-  const successColor = resolveColor(theme.success);
 
   const windowSize = Math.max(1, Math.min(VISIBLE_ROWS, rows.length));
   const start = Math.max(0, Math.min(selectedIndex - Math.floor(windowSize / 2), rows.length - windowSize));
   const end = start + windowSize;
   const moreAbove = start > 0;
   const moreBelow = end < rows.length;
-  const indexLabelWidth = String(rows.length).length;
 
   return (
     <Dialog
       title="Skills"
-      subtitle={`${skills.length} available · project > user > bundled precedence`}
+      subtitle={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
       onCancel={onClose}
       footer="↑↓ to choose · enter to read · esc to cancel"
     >
@@ -247,16 +241,14 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
           const row = rows[i]!;
           const group = rowGroups[i]!;
           const focused = i === selectedIndex;
-          const isSelected = row.name === confirmedName;
 
           let marker: string;
           if (focused) marker = "❯ ";
-          else if (isSelected) marker = "✓ ";
           else if (moreAbove && i === start) marker = "↑ ";
           else if (moreBelow && i === end - 1) marker = "↓ ";
           else marker = "  ";
 
-          const markerColor = focused ? focusColor : isSelected ? successColor : undefined;
+          const markerColor = focused ? focusColor : undefined;
           const suffix = [
             row.pluginName ? ` · ${row.pluginName}` : "",
             ` · ~${row.estimatedTokens} description tokens`,
@@ -274,7 +266,6 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
               )}
               <Box>
                 <Text color={markerColor}>{marker}</Text>
-                <Text dimColor>{`${String(i + 1).padStart(indexLabelWidth)}. `}</Text>
                 <Text color={focused ? focusColor : undefined} bold={focused}>
                   {row.name}
                 </Text>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildStatusLineCommandInput, parseAnsi } from "./statusline.js";
+import { DEFAULT_CONTEXT_WINDOW } from "../services/contextManager.js";
 
 describe("parseAnsi", () => {
   test("passes plain text through", () => {
@@ -98,13 +99,23 @@ describe("buildStatusLineCommandInput", () => {
       context_window: {
         total_input_tokens: 0,
         total_output_tokens: 0,
-        context_window_size: 1_000_000,
+        context_window_size: DEFAULT_CONTEXT_WINDOW,
         current_usage: 0,
         used_percentage: 0,
         remaining_percentage: 100,
       },
       exceeds_200k_tokens: false,
     });
+  });
+
+  test("falls back to the unknown-model window when it is not told the model's", () => {
+    // No contextWindowSize on `base`, so this is the conservative default for a
+    // model nobody has listed. A caller that knows the model passes its real
+    // window — 1M for the V4 family — and that is what the assertions above
+    // check; this one is only about the fallback not being a guess at a big
+    // number, which would tell a statusline the session had room it did not.
+    const input = buildStatusLineCommandInput(base);
+    expect(input.context_window.context_window_size).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 
   test("omits optional keys when sources are absent", () => {

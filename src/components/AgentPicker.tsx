@@ -1,5 +1,6 @@
 
 import React from "react";
+import { Box, Text } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { Select } from "../ui/design-system/Select.js";
 import { agentColorToThemeToken } from "../services/agents/agentColorManager.js";
@@ -47,12 +48,10 @@ export default function AgentPicker({
 
   return (
     <Dialog
-      title="Select agent"
-      subtitle={`Current: ${currentAgent}`}
+      title="Agents"
+      subtitle={`${agents.length} agents`}
       onCancel={onCancel}
-      footer={
-        `↑↓ to choose · enter to switch · esc to cancel`
-      }
+      hideInputGuide
     >
       <Select
         options={options}
@@ -61,6 +60,12 @@ export default function AgentPicker({
         onCancel={onCancel}
         enableNumberKeys
       />
+      {/* Reference AgentNavigationFooter, outside the dialog's input guide
+          (the list is navigated by hand, so the dialog's Enter/Esc guide is
+          suppressed and this hint stands in its place). */}
+      <Box marginTop={1}>
+        <Text dimColor>Press ↑↓ to navigate · Enter to select · Esc to go back</Text>
+      </Box>
     </Dialog>
   );
 }

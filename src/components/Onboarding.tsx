@@ -19,6 +19,7 @@ import { MASCOT_FRAMES } from "./WelcomeScreen.js";
 import { OrderedList } from "./ui/OrderedList.js";
 import { PressEnterToContinue } from "./PressEnterToContinue.js";
 import ThemePicker from "./ThemePicker.js";
+import { stripMouseSequences } from "./useMouseWheelScroll.js";
 
 type StepId = "theme" | "api-key" | "security";
 
@@ -69,7 +70,7 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
     <Box marginX={1}>
       <ThemePicker
         showIntroText
-        helpText="To change this later, run /settings"
+        helpText="To change this later, run /theme"
         onThemeSelect={handleThemeSelection}
         onCancel={cancelPreview}
         initialTheme={initialTheme}
@@ -106,8 +107,8 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
           <OrderedList.Item>
             <Text>Due to prompt injection risks, only use it with code you trust</Text>
             <Text dimColor wrap="wrap">
-              Be careful with untrusted files, and review tool calls before{"\n"}
-              approving them.{"\n"}
+              For more details see:{"\n"}
+              https://api-docs.deepseek.com{"\n"}
             </Text>
           </OrderedList.Item>
         </OrderedList>
@@ -147,12 +148,11 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
         </Box>
         <Box flexDirection="column" marginLeft={2}>
           <Text>
-            <Text color={color("claude")} bold>
+            <Text color={color("claude")}>
               Welcome to DeepSeek Code{" "}
             </Text>
             <Text dimColor>v{version} </Text>
           </Text>
-          <Text dimColor>First-time setup</Text>
         </Box>
       </Box>
       <Box flexDirection="column" marginTop={1}>
@@ -179,8 +179,17 @@ function ApiKeyInput({
       onSubmit();
     } else if (key.backspace || key.delete) {
       onChange(value.slice(0, -1));
-    } else if (input && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.leftArrow && !key.rightArrow) {
-      onChange(value + input);
+    } else {
+      // Mouse reports arrive with an empty key name; strip them so a click on
+      // the setup screens does not type a sequence into the field.
+      const typed = stripMouseSequences(input);
+      if (
+        typed &&
+        !key.ctrl && !key.meta &&
+        !key.upArrow && !key.downArrow && !key.leftArrow && !key.rightArrow
+      ) {
+        onChange(value + typed);
+      }
     }
   });
 

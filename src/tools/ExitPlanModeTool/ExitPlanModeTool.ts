@@ -10,6 +10,7 @@ const inputSchema = z.object({}) satisfies z.ZodType;
 
 export const ExitPlanModeTool = buildTool({
   name: "ExitPlanMode",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

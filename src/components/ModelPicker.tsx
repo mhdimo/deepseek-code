@@ -58,6 +58,12 @@ export function defaultEffortForModel(model: string): EffortLevel {
   return DEFAULT_EFFORT_FOR_MODEL[model] ?? "off";
 }
 
+/** lodash `capitalize` semantics (the reference imports it): first character
+ *  upper-cased, the rest lower-cased. */
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0]!.toUpperCase() + value.slice(1).toLowerCase();
+}
+
 /** Wraps ←/→ cycling across the port's effort levels. */
 export function cycleEffortLevel(current: EffortLevel, direction: "left" | "right"): EffortLevel {
   const index = EFFORT_LEVELS.indexOf(current);
@@ -171,14 +177,9 @@ export default function ModelPicker({
   return (
     <Dialog
       title="Select model"
-      subtitle={`Current: ${currentProvider}/${currentModel}`}
+      subtitle="Switch between DeepSeek models. Applies to this session and future DeepSeek Code sessions. For other/previous model names, specify with --model."
       onCancel={onCancel}
-      footer={
-        <Text>
-          <Text bold>↑↓</Text> to choose · <Text bold>← →</Text> effort · <Text bold>enter</Text> to
-          switch · <Text bold>esc</Text> to cancel
-        </Text>
-      }
+      footer="Enter to confirm · Esc to exit"
     >
       <Select
         options={options}
@@ -187,11 +188,11 @@ export default function ModelPicker({
         onFocus={handleFocus}
         onCancel={onCancel}
         enableNumberKeys
-        visibleOptionCount={7}
+        visibleOptionCount={Math.min(10, options.length)}
       />
       <Box marginTop={1}>
         <Text dimColor>
-          {EFFORT_SYMBOLS[effort] ?? "●"} {effort} effort{effort === focusedDefaultEffort ? " (default)" : ""}{" "}
+          {EFFORT_SYMBOLS[effort] ?? "●"} {capitalize(effort)} effort{effort === focusedDefaultEffort ? " (default)" : ""}{" "}
           <Text color={resolveColor(theme.subtle)}>← → to adjust</Text>
         </Text>
       </Box>

@@ -327,6 +327,7 @@ function coerceAndValidate(
 
 export const ConfigTool = buildTool({
   name: CONFIG_TOOL_NAME,
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema: ConfigInputSchema,
 

@@ -15,6 +15,31 @@ export interface RuleEntry {
   text: string;
 }
 
+/** Rules by section, as one config file holds them. Each scope — the user's
+ *  settings and the workspace's config — is stored, edited and persisted on its
+ *  own. */
+export interface RuleSections {
+  allow?: string[];
+  ask?: string[];
+  deny?: string[];
+}
+
+/** `scope` with `rule` added to `section`, and nothing else touched. The scopes
+ *  are separate files, one of them trust-gated, so a write must not carry the
+ *  other scope's rules along with it. */
+export function addRuleToScope(scope: RuleSections, section: Section, rule: string): RuleSections {
+  return { ...scope, [section]: [...(scope[section] ?? []), rule] };
+}
+
+/** `scope` with `rule` removed from `section`, and nothing else touched. */
+export function removeRuleFromScope(
+  scope: RuleSections,
+  section: Section,
+  rule: string,
+): RuleSections {
+  return { ...scope, [section]: (scope[section] ?? []).filter((r) => r !== rule) };
+}
+
 /** Engine check order: deny wins, then ask, then allow. */
 const SECTION_PRECEDENCE: Record<Section, number> = { deny: 0, ask: 1, allow: 2 };
 

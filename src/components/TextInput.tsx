@@ -11,7 +11,6 @@ import React, { useMemo, useRef, useCallback } from "react";
 import { Box, Text } from "ink";
 import MultilineTextInput from "./MultilineTextInput.js";
 import { theme, resolveColor } from "../utils/theme.js";
-import { separatorWidth } from "./terminalLayout.js";
 
 
 interface InputProps {
@@ -19,7 +18,6 @@ interface InputProps {
   onChange: (value: string) => void;
   onSubmit: () => void;
   isLoading: boolean;
-  agentName: string;
   workingDirectory?: string;
   recentFiles?: string[];
   isBlocked?: boolean;
@@ -28,44 +26,36 @@ interface InputProps {
   isPickerActive?: boolean;
 }
 
-const AGENT_COLORS: Record<string, string> = {
-  code: theme.claude,
-  plan: theme.warning,
-  review: "magenta",
-};
-
-
-function getSuggestion(
-  agentName: string,
-  cwd: string,
-  recentFiles: string[],
-): string {
-  if (agentName === "plan") {
-    return "Try 'analyze the architecture and suggest improvements'";
-  }
-  if (agentName === "review") {
-    return "Try 'review the recent changes for bugs and style issues'";
-  }
-
-  const dir = cwd.split("/").filter(Boolean).pop() || "project";
-
-  if (recentFiles.length > 0) {
-    const file = recentFiles[0]!;
-    const base = file.split("/").filter(Boolean).pop() || file;
-    return `Try 'explain ${base}'`;
-  }
-
-  const suggestions = [
-    `Try 'what does ${dir} do?'`,
-    "Try 'find all TODO/FIXME comments'",
-    "Try 'show me the project structure'",
-    "Try 'what are the main dependencies?'",
-    "Try 'what could be improved here?'",
-    "Try 'add error handling to the entry point'",
+/**
+ * The reference's example commands, in its order. The four slots that name a
+ * file take the basename of one of the project's most-edited files; the
+ * reference interpolates a literal `<filepath>` when it has none cached.
+ */
+export function exampleCommands(frequentFile: string): string[] {
+  return [
+    "fix lint errors",
+    "fix typecheck errors",
+    `how does ${frequentFile} work?`,
+    `refactor ${frequentFile}`,
+    "how do I log an error?",
+    `edit ${frequentFile} to...`,
+    `write a test for ${frequentFile}`,
+    "create a util logging.py that...",
   ];
+}
 
-  const idx = cwd.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % suggestions.length;
-  return suggestions[idx]!;
+export function getSuggestion(cwd: string, recentFiles: string[] = []): string {
+  // The reference wraps the example in double quotes: Try "<example>". It
+  // samples one at random and memoizes for the process; hashing the cwd keeps
+  // the prompt from reshuffling under the user from one launch to the next.
+  const file = recentFiles[0];
+  const frequentFile = file
+    ? file.split("/").filter(Boolean).pop() || file
+    : "<filepath>";
+  const examples = exampleCommands(frequentFile);
+
+  const idx = cwd.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % examples.length;
+  return `Try "${examples[idx]!}"`;
 }
 
 export default function Input({
@@ -73,7 +63,6 @@ export default function Input({
   onChange,
   onSubmit,
   isLoading,
-  agentName,
   workingDirectory = "",
   recentFiles = [],
   isBlocked = false,
@@ -81,44 +70,52 @@ export default function Input({
   queueCount = 0,
   isPickerActive = false,
 }: InputProps) {
-  const color = AGENT_COLORS[agentName] || theme.claude;
-
-  
-  
-  
-  
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
   const stableOnSubmit = useCallback(() => onSubmitRef.current(), []);
 
+  // One example set for every agent: the reference's placeholder does not vary
+  // with plan/review mode.
   const suggestion = useMemo(
-    () => getSuggestion(agentName, workingDirectory, recentFiles),
-    [agentName, workingDirectory, recentFiles],
+    () => getSuggestion(workingDirectory, recentFiles),
+    [workingDirectory, recentFiles],
   );
 
-  const placeholder = isLoading
-    ? queueCount > 0
-      ? `Type and press Enter to queue… (${queueCount} queued)`
-      : "Type and press Enter to queue next message..."
-    : suggestion;
-
-  const hasNewlines = value.includes("\n");
-  const cols = separatorWidth(process.stdout.columns);
-  const cwdBase = workingDirectory.split("/").filter(Boolean).pop() || "";
-  const left = cwdBase ? `── ${cwdBase} ` : "──";
-  const topDivider = left + "─".repeat(Math.max(0, cols - left.length));
-  const bottomDivider = "─".repeat(cols);
+  // The input's loading state never changes the placeholder: Claude Code keeps
+  // the same text and only swaps in the queue hint once something is queued.
+  const placeholder =
+    queueCount > 0 ? "Press up to edit queued messages" : suggestion;
 
   return (
     <Box flexDirection="column" width="100%">
       {}
-      <Text color="gray">{topDivider}</Text>
+      {waitingPermission && (
+        <Box marginTop={1} marginLeft={2}>
+          <Text dimColor>Waiting for permission…</Text>
+        </Box>
+      )}
 
-      {}
-      <Box flexDirection="row" paddingX={1}>
-        <Text bold={!isLoading} dimColor={isLoading} color={resolveColor(color)}>
-          {"❯ "}
-        </Text>
+      {/* The prompt row's rules are the row's own border, as in the reference:
+          round, with the left and right edges striped off, so it prints a
+          plain full-width `─` line above the input and another below it, both
+          in the promptBorder token. Hand-rolled lines bypass the themed border
+          and carry whatever the caller prints into them — the reference writes
+          nothing but the fast-mode icon into its top rule, never the cwd. */}
+      <Box
+        flexDirection="row"
+        alignItems="flex-start"
+        justifyContent="flex-start"
+        borderStyle="round"
+        borderLeft={false}
+        borderRight={false}
+        borderBottom
+        borderColor={resolveColor(theme.promptBorder)}
+        width="100%"
+      >
+        {/* Plain default foreground, never bold — the glyph dims while a
+            query runs. The trailing space is a non-breaking one (U+00A0),
+            as in the reference. */}
+        <Text dimColor={isLoading}>{"❯\u00a0"}</Text>
         <MultilineTextInput
           value={value}
           onChange={onChange}
@@ -128,16 +125,6 @@ export default function Input({
           isPickerActive={isPickerActive}
         />
       </Box>
-
-      {}
-      <Text color="gray">{bottomDivider}</Text>
-
-      {}
-      {hasNewlines && (
-        <Box paddingX={2}>
-          <Text dimColor>enter to submit · alt+enter for newline</Text>
-        </Box>
-      )}
     </Box>
   );
 }

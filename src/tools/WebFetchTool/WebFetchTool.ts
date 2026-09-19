@@ -42,6 +42,7 @@ function htmlToText(html: string): string {
 
 export const WebFetchTool = buildTool({
   name: "WebFetch",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

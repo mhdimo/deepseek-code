@@ -48,9 +48,9 @@ export function Dialog({
       : theme.permission;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingTop={hideBorder ? 0 : 1}>
       {!hideBorder && <Divider color={color} />}
-      <Box flexDirection="column" paddingX={hideBorder ? 0 : 2} marginTop={hideBorder ? 0 : 1}>
+      <Box flexDirection="column" paddingX={hideBorder ? 0 : 2}>
         <Text bold color={resolveColor(colorToken)}>{title}</Text>
         {subtitle && <Text dimColor>{subtitle}</Text>}
         <Box flexDirection="column" marginTop={1}>
@@ -59,11 +59,7 @@ export function Dialog({
         {!hideInputGuide && (
           <Box marginTop={1}>
             <Text dimColor italic>
-              {footer ?? (
-                <>
-                  <Text bold>enter</Text> to confirm · <Text bold>esc</Text> to cancel
-                </>
-              )}
+              {footer ?? "Enter to confirm · Esc to cancel"}
             </Text>
           </Box>
         )}

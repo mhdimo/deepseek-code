@@ -60,6 +60,7 @@ const inputSchema = z.object({
 
 export const ScheduleCronTool = buildTool({
   name: SCHEDULE_CRON_TOOL_NAME,
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema,
 

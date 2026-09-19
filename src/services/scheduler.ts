@@ -22,17 +22,21 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { randomUUID } from "crypto";
 import {
   computeNextCronRun,
   parseCronExpression,
 } from "../utils/cron.js";
+import { dataDir } from "../utils/dataDir.js";
 
 
 
-const DATA_DIR = join(homedir(), ".deepseek-code");
-const SCHEDULES_FILE = join(DATA_DIR, "schedules.json");
+/** Resolved per call, like every other store — see utils/dataDir.ts. A
+ *  module-level path would be pinned by import order, which put the schedules
+ *  file in the real home directory even when the app was pointed elsewhere. */
+function schedulesFile(): string {
+  return join(dataDir(), "schedules.json");
+}
 
 
 export const MAX_JOBS = 50;
@@ -67,14 +71,15 @@ export type EnqueueFn = (prompt: string) => void;
 
 
 function ensureDataDir(): void {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  const dir = dataDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 
 export function readSchedules(): ScheduledJob[] {
   try {
-    if (!existsSync(SCHEDULES_FILE)) return [];
-    const raw = readFileSync(SCHEDULES_FILE, "utf-8");
+    if (!existsSync(schedulesFile())) return [];
+    const raw = readFileSync(schedulesFile(), "utf-8");
     const parsed = JSON.parse(raw) as Partial<SchedulesFile>;
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.tasks)) {
       return [];
@@ -109,7 +114,7 @@ export function readSchedules(): ScheduledJob[] {
 function writeSchedules(tasks: ScheduledJob[]): void {
   ensureDataDir();
   const body: SchedulesFile = { tasks };
-  writeFileSync(SCHEDULES_FILE, JSON.stringify(body, null, 2) + "\n", "utf-8");
+  writeFileSync(schedulesFile(), JSON.stringify(body, null, 2) + "\n", "utf-8");
 }
 
 
@@ -190,13 +195,40 @@ const state: SchedulerState = {
 };
 
 
-export function startScheduler(enqueue: EnqueueFn): void {
+/**
+ * Begin watching the clock.
+ *
+ * Nothing called this until now, which is why scheduled jobs never fired: the
+ * tool wrote them to disk, the CLI listed them, the prompt said "it will fire
+ * once then auto-delete", and the tick that would have done it was never
+ * running. The loop's caller owns that: `App` starts it on mount with an
+ * enqueue that pushes onto the same queue user submissions use.
+ *
+ * `enqueue` is called for each job whose time has come, and jobs are deferred
+ * — not dropped — while `setBusy(true)` is in effect, so a scheduled prompt
+ * arrives as a normal turn taken when the agent is idle.
+ *
+ * Durable jobs are read back at start, and one whose time passed while the app
+ * was closed is already due: it fires on the first tick (a one-shot, then
+ * deleting itself; a recurring one, then rescheduling from now). That is what
+ * "survives restarts" has to mean — otherwise a reminder set for last night is
+ * simply lost.
+ *
+ * `tickMs` is how often the clock is consulted; the default is the real one.
+ *
+ * Headless runs (`--print`) deliberately do not start it: there is no loop to
+ * hand a fired prompt to, and a scheduler whose enqueue goes nowhere would
+ * consume jobs — deleting one-shots, advancing recurring ones past their
+ * match — without ever running them. Jobs left on disk fire on the next
+ * interactive launch instead.
+ */
+export function startScheduler(enqueue: EnqueueFn, tickMs: number = TICK_MS): void {
   state.enqueue = enqueue;
   state.started = true;
   reloadFromDisk();
   if (state.interval) clearInterval(state.interval);
-  state.interval = setInterval(tick, TICK_MS);
-  
+  state.interval = setInterval(tick, tickMs);
+
   if (typeof (state.interval as any)?.unref === "function") {
     (state.interval as any).unref();
   }
@@ -212,6 +244,12 @@ export function stopScheduler(): void {
 }
 
 
+/**
+ * Whether a turn is in flight. Fired jobs are held while this is set and run
+ * on the first tick after it clears, so a schedule cannot land in the middle
+ * of the answer it was meant to follow up on. (A job that came due while busy
+ * keeps its place in `nextFire` — it is deferred, never skipped.)
+ */
 export function setBusy(busy: boolean): void {
   state.busy = busy;
 }

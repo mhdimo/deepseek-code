@@ -1,21 +1,22 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor, type Theme } from "../utils/theme.js";
 import type { ToolUseBlock } from "../types/index.js";
 import { colorForAgent } from "../services/teams/teamService.js";
 import { getDiscoveredAgent } from "../services/agents/agentDiscovery.js";
 import { agentColorToThemeToken } from "../services/agents/agentColorManager.js";
+import { BLACK_CIRCLE } from "./ToolBlock.js";
 
 /**
  * Grouped display for a run of consecutive Agent tool blocks — Claude Code
  * renderGroupedAgentToolUse + AgentProgressLine parity:
  *
- *   ● Running 3 agents…  (ctrl+o to expand)
- *   ├─ blue explore (map the architecture) · 2 tool uses
- *   │  ⎿ Reading src/index.ts
- *   ├─ green code (implement) · 4 tool uses
- *   │  ⎿ Done
- *   └─ 2 agents finished
+ *   ● Running 3 agents… (ctrl+o to expand)
+ *      ├─ blue explore (map the architecture) · 2 tool uses
+ *      │  ⎿ Reading src/index.ts
+ *      ├─ green code (implement) · 4 tool uses
+ *      │  ⎿ Done
+ *      └─ 2 agents finished
  *
  * Agent types with a color (team-assigned or .claude/agents frontmatter)
  * render as colored chips, matching the reference. Pure function of the
@@ -30,10 +31,36 @@ export interface FanoutSegment {
   backgroundColor?: string;
   bold?: boolean;
   dim?: boolean;
+  /** Reference ToolUseLoader: the leading bullet alternates with a blank
+   *  every 600ms while the group is unresolved. */
+  blink?: boolean;
 }
 
 export interface FanoutLine {
   segments: FanoutSegment[];
+  /** Left padding for this row — the reference indents agent rows (and their
+   *  status lines) 3 columns, the group header not at all. */
+  paddingLeft?: number;
+}
+
+/** Reference AgentProgressLine pads every agent row (and its "│  ⎿" status
+ *  line) 3 columns; the group header above them stays flush left. */
+const AGENT_ROW_PADDING = 3;
+
+/** Reference useBlink cadence (hooks/useBlink.ts), local to this component. */
+const BLINK_INTERVAL_MS = 600;
+
+function useBlink(enabled: boolean): boolean {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    if (!enabled) {
+      setVisible(true);
+      return;
+    }
+    const id = setInterval(() => setVisible((v) => !v), BLINK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [enabled]);
+  return visible;
 }
 
 function agentTypeOf(block: ToolUseBlock): string {
@@ -107,25 +134,40 @@ export function buildAgentFanoutLines(blocks: ToolUseBlock[], th?: Theme): Fanou
   const anyError = blocks.some((b) => b.status === "error");
   const allBackgrounded = blocks.length > 0 && blocks.every((b) => statsOf(b).backgrounded);
 
-  // Header — reference renderGroupedAgentToolUse:
-  //   running:     ● Running N agents…            (commonType: "3 explore agents")
-  //   complete:    N agents finished / N background agents launched (↓ to view)
+  // Header — reference renderGroupedAgentToolUse. In every branch the count is
+  // the bold run and the rest of the sentence is plain:
+  //   running:     <bullet> Running N agents…     (commonType: "3 explore agents")
+  //   complete:    N agents finished
+  //   background:  N background agents launched (↓ to manage)
+  // The bullet comes from ToolUseLoader: a `minWidth={2}` box around the
+  // platform's BLACK_CIRCLE — ⏺ on macOS, ● elsewhere (constants/figures.ts),
+  // the same glyph the transcript uses — so the glyph plus one padding column
+  // always occupies two. Always drawn, dim and uncoloured while unresolved
+  // (blinking), success/error coloured once resolved.
   const header: FanoutSegment[] = [];
+  header.push({
+    text: `${BLACK_CIRCLE} `,
+    dim: running,
+    color: running ? undefined : resolveColor(anyError ? themeObj.error : themeObj.success),
+    blink: running,
+  });
   if (running) {
-    header.push({ text: "● ", color: resolveColor(themeObj.claude) });
     header.push({ text: "Running " });
     header.push({ text: String(blocks.length), bold: true });
     header.push({ text: commonType ? ` ${commonType} agents…` : " agents…" });
   } else if (allBackgrounded) {
-    header.push({ text: `${blocks.length} background agent${blocks.length === 1 ? "" : "s"} launched ` });
-    header.push({ text: "(↓ to view)", dim: true });
+    header.push({ text: String(blocks.length), bold: true });
+    // "agents" is unconditionally plural in the reference — "1 background
+    // agents launched" is ungrammatical, but it is verbatim what Claude Code
+    // renders, and the header is not the place to improve on it.
+    header.push({ text: " background agents launched " });
+    header.push({ text: "(↓ to manage)", dim: true });
   } else {
-    header.push({ text: `${blocks.length} ` });
-    header.push({ text: commonType ? `${commonType} agents` : "agents", bold: true });
-    header.push({ text: " finished" });
+    header.push({ text: String(blocks.length), bold: true });
+    header.push({ text: commonType ? ` ${commonType} agents finished` : " agents finished" });
   }
   if (!allBackgrounded) {
-    header.push({ text: "  (ctrl+o to expand)", dim: true });
+    header.push({ text: " (ctrl+o to expand)", dim: true });
   }
   lines.push({ segments: header });
 
@@ -166,35 +208,39 @@ export function buildAgentFanoutLines(blocks: ToolUseBlock[], th?: Theme): Fanou
         segs.push({ text: ` · ${formatTokens(tokens)} tokens`, dim: true });
       }
     }
-    if (isError) segs.push({ text: " · failed", color: resolveColor(themeObj.error) });
     if (isResolved) for (const s of segs) if (s.bold) s.dim = true;
-    lines.push({ segments: segs });
+    lines.push({ segments: segs, paddingLeft: AGENT_ROW_PADDING });
 
     // Status line: "│  ⎿ <status>" — running: last activity or Initializing…;
-    // backgrounded: "Running in the background"; done: "Done".
-    let status: string;
-    if (!isResolved) {
-      status = lastActivity ?? "Initializing…";
-    } else if (backgrounded) {
-      status = "Running in the background";
-    } else if (isError) {
-      status = (block.output || "error").split("\n").pop()?.trim() || "failed";
-    } else {
-      status = "Done";
+    // done: "Done". Reference AgentProgressLine gates the row out entirely
+    // for a backgrounded (async, resolved) agent.
+    if (!backgrounded) {
+      let status: string;
+      if (!isResolved) {
+        status = lastActivity ?? "Initializing…";
+      } else if (isError) {
+        status = (block.output || "error").split("\n").pop()?.trim() || "failed";
+      } else {
+        status = "Done";
+      }
+      lines.push({
+        segments: [
+          { text: `${cont}⎿  `, dim: true },
+          { text: status, dim: true },
+        ],
+        paddingLeft: AGENT_ROW_PADDING,
+      });
     }
-    lines.push({
-      segments: [
-        { text: `${cont}⎿  `, dim: true },
-        { text: status, dim: true },
-      ],
-    });
 
     if (block.isExpanded) {
       // Full expansion — the agent's whole chat (reference parity: opening
       // an agent block shows its complete output, not a preview).
       const outLines = (block.output || "").replace(/\n+$/, "").split("\n");
       for (const out of outLines) {
-        lines.push({ segments: [{ text: `${cont}   ${out === "" ? " " : out}`, dim: true }] });
+        lines.push({
+          segments: [{ text: `${cont}   ${out === "" ? " " : out}`, dim: true }],
+          paddingLeft: AGENT_ROW_PADDING,
+        });
       }
     }
   });
@@ -210,10 +256,12 @@ export function AgentFanout({ blocks, lines: linesProp }: {
   lines?: FanoutLine[];
 }): React.ReactElement {
   const lines = linesProp ?? buildAgentFanoutLines(blocks);
+  // Only animate when a header bullet is actually blinking.
+  const blinkVisible = useBlink(lines.some((line) => line.segments.some((seg) => seg.blink)));
   return (
     <Box flexDirection="column" flexShrink={0} minWidth={0}>
       {lines.map((line, i) => (
-        <Box key={i} height={1} flexShrink={0}>
+        <Box key={i} height={1} flexShrink={0} paddingLeft={line.paddingLeft}>
           <Text wrap="truncate-end">
             {line.segments.map((seg, j) => (
               <Text
@@ -223,7 +271,7 @@ export function AgentFanout({ blocks, lines: linesProp }: {
                 bold={seg.bold}
                 dimColor={seg.dim}
               >
-                {seg.text}
+                {seg.blink && !blinkVisible ? " ".repeat(seg.text.length) : seg.text}
               </Text>
             ))}
           </Text>

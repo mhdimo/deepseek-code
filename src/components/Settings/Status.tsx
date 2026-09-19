@@ -17,9 +17,10 @@ import { isTrusted } from "../../services/projectTrust.js";
 import { listSkills } from "../../skills/skillService.js";
 import { loadHooks } from "../../services/hooks.js";
 import { resolveThemeSetting } from "../../utils/theme.js";
+import { APP_VERSION } from "../../utils/version.js";
 
 
-const APP_VERSION = "0.1.0";
+
 
 export type Property = {
   label?: string;

@@ -147,6 +147,7 @@ async function removeWorktreeAndBranch(
 
 export const ExitWorktreeTool = buildTool({
   name: EXIT_WORKTREE_TOOL_NAME,
+  requiredPermission: "allowWrite",
   description: DESCRIPTION,
   inputSchema: ExitWorktreeInputSchema,
 

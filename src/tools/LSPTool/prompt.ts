@@ -17,9 +17,12 @@ Supported operations:
 - prepareCallHierarchy: Get call hierarchy item at a position (functions/methods)
 - incomingCalls: Find all functions/methods that call the function at a position
 - outgoingCalls: Find all functions/methods called by the function at a position
+- diagnostics: Get the errors and warnings the server currently reports for a file
 
 All operations require:
 - filePath: The file to operate on
+
+Every operation except documentSymbol, workspaceSymbol and diagnostics also requires:
 - line: The line number (1-based, as shown in editors)
 - character: The character offset (1-based, as shown in editors)
 

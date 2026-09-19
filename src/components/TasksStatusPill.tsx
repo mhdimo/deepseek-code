@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
-import { theme, resolveColor } from "../utils/theme.js";
 import { listTasks } from "../services/tasks/backgroundFramework.js";
-import { taskTypeDotColor } from "../utils/taskLabels.js";
-import { agentColorToThemeToken } from "../services/agents/agentColorManager.js";
-import { colorForAgent } from "../services/teams/teamService.js";
 import type { TaskState } from "../Task.js";
 
 /**
  * Live footer pill above the prompt (Claude Code BackgroundTaskStatus +
  * pillLabel parity): a compact type-aware aggregate of running background
- * agents / workflows / shells, plus a ↓ hint that opens the tasks manager.
- * Reference labels: "1 local agent", "2 shells", "1 background workflow",
- * mixed sets collapse to "N background tasks". Renders nothing when idle.
+ * agents / workflows / shells. Reference labels: "1 local agent", "2 shells",
+ * "1 background workflow", mixed sets collapse to "N background tasks".
+ * Renders nothing when idle.
+ *
+ * The reference's " · ↓ to view" call to action only sits on the pill in the
+ * two ultraplan attention states (tasks/pillLabel.ts pillNeedsCta), which this
+ * app's task model has no equivalent of — so a running set renders the label
+ * alone. (Claude Code's separate footer hint line shows "↓ to manage"
+ * whenever a pill exists; our StatusBar has no background-task input, so that
+ * line would need App wiring.)
  */
 
 /** Aggregated label for a set of running tasks (pillLabel.ts parity). */
@@ -30,21 +33,6 @@ export function getPillLabel(tasks: TaskState[]): string {
     }
   }
   return `${n} background ${n === 1 ? "task" : "tasks"}`;
-}
-
-/** Dot color: first task's team color, else its type dot. */
-function dotColorFor(tasks: TaskState[]): string {
-  const first = tasks[0]!;
-  if (first.name) {
-    const token = agentColorToThemeToken(colorForAgent(first.name));
-    if (token) {
-      const value = (theme as Record<string, unknown>)[token];
-      if (typeof value === "string") return resolveColor(value);
-    }
-  }
-  const t = taskTypeDotColor(first.type);
-  const value = (theme as Record<string, unknown>)[t];
-  return resolveColor(typeof value === "string" ? value : theme.success);
 }
 
 export default function TasksStatusPill(): React.ReactNode {
@@ -72,12 +60,7 @@ export default function TasksStatusPill(): React.ReactNode {
 
   return (
     <Box paddingLeft={2}>
-      <Text dimColor>
-        <Text color={dotColorFor(running)}>● </Text>
-        {getPillLabel(running)}
-        {"  · "}
-        <Text bold>↓</Text> to view
-      </Text>
+      <Text dimColor>{getPillLabel(running)}</Text>
     </Box>
   );
 }

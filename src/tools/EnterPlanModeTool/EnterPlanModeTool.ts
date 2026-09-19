@@ -11,6 +11,7 @@ const inputSchema = z.object({}) satisfies z.ZodType;
 
 export const EnterPlanModeTool = buildTool({
   name: "EnterPlanMode",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

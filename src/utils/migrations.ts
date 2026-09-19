@@ -45,7 +45,7 @@ export interface Migration {
 
 
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 3;
 
 
 
@@ -53,33 +53,69 @@ export const LATEST_SCHEMA_VERSION = 2;
 
 
 
-function migrateBypassPermissionsIntoPermissions(
-  settings: PersistedSettings,
-): PersistedSettings {
-  const legacy =
-    (settings as unknown as Record<string, unknown>).bypassPermissions ??
-    (settings as unknown as Record<string, unknown>).dangerouslySkipPermissions;
+/**
+ * The rule this migration used to install in place of the flag. Named here
+ * because the repair below has to recognise it, and because nothing else has
+ * ever written this string — which is what makes its presence usable as
+ * evidence of what happened to an install.
+ */
+const LEGACY_BYPASS_SENTINEL = "Bash(*:**)";
 
-  if (legacy !== true) {
-    
-    if (!settings.permissions) settings.permissions = {};
-    return settings;
-  }
+/**
+ * A legacy "stop asking me" opt-in stays an opt-in — carried by the flag the
+ * app actually reads, never by a permission rule.
+ *
+ * This used to delete the flag and add `Bash(*:**)` to `permissions.allow`,
+ * which does not mean what it looks like. `matchShellCommand` sees no `prefix:*`
+ * form in it, so it falls through to the wildcard matcher, which compiles the
+ * two stars to `.*` and leaves the colon alone: the rule is `^.*:.*.*$`. It
+ * auto-approves every command *containing a colon* — `curl https://…`,
+ * `git push origin HEAD:main` — and prompts for every other command, including
+ * plain `rm -rf /`. So the one setting whose entire meaning is "never ask me"
+ * was discarded and mis-granted in the same step, in the direction that grants
+ * authority rather than the one that prompts.
+ *
+ * `dangerouslySkipPermissions` is the same grant in the form the rest of the
+ * app understands: read into the config by `loadPersistedSettings`, honoured by
+ * the permission callback, and refused outright as root outside a sandbox
+ * (`services/bypassMode.ts`). Nothing needs translating into rules, and a rule
+ * is the one place this grant should never live — a rule outlives the decision,
+ * is matched against every command, and cannot be revoked from the UI.
+ */
+function migrateBypassFlagToItsOwnKey(settings: PersistedSettings): PersistedSettings {
+  const legacy = (settings as unknown as Record<string, unknown>).bypassPermissions;
+  if (legacy === true) settings.dangerouslySkipPermissions = true;
+  delete (settings as unknown as Record<string, unknown>).bypassPermissions;
+  return settings;
+}
 
-  const sentinel = "Bash(*:**)";
-  const perms = settings.permissions ?? {};
-  const allow = new Set(perms.allow ?? []);
-  allow.add(sentinel);
+/**
+ * Undo the rule the old 0→1 left behind, for installs that already ran it.
+ *
+ * Two halves, and the second one is a judgement call worth stating. Removing
+ * the rule is unambiguously right: it is over-broad in a way nobody asked for,
+ * and a missing allow rule only means a prompt comes back. But removing it
+ * alone would silently hand prompts back to someone who had turned them off,
+ * with no signal and no explanation — so the flag is restored alongside it.
+ *
+ * That is a restoration, not a new grant: the sentinel is the fingerprint of a
+ * user who had opted out (this migration chain is the only thing that has ever
+ * written it), and `dangerouslySkipPermissions: true` in their settings.json is
+ * exactly what that opt-out was before the old migration ate it. The result is
+ * also strictly narrower than what they have today — the flag is refused
+ * entirely as root outside a sandbox, and still prompts for protected paths,
+ * neither of which the rule did.
+ */
+function migrateRepairBypassSentinel(settings: PersistedSettings): PersistedSettings {
+  const perms = settings.permissions;
+  const allow = perms?.allow;
+  if (!perms || !allow || !allow.includes(LEGACY_BYPASS_SENTINEL)) return settings;
 
   settings.permissions = {
     ...perms,
-    allow: [...allow],
+    allow: allow.filter((rule) => rule !== LEGACY_BYPASS_SENTINEL),
   };
-
-  
-  delete (settings as unknown as Record<string, unknown>).bypassPermissions;
-  delete (settings as unknown as Record<string, unknown>).dangerouslySkipPermissions;
-
+  settings.dangerouslySkipPermissions = true;
   return settings;
 }
 
@@ -101,15 +137,21 @@ export const MIGRATIONS: Migration[] = [
   {
     fromVersion: 0,
     toVersion: 1,
-    description:
-      "Fold legacy bypassPermissions/dangerouslySkipPermissions into the permissions object.",
-    migrate: migrateBypassPermissionsIntoPermissions,
+    description: "Move a legacy bypassPermissions opt-in onto dangerouslySkipPermissions.",
+    migrate: migrateBypassFlagToItsOwnKey,
   },
   {
     fromVersion: 1,
     toVersion: 2,
     description: "Backfill and normalize cleanupPeriodDays to a positive default.",
     migrate: migrateNormalizeCleanupPeriodDays,
+  },
+  {
+    fromVersion: 2,
+    toVersion: 3,
+    description:
+      "Replace the over-broad Bash allow rule left by the old bypass migration with the flag it stood in for.",
+    migrate: migrateRepairBypassSentinel,
   },
 ];
 

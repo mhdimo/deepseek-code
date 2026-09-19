@@ -14,6 +14,7 @@ import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { resolvePath } from "../../utils/toolUtils.js";
 import { GREP_TOOL_NAME, DESCRIPTION } from "./prompt.js";
+import { checkReadAccess } from "../../services/readPermissions.js";
 
 
 
@@ -626,6 +627,7 @@ const GrepInputSchema = z.object({
 
 export const GrepTool = buildTool({
   name: GREP_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: GrepInputSchema,
 
@@ -637,12 +639,9 @@ export const GrepTool = buildTool({
 
   maxResultSizeChars: 100_000,
 
-  checkPermissions: async (_input, context) => {
-    if (!context.permissions.allowRead) {
-      return { approved: false, feedback: "Read permission denied for this agent." };
-    }
-    return { approved: true };
-  },
+  // Searching outside the working directory is the user's call, not the
+  // session's: see services/readPermissions.
+  checkPermissions: (input, context) => checkReadAccess(GREP_TOOL_NAME, input, context),
 
   call: async (input, context) => {
     const cwd = resolve(context.workingDir);

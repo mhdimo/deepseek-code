@@ -12,6 +12,10 @@ import type { TextRow } from "../services/selection/lineModel.js";
 import { wrapTextRuns } from "../services/selection/lineModel.js";
 import type { ContentSelection } from "./useMouseSelection.js";
 
+/** Columns consumed by <MessageResponse>'s "  ⎿  " gutter — the indent every
+ *  response body (and now the compaction summary) is rendered behind. */
+const GUTTER_WIDTH = 5;
+
 /** One reported span of a message: its screen-row count, its model rows
  *  (for copy/highlight), and the width those rows wrap at. */
 export interface BlockReport {
@@ -45,7 +49,6 @@ interface MessageViewProps {
 interface TextBlockProps {
   content: string;
   isError?: boolean;
-  isStreaming?: boolean;
   width: number;
   selection: ContentSelection | null;
   startRow: number;
@@ -53,8 +56,13 @@ interface TextBlockProps {
   model?: MarkdownBlockRows[];
 }
 
-/** Assistant text block: "● " marker + markdown, with the streaming cursor. */
-function TextBlock({ content, isError, isStreaming, width, selection, startRow, model }: TextBlockProps) {
+/** Assistant text block: "● " marker + markdown.
+ *
+ *  No block cursor: the reference's streaming block is the dot plus
+ *  StreamingMarkdown and nothing else (Messages.tsx:705-714 — the glyph shows
+ *  up in the reference tree only as a ProgressBar fill), so ours used to be a
+ *  row taller than Claude Code's and printed a character it never prints. */
+function TextBlock({ content, isError, width, selection, startRow, model }: TextBlockProps) {
   if (isError) {
     return (
       <MessageResponse>
@@ -73,14 +81,83 @@ function TextBlock({ content, isError, isStreaming, width, selection, startRow, 
         <Markdown dim={false} width={width} selection={selection} startRow={startRow} leftOffset={2} model={model}>
           {content}
         </Markdown>
-        {isStreaming && (
-          <Box height={1} flexShrink={0}>
-            <Text color={resolveColor(theme.claude)}>▊</Text>
-          </Box>
-        )}
       </Box>
     </Box>
   );
+}
+
+/** One renderable unit of an assistant message, in stream order, with the
+ *  blank row that precedes it. */
+export type AssistantUnit =
+  | { kind: "spacer"; tag: string }
+  | { kind: "thinking"; tag: string }
+  | { kind: "block"; tag: string; index: number; block: MessageBlock }
+  | { kind: "fanout"; tag: string; index: number; run: ToolUseBlock[] }
+  | { kind: "legacy-text"; tag: string }
+  | { kind: "legacy-tool"; tag: string; index: number; tool: ToolUseBlock };
+
+/**
+ * The assistant message's units in render order.
+ *
+ * Every unit carries its own leading blank row. The reference passes the
+ * message-level `addMargin` down to EVERY content block (Message.tsx:105) and
+ * each block applies `marginTop={addMargin ? 1 : 0}` — AssistantTextMessage
+ * :228, AssistantToolUseMessage:182, AssistantThinkingMessage:41 — so Claude
+ * Code prints a blank line before the prose, before each tool call and before
+ * every following block. We emitted a single blank row at the top of the
+ * message and then stacked the blocks flush, which reads as one dense run.
+ *
+ * (Our renderer has no per-message metadata header, so `hasMetadata` is always
+ * false and `addMargin = !hasMetadata` — MessageRow.tsx:230-233 — holds in
+ * transcript mode too.)
+ */
+export function assistantLayout(message: Message): AssistantUnit[] {
+  const units: AssistantUnit[] = [];
+  const hasBlocks = !!(message.blocks && message.blocks.length > 0);
+
+  if (message.thinking) {
+    units.push({ kind: "spacer", tag: "t:sp" });
+    units.push({ kind: "thinking", tag: "t" });
+  }
+
+  if (hasBlocks) {
+    const blocks = message.blocks!;
+    let i = 0;
+    while (i < blocks.length) {
+      const block = blocks[i]!;
+      // Consecutive Agent tool blocks collapse into one fanout tree and count
+      // as a single unit — one blank row, like the group's own block.
+      if (block.type === "tool" && block.block?.toolName === "Agent") {
+        const run: ToolUseBlock[] = [];
+        const runStart = i;
+        while (
+          i < blocks.length &&
+          blocks[i]!.type === "tool" &&
+          blocks[i]!.block?.toolName === "Agent"
+        ) {
+          run.push(blocks[i]!.block!);
+          i++;
+        }
+        units.push({ kind: "spacer", tag: `b${runStart}:sp` });
+        units.push({ kind: "fanout", tag: `b${runStart}`, index: runStart, run });
+      } else {
+        units.push({ kind: "spacer", tag: `b${i}:sp` });
+        units.push({ kind: "block", tag: `b${i}`, index: i, block });
+        i++;
+      }
+    }
+  } else {
+    if (message.content) {
+      units.push({ kind: "spacer", tag: "c:sp" });
+      units.push({ kind: "legacy-text", tag: "c" });
+    }
+    (message.toolUse ?? []).forEach((tool, index) => {
+      units.push({ kind: "spacer", tag: `tool${index}:sp` });
+      units.push({ kind: "legacy-tool", tag: `tool${index}`, index, tool });
+    });
+  }
+
+  return units;
 }
 
 function MessageView({
@@ -103,6 +180,17 @@ function MessageView({
       if (el) opaqueRefs.current.set(key, el);
     };
   }, []);
+  /** setOpaqueRef's callbacks, cached per key: a fresh closure each render
+   *  would be a new prop for ToolBlock's React.memo on every flush. */
+  const opaqueRefCache = useRef(new Map<string, (el: DOMElement | null) => void>());
+  const opaqueRefFor = (key: string): ((el: DOMElement | null) => void) => {
+    let cb = opaqueRefCache.current.get(key);
+    if (!cb) {
+      cb = setOpaqueRef(key);
+      opaqueRefCache.current.set(key, cb);
+    }
+    return cb;
+  };
   /** Last measured rowCount per span key — gives opaque spans a stable
    *  height during render for the running-row accumulator (fresh spans
    *  count 0 for one frame; the parent re-renders with true starts as soon
@@ -175,9 +263,76 @@ function MessageView({
     return spans;
   };
 
-  const userWidth = Math.max(1, contentWidth - 2);
+  /** Prompt text width: the row's 2-column "❯ " pointer plus the reference's
+   *  `paddingRight={1}` on the background band (UserPromptMessage.tsx:76). */
+  const userWidth = Math.max(1, contentWidth - 3);
 
   if (message.role === "user") {
+    // A compaction summary is replayed to the model as a user turn, but the
+    // user did not type it. Reference CompactSummary.tsx:92 collapses it to a
+    // bold one-line label ("Compact summary" + the ctrl+o hint) and prints the
+    // summary body only in transcript mode (line 100) — ours dumped the whole
+    // generated summary into the transcript as a warning-coloured user row.
+    //
+    // The early return skips the prompt-row memo below. A compaction message
+    // is never re-rendered as a typed prompt (it is keyed by its own
+    // timestamp), so the hook order for an instance stays fixed.
+    if (message.compaction) {
+      const spacerKey = `${blockKeyBase}:sp`;
+      report({ key: spacerKey, rowCount: 1, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
+      const headKey = `${blockKeyBase}:compact-head`;
+      // Measured after layout (the label can wrap on a narrow terminal);
+      // assume the common single row until the measurement lands.
+      const headRows = Math.max(1, lastRowCountsRef.current.get(headKey) ?? 0);
+      report({ key: headKey, rowCount: 0, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
+      const bodyWidth = Math.max(1, contentWidth - GUTTER_WIDTH);
+      const bodyRows = isTranscriptMode
+        ? wrapTextRuns([{ text: message.content }], bodyWidth)
+        : [];
+      if (bodyRows.length > 0) {
+        report({
+          key: `${blockKeyBase}:compact-body`,
+          rowCount: bodyRows.length,
+          rows: bodyRows,
+          width: bodyWidth,
+          leftOffset: GUTTER_WIDTH,
+          kind: "plain",
+        });
+      }
+      const bodyStart = messageStartRow + 1 + headRows;
+      return (
+        <Box flexDirection="column" flexShrink={0} minWidth={0}>
+          <Box key={spacerKey} height={1} flexShrink={0} />
+          <Box ref={setOpaqueRef(headKey)} flexDirection="row" flexShrink={0} minWidth={0}>
+            <Box minWidth={2} flexShrink={0}>
+              <Text color={resolveColor(theme.text)}>{BLACK_CIRCLE}</Text>
+            </Box>
+            <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text bold>
+                Compact summary
+                {!isTranscriptMode && <Text dimColor> (ctrl+o to expand)</Text>}
+              </Text>
+            </Box>
+          </Box>
+          {bodyRows.length > 0 && (
+            <MessageResponse>
+              <Box flexDirection="column" flexShrink={0} minWidth={0}>
+                {bodyRows.map((r, i) => (
+                  <Box key={i} height={1} flexShrink={0} minWidth={0}>
+                    <RowText
+                      row={r}
+                      selCols={rowSelection(selection, bodyStart + i, GUTTER_WIDTH + (r.origin ?? 0), contentWidth)}
+                      rowWidth={bodyWidth}
+                    />
+                  </Box>
+                ))}
+              </Box>
+            </MessageResponse>
+          )}
+        </Box>
+      );
+    }
+
     const rows = useMemo(
       () => wrapTextRuns([{ text: message.content }], userWidth),
       [message.content, userWidth],
@@ -196,10 +351,17 @@ function MessageView({
     return (
       <Box flexDirection="column" flexShrink={0} minWidth={0}>
         <Box key={spacerKey} height={1} flexShrink={0} />
-        <Box flexDirection="row" minWidth={0}>
-          <Text color={resolveColor(theme.claude)} bold>
-            {"❯ "}
-          </Text>
+        {/* The typed prompt sits on userMessageBackground with one column of
+            right padding, and its pointer is figures.pointer in the subtle
+            colour — not bold brand blue (UserPromptMessage.tsx:76,
+            HighlightedThinkingText.tsx:24/:91). */}
+        <Box
+          flexDirection="row"
+          minWidth={0}
+          backgroundColor={resolveColor(theme.userMessageBackground)}
+          paddingRight={1}
+        >
+          <Text color={resolveColor(theme.subtle)}>❯ </Text>
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
             {rows.map((r, i) => (
               <Box key={i} height={1} flexShrink={0} minWidth={0}>
@@ -247,10 +409,8 @@ function MessageView({
 
   if (message.role === "assistant") {
     const hasBlocks = !!(message.blocks && message.blocks.length > 0);
-    const hasThinking = !!message.thinking;
-    const hasContent = !!message.content && !hasBlocks;
-    const hasToolUse = (message.toolUse?.length ?? 0) > 0 && !hasBlocks;
     const lastBlockIndex = hasBlocks ? message.blocks!.length - 1 : -1;
+    const layout = assistantLayout(message);
 
     const fragments: React.ReactNode[] = [];
     let row = messageStartRow;
@@ -263,20 +423,18 @@ function MessageView({
       );
     };
 
-    // Message-level margin rows (the original marginTop={1} on the first
-    // child of each group).
-    if (hasThinking) spacer("m-t");
-    if (hasBlocks && !hasThinking) spacer("m-b");
-    if (hasContent) spacer("m-c");
-
-    // Tool block: the head is exactly 1 opaque row; every content row is a
-    // model span (computed here, rendered by ToolBlock from the same data),
-    // so the row accumulator never drifts from what is on screen.
+    // Tool block: the head is an opaque row (measured — a multi-line shell
+    // subject makes it taller than one); every content row is a model span
+    // (computed here, rendered by ToolBlock from the same data), so the row
+    // accumulator never drifts from what is on screen.
     const renderTool = (tool: ToolUseBlock, baseKey: string): React.ReactNode => {
       const spans = toolSpansFor(tool, contentWidth, isTranscriptMode ?? false);
+      const headKey = `${baseKey}:head`;
+      // One row until the measurement lands, like the compaction head.
+      const headRows = Math.max(1, lastRowCountsRef.current.get(headKey) ?? 0);
       const headRow = row;
-      row += 1;
-      report({ key: `${baseKey}:head`, rowCount: 1, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
+      row += headRows;
+      report({ key: headKey, rowCount: headRows, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
       for (const s of spans) {
         row += s.rowCount;
         report({
@@ -295,9 +453,10 @@ function MessageView({
             spans={spans}
             isHighlighted={tool.toolCallId ? tool.toolCallId === selectedToolCallId : false}
             selection={selection}
-            startRow={headRow + 1}
+            startRow={headRow + headRows}
             contentWidth={contentWidth}
             theme={theme}
+            headRef={opaqueRefFor(headKey)}
           />
         </Box>
       );
@@ -323,21 +482,20 @@ function MessageView({
         const textWidth = Math.max(1, contentWidth - 2);
         const model = textModelFor(block, textWidth);
         const rows = flattenMarkdown(model.model);
-        const extra = isStreaming && idx === lastBlockIndex ? 1 : 0;
         const start = row;
-        row += rows.length + extra;
+        row += rows.length;
         if (message.isError) {
           const repKey = `${key}:err`;
           report({ key: repKey, rowCount: 0, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
           return (
             <Box key={key} ref={setOpaqueRef(repKey)} flexShrink={0} minWidth={0}>
-              <TextBlock content={block.content} isError isStreaming={isStreaming && idx === lastBlockIndex} width={textWidth} selection={selection} startRow={start} />
+              <TextBlock content={block.content} isError width={textWidth} selection={selection} startRow={start} />
             </Box>
           );
         }
         report({
           key,
-          rowCount: rows.length + extra,
+          rowCount: rows.length,
           rows,
           width: textWidth,
           leftOffset: 2,
@@ -345,7 +503,7 @@ function MessageView({
         });
         return (
           <Box key={key} flexShrink={0} minWidth={0}>
-            <TextBlock content={block.content} isStreaming={isStreaming && idx === lastBlockIndex} width={textWidth} selection={selection} startRow={start} model={model.model} />
+            <TextBlock content={block.content} width={textWidth} selection={selection} startRow={start} model={model.model} />
           </Box>
         );
       }
@@ -375,74 +533,58 @@ function MessageView({
       return null;
     };
 
-    if (hasThinking) {
-      const repKey = `${blockKeyBase}:t`;
-      row += lastRowCountsRef.current.get(repKey) ?? 0;
-      report({ key: repKey, rowCount: 0, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
-      fragments.push(
-        <Box key={repKey} ref={setOpaqueRef(repKey)} flexShrink={0} minWidth={0}>
-          <ThinkingBlock
-            content={message.thinking ?? ""}
-            isTranscriptMode={isTranscriptMode}
-            width={contentWidth}
-            selection={selection}
-            startRow={row}
-          />
-        </Box>,
-      );
-    }
-
-    if (hasBlocks) {
-      // Consecutive Agent tool blocks collapse into one Claude Code-style
-      // fanout tree (header + per-agent progress lines). Runs of ANY length
-      // group — a single running agent shows the same progress line the
-      // reference renders for it.
-      const blocks = message.blocks!;
-      let idx = 0;
-      while (idx < blocks.length) {
-        const block = blocks[idx]!;
-        if (block.type === "tool" && block.block?.toolName === "Agent") {
-          const run: ToolUseBlock[] = [];
-          const runStart = idx;
-          while (
-            idx < blocks.length &&
-            blocks[idx]!.type === "tool" &&
-            blocks[idx]!.block?.toolName === "Agent"
-          ) {
-            run.push(blocks[idx]!.block!);
-            idx++;
-          }
-          fragments.push(renderAgentFanout(run, `${blockKeyBase}:fanout-${runStart}`));
-        } else {
-          fragments.push(renderBlock(block, idx));
-          idx++;
+    for (const unit of layout) {
+      switch (unit.kind) {
+        case "spacer":
+          spacer(unit.tag);
+          break;
+        case "thinking": {
+          const repKey = `${blockKeyBase}:t`;
+          row += lastRowCountsRef.current.get(repKey) ?? 0;
+          report({ key: repKey, rowCount: 0, rows: [], width: contentWidth, leftOffset: 0, kind: "opaque" });
+          fragments.push(
+            <Box key={repKey} ref={setOpaqueRef(repKey)} flexShrink={0} minWidth={0}>
+              <ThinkingBlock
+                content={message.thinking ?? ""}
+                isTranscriptMode={isTranscriptMode}
+                width={contentWidth}
+                selection={selection}
+                startRow={row}
+              />
+            </Box>,
+          );
+          break;
         }
+        case "block":
+          fragments.push(renderBlock(unit.block, unit.index));
+          break;
+        case "fanout":
+          fragments.push(renderAgentFanout(unit.run, `${blockKeyBase}:fanout-${unit.index}`));
+          break;
+        case "legacy-text": {
+          const textWidth = Math.max(1, contentWidth - 2);
+          const rows = textRowsFor(message.content, textWidth);
+          const start = row;
+          row += rows.length;
+          report({
+            key: `${blockKeyBase}:legacy-content`,
+            rowCount: rows.length,
+            rows,
+            width: textWidth,
+            leftOffset: 2,
+            kind: "text",
+          });
+          fragments.push(
+            <Box key="legacy-content" flexShrink={0} minWidth={0}>
+              <TextBlock content={message.content} isError={message.isError} width={textWidth} selection={selection} startRow={start} />
+            </Box>,
+          );
+          break;
+        }
+        case "legacy-tool":
+          fragments.push(renderTool(unit.tool, `${blockKeyBase}:tool${unit.index}`));
+          break;
       }
-    } else {
-      if (hasContent) {
-        const textWidth = Math.max(1, contentWidth - 2);
-        const rows = textRowsFor(message.content, textWidth);
-        const extra = isStreaming ? 1 : 0;
-        const start = row;
-        row += rows.length;
-        report({
-          key: `${blockKeyBase}:legacy-content`,
-          rowCount: rows.length + extra,
-          rows,
-          width: textWidth,
-          leftOffset: 2,
-          kind: "text",
-        });
-        fragments.push(
-          <Box key="legacy-content" flexShrink={0} minWidth={0}>
-            <TextBlock content={message.content} isError={message.isError} isStreaming={isStreaming} width={textWidth} selection={selection} startRow={start} />
-          </Box>,
-        );
-      }
-      message.toolUse?.forEach((tool: ToolUseBlock, i: number) => {
-        if (i === 0) spacer("sp-t0");
-        fragments.push(renderTool(tool, `${blockKeyBase}:tool${i}`));
-      });
     }
 
     return (

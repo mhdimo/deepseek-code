@@ -11,57 +11,37 @@ import { render } from "ink";
 import App from "./components/App.js";
 import AlternateScreen from "./components/AlternateScreen.js";
 import { loadConfig, printHelp } from "./utils/config.js";
-import { loadSettings as loadPersistedSettings } from "./state/storage.js";
+import { loadSettings as loadPersistedSettings, hardenDataDir } from "./state/storage.js";
 import { resolveThemeSetting, syncLiveTheme } from "./utils/theme.js";
+import { APP_VERSION } from "./utils/version.js";
 import { existsSync, readFileSync } from "fs";
 import { INK_RENDER_OPTIONS } from "./components/terminalLayout.js";
+import { createSanitizedStdin } from "./components/inkStdin.js";
+import { EMPTY_FINISH_REASON } from "./services/recovery.js";
+import { LIMIT_FINISH_REASON } from "./services/stepLimit.js";
+import { assertBypassSafe } from "./services/bypassMode.js";
+import { contextWindowFor } from "./services/contextManager.js";
 
-const VERSION = "0.1.0";
+const VERSION = APP_VERSION;
 
 
 
 
 
 
-function isRunningAsRoot(): boolean {
-  if (typeof process.getuid === "function" && process.getuid() === 0) return true;
-  
-  if (process.env.SUDO_UID !== undefined || process.env.SUDO_USER !== undefined) return true;
-  return false;
-}
-
-function isInContainer(): boolean {
-  if (existsSync("/.dockerenv")) return true;
-  if (process.env.container) return true;
-  try {
-    
-    const cgroup = readFileSync("/proc/1/cgroup", "utf-8");
-    if (/docker|containerd|kubepods|lxc/.test(cgroup)) return true;
-  } catch {
-    
-  }
-  return false;
-}
-
-function assertBypassSafe(config: { dangerouslySkipPermissions?: boolean }): void {
-  if (!config.dangerouslySkipPermissions) return;
-  if (isRunningAsRoot() && !isInContainer()) {
-    console.error(
-      "\n  Refusing to run with --dangerously-skip-permissions as root/sudo outside a sandbox.\n" +
-        "  That would let the agent execute arbitrary commands unrestricted as root on your host.\n\n" +
-        "  Options:\n" +
-        "    • Run as a non-root user.\n" +
-        "    • Run inside a container/sandbox (detected automatically).\n" +
-        "    • Drop --dangerously-skip-permissions and approve commands individually.\n",
-    );
-    process.exit(1);
-  }
-}
+// The root/sandbox gate and the permission-mode cycle both live in
+// services/bypassMode.ts: the TUI can reach `bypassPermissions` by keypress as
+// well as by flag, and the two paths have to agree on when it is allowed.
 
 async function main() {
   const config = loadConfig();
 
-  
+
+  // ~/.deepseek-code holds the API key and full session transcripts. Repair its
+  // permissions before anything reads or writes there; the App reports what was
+  // fixed via takeHardeningNotes().
+  hardenDataDir();
+
   if (config.help) {
     printHelp();
     process.exit(0);
@@ -73,8 +53,8 @@ async function main() {
     process.exit(0);
   }
 
-  
-  assertBypassSafe(config);
+
+  assertBypassSafe(config, (config as any).print !== undefined);
 
   
   
@@ -92,7 +72,7 @@ async function main() {
       model: config.model,
     };
     try {
-      await runPrint({
+      const result = await runPrint({
         prompt,
         model: config.model,
         outputFormat: (config as any).printOutputFormat,
@@ -104,10 +84,24 @@ async function main() {
         streamText: (config as any).printStreamText,
         mcpServers: config.mcpServers,
         workingDir: process.cwd(),
+        dangerouslySkipPermissions: config.dangerouslySkipPermissions,
+        // The TUI passes this and headless did not, so the engine fell back to
+        // its own 128K while everything else here believed the model's real
+        // window — headless runs compacted a million-token model eight times
+        // too early and never said why.
+        maxContextTokens: contextWindowFor(config.model),
       });
-      process.exit(0);
+      // A run cut off at its step budget is not a successful run — CI has to
+      // be able to tell a finished task from a truncated one. Neither is one
+      // that produced nothing at all: a rejected request and a completed turn
+      // are the same event, and silently exiting 0 makes them the same result.
+      process.exit(
+        result.finishReason === LIMIT_FINISH_REASON || result.finishReason === EMPTY_FINISH_REASON
+          ? 1
+          : 0,
+      );
     } catch {
-      
+
       process.exit(1);
     }
   }
@@ -150,7 +144,13 @@ async function main() {
     
     
     
-    INK_RENDER_OPTIONS,
+    {
+      ...INK_RENDER_OPTIONS,
+      // Ink's keypress parser throws on escape sequences it has no key for —
+      // pasting a coloured diff kills the app mid-keystroke. Filter them at the
+      // source; see components/inkStdin.ts.
+      stdin: createSanitizedStdin(process.stdin),
+    },
   );
 
   await waitUntilExit();

@@ -4,11 +4,20 @@
 
 
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import { resolve } from "path";
 import { z } from "zod";
 import { buildTool } from "../../Tool.js";
 import { BASH_TOOL_NAME, DESCRIPTION } from "./prompt.js";
 import { registerTask } from "../../services/tasks/backgroundFramework.js";
+import {
+  type Spill,
+  closeSpill,
+  openSpill,
+  spillNote,
+  spillPath,
+  writeSpill,
+} from "../../services/toolOutputs.js";
 
 
 
@@ -33,12 +42,51 @@ const BashInputSchema = z.object({
 
 const DEFAULT_TIMEOUT = 120_000;
 const MAX_TIMEOUT = 600_000;
+/** What the result shows inline. Past this the whole stream goes to a file. */
 const MAX_OUTPUT_BYTES = 50_000;
+
+/**
+ * One stream's output, split between what the model sees inline and the file
+ * the rest goes to. Overflow is a paging decision, never a reason to kill the
+ * command — see services/toolOutputs.ts.
+ */
+interface StreamCapture {
+  inline: string;
+  spill: Spill | null;
+}
+
+/** Append a chunk, spilling to `path` once the inline head is full. */
+function capture(state: StreamCapture, path: string, chunk: string): void {
+  if (state.spill) {
+    writeSpill(state.spill, chunk);
+    return;
+  }
+  const combined = state.inline + chunk;
+  if (combined.length <= MAX_OUTPUT_BYTES) {
+    state.inline = combined;
+    return;
+  }
+  state.spill = openSpill(path, combined);
+  state.inline = combined.slice(0, MAX_OUTPUT_BYTES);
+}
+
+/**
+ * Where a stream's full output went, or "" if it all fit.
+ *
+ * A header rather than a note appended to the stream: results are themselves
+ * capped by the tool runner, which cuts the tail — exactly where a trailing
+ * pointer, the one thing here the model cannot reconstruct, would be lost.
+ */
+function spillHeader(state: StreamCapture, which: "stdout" | "stderr"): string {
+  if (!state.spill) return "";
+  return `[${which} truncated at ${MAX_OUTPUT_BYTES / 1000}KB; ${spillNote(state.spill)}]\n`;
+}
 
 
 
 export const BashTool = buildTool({
   name: BASH_TOOL_NAME,
+  requiredPermission: "allowExecute",
   description: DESCRIPTION,
   inputSchema: BashInputSchema,
 
@@ -88,6 +136,8 @@ export const BashTool = buildTool({
     }
 
     const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
+    // Names the spill files, created only if this command overflows.
+    const taskId = randomUUID().slice(0, 8);
 
     return new Promise<{ data: string }>((resolvePromise) => {
       // detached + own process group so a timeout/cancel can kill the whole
@@ -99,11 +149,9 @@ export const BashTool = buildTool({
         detached: true,
       });
 
-      let stdout = "";
-      let stderr = "";
+      const out: StreamCapture = { inline: "", spill: null };
+      const err: StreamCapture = { inline: "", spill: null };
       let settled = false;
-      let stderrCapped = false;
-      let stdoutCapped = false;
 
       const killGroup = () => {
         try {
@@ -121,25 +169,28 @@ export const BashTool = buildTool({
         }, 1500).unref();
       };
 
+      // Both streams are finished before the result is handed back, so a path
+      // the result advertises is complete by the time the model reads it.
       const settle = (data: string) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolvePromise({ data });
+        void Promise.all([closeSpill(out.spill), closeSpill(err.spill)]).then(() =>
+          resolvePromise({ data }),
+        );
       };
+
+      const output = (): string => {
+        const header = spillHeader(out, "stdout") + spillHeader(err, "stderr");
+        return header + out.inline + (err.inline ? `\nSTDERR:\n${err.inline}` : "");
+      };
+
+      const stdoutSpill = spillPath(taskId, "stdout");
+      const stderrSpill = spillPath(taskId, "stderr");
 
       child.stdout.on("data", (data: Buffer) => {
         const chunk = data.toString();
-        if (!stdoutCapped) {
-          stdout += chunk;
-          if (stdout.length > MAX_OUTPUT_BYTES) {
-            stdoutCapped = true;
-            stdout = stdout.slice(0, MAX_OUTPUT_BYTES);
-            killGroup();
-            settle(`(output truncated at 50KB)\n${stdout}`);
-            return;
-          }
-        }
+        capture(out, stdoutSpill, chunk);
         if (context.onToolOutput) {
           context.onToolOutput("Bash", chunk);
         }
@@ -147,15 +198,7 @@ export const BashTool = buildTool({
 
       child.stderr.on("data", (data: Buffer) => {
         const chunk = data.toString();
-        // stderr was unbounded before — a chatty command could grow it
-        // without limit. Cap it like stdout (kept for the error summary).
-        if (!stderrCapped) {
-          stderr += chunk;
-          if (stderr.length > MAX_OUTPUT_BYTES) {
-            stderrCapped = true;
-            stderr = stderr.slice(0, MAX_OUTPUT_BYTES) + "\n... (stderr truncated at 50KB)";
-          }
-        }
+        capture(err, stderrSpill, chunk);
         if (context.onToolOutput) {
           context.onToolOutput("Bash", chunk);
         }
@@ -163,8 +206,7 @@ export const BashTool = buildTool({
 
       const timer = setTimeout(() => {
         killGroup();
-        const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
-        settle(`Command timed out after ${timeout}ms\n${output}`);
+        settle(`Command timed out after ${timeout}ms\n${output()}`);
       }, timeout);
 
       // User cancel: abort the whole group instead of orphaning the process.
@@ -176,11 +218,11 @@ export const BashTool = buildTool({
 
       child.on("close", (code: number | null) => {
         context.abortController?.signal.removeEventListener("abort", abortHandler);
-        const output = stdout + (stderr ? `\nSTDERR:\n${stderr}` : "");
+        const text = output();
         if (code === 0) {
-          settle(output || "(no output)");
+          settle(text || "(no output)");
         } else {
-          settle(`Exit code ${code}\n${output}`);
+          settle(`Exit code ${code}\n${text}`);
         }
       });
 

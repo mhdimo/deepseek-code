@@ -1,34 +1,42 @@
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Dialog } from "../ui/design-system/Dialog.js";
+import { Pane } from "../ui/design-system/Pane.js";
 import { Select, type SelectOption } from "../ui/design-system/Select.js";
+import { Tab, Tabs, useTabHeaderFocus } from "../ui/design-system/Tabs.js";
 import InputDialog from "./InputDialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
 import { parseRule } from "../services/permissions.js";
+import { stripMouseSequences } from "./useMouseWheelScroll.js";
 import {
+  addRuleToScope,
   behaviorLabel,
   computeShadowedMap,
   describeRule,
   findShadowingRules,
+  removeRuleFromScope,
   type RuleEntry,
+  type RuleSections,
   type Section,
 } from "./permissionsRuleUtils.js";
 
-export interface PermissionRulesShape {
-  allow?: string[];
-  ask?: string[];
-  deny?: string[];
-}
+export type PermissionRulesShape = RuleSections;
 
 export interface PermissionsViewProps {
-  persistedRules: PermissionRulesShape;
+  /** The user's own rules, from ~/.deepseek-code/settings.json. */
+  userRules: PermissionRulesShape;
+  /** The workspace's rules, from its .deepseek-code.json. Only a trusted
+   *  workspace has any — that is also the only state in which the engine reads
+   *  them — and they are shown only when they can be edited. */
+  projectRules?: PermissionRulesShape;
   sessionRules: { allow: string[]; deny: string[] };
-  /** Persist the settings-level rules (writes settings.json). */
+  /** Persist the user's rules (writes settings.json). */
   onPersistRules: (rules: PermissionRulesShape) => void;
-  /** Persist to the project .deepseek-code.json (optional — hides that destination). */
+  /** Persist the workspace's rules (writes its .deepseek-code.json). Absent for
+   *  an untrusted workspace, which also hides that destination and its rows. */
   onPersistProjectRules?: (rules: PermissionRulesShape) => void;
   /** Update the live session-only rules. */
   onSessionRulesChange: (rules: { allow: string[]; deny: string[] }) => void;
@@ -37,14 +45,42 @@ export interface PermissionsViewProps {
   onClose: () => void;
 }
 
+/** Where a rule lives. Each scope is edited and persisted on its own: writing
+ *  one scope's rules into the other's file would move rules the user did not
+ *  touch, and for the workspace file that write is trust-gated. */
+type RuleSource = "user" | "project" | "session";
+
 interface RuleRow {
   id: string;
   section: Section;
-  source: "settings" | "session";
+  source: RuleSource;
   text: string;
 }
 
-const SECTION_ORDER: Section[] = ["allow", "ask", "deny"];
+function sourceLabel(source: RuleSource): string {
+  if (source === "session") return "From this session";
+  if (source === "project") return "From project settings";
+  return "From settings";
+}
+
+/** One tab per behavior. The reference's pane also carries "Recently denied"
+ *  and "Workspace" tabs; neither has a backing store here (there is no denial
+ *  history, and a workspace's rules live in its own config file), so the tab
+ *  set stops at the three rule lists the app can actually read and write. */
+const TABS: Section[] = ["allow", "ask", "deny"];
+
+const TAB_TITLES: Record<Section, string> = {
+  allow: "Allow",
+  ask: "Ask",
+  deny: "Deny",
+};
+
+/** The reference's per-tab explanation, in this product's name. */
+const TAB_EXPLANATIONS: Record<Section, string> = {
+  allow: "DeepSeek Code won't ask before using allowed tools.",
+  ask: "DeepSeek Code will always ask for confirmation before using these tools.",
+  deny: "DeepSeek Code will always reject requests to use denied tools.",
+};
 
 const USER_SETTINGS_PATH = join(homedir(), ".deepseek-code", "settings.json");
 const PROJECT_CONFIG_PATH = join(process.cwd(), ".deepseek-code.json");
@@ -53,19 +89,99 @@ function sectionRules(rules: PermissionRulesShape, section: Section): string[] {
   return rules[section] ?? [];
 }
 
-/** All rules (settings + session) as flat entries for the shadowing scan. */
+/**
+ * All rules (each scope + session) as flat entries for the shadowing scan.
+ *
+ * Identical rules from two scopes collapse into one entry, because that is what
+ * they are in force: the engine merges the scopes and drops duplicates, so
+ * reporting one copy as shadowing the other would describe a conflict that does
+ * not exist. The list still shows both rows, so either can be deleted.
+ */
 function ruleEntries(
-  rules: PermissionRulesShape,
+  scopes: readonly PermissionRulesShape[],
   session: { allow: string[]; deny: string[] },
 ): RuleEntry[] {
   const out: RuleEntry[] = [];
-  for (const section of SECTION_ORDER) {
-    for (const text of sectionRules(rules, section)) out.push({ section, text });
+  const seen = new Set<string>();
+  const add = (section: Section, text: string) => {
+    const key = `${section} ${text}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ section, text });
+  };
+  for (const rules of scopes) {
+    for (const section of ["allow", "ask", "deny"] as const) {
+      for (const text of sectionRules(rules, section)) add(section, text);
+    }
   }
   for (const section of ["allow", "deny"] as const) {
-    for (const text of session[section]) out.push({ section, text });
+    for (const text of session[section]) add(section, text);
   }
   return out;
+}
+
+/** The reference's state-dependent input guide: what the keys do right now.
+ *  (Its fourth branch — "Enter approve · r retry" — waits on a denial history
+ *  this app does not keep.) */
+export function permissionsGuide(headerFocused: boolean, searchActive: boolean): string {
+  if (headerFocused) return "←/→ tab switch · ↓ return · Esc cancel";
+  if (searchActive) return "Type to filter · Enter/↓ select · ↑ tabs · Esc clear";
+  return "↑↓ navigate · Enter select · Type to search · ←/→ switch · Esc cancel";
+}
+
+/** Rounded red confirmation card for deleting a rule — the reference's
+ *  RuleDetails screen, with the rule, its plain-English reading and its
+ *  source, then the Yes/No select and a single "Esc to cancel" line. */
+export function DeleteRuleCard({
+  rule,
+  shadowers,
+  onDelete,
+  onCancel,
+}: {
+  rule: RuleRow;
+  shadowers?: string[];
+  onDelete: () => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  return (
+    <>
+      <Box
+        flexDirection="column"
+        gap={1}
+        borderStyle="round"
+        paddingLeft={1}
+        paddingRight={1}
+        borderColor={resolveColor(theme.error)}
+      >
+        <Text bold color={resolveColor(theme.error)}>
+          Delete {behaviorLabel(rule.section)} tool?
+        </Text>
+        <Box flexDirection="column" marginX={2}>
+          <Text bold>{rule.text}</Text>
+          <RuleDescriptionText text={rule.text} />
+          <Text dimColor>{sourceLabel(rule.source)}</Text>
+          {/* The shadow warning used to ride on the list row's second line;
+              the rows are single-line now, so it lives with the rest of the
+              rule's details. */}
+          {shadowers && shadowers.length > 0 && (
+            <Text dimColor>Warning: shadowed by {shadowers.join(", ")}</Text>
+          )}
+        </Box>
+        <Text>Are you sure you want to delete this permission rule?</Text>
+        <Select
+          options={[
+            { label: "Yes", value: "yes" },
+            { label: "No", value: "no" },
+          ]}
+          onChange={(value) => (value === "yes" ? onDelete() : onCancel())}
+          onCancel={onCancel}
+        />
+      </Box>
+      <Box marginLeft={3}>
+        <Text dimColor>Esc to cancel</Text>
+      </Box>
+    </>
+  );
 }
 
 /** Dim natural-language rendering of a rule ("Any Bash command starting with ls"). */
@@ -81,15 +197,167 @@ function RuleDescriptionText({ text }: { text: string }): React.ReactElement | n
   );
 }
 
+/** The reference SearchBox: a rounded, full-width field with a ⌕ prefix that
+ *  is always on screen (focused while typing, dim while the list has focus). */
+function RuleSearchBox({
+  query,
+  focused,
+}: {
+  query: string;
+  focused: boolean;
+}): React.ReactElement {
+  return (
+    <Box
+      flexShrink={0}
+      borderStyle="round"
+      borderColor={focused ? resolveColor(theme.suggestion) : undefined}
+      borderDimColor={!focused}
+      paddingX={1}
+    >
+      <Text dimColor={!focused}>
+        {"⌕ "}
+        {query ? (
+          focused ? (
+            <>
+              <Text>{query.slice(0, query.length)}</Text>
+              <Text inverse>{" "}</Text>
+            </>
+          ) : (
+            <Text>{query}</Text>
+          )
+        ) : (
+          <Text dimColor>Search…</Text>
+        )}
+      </Text>
+    </Box>
+  );
+}
+
+interface RulesTabContentProps {
+  /** Rules of the active tab, already filtered by the search query. */
+  rows: RuleRow[];
+  explanation: string;
+  searchQuery: string;
+  searchActive: boolean;
+  onSelectRow: (value: string) => void;
+  onClose: () => void;
+  onSearchQueryChange: (query: string) => void;
+  onSearchActiveChange: (active: boolean) => void;
+  onHeaderFocusChange: (focused: boolean) => void;
+  defaultFocusValue?: string;
+  onFocusRow: (value: string) => void;
+}
+
+/**
+ * One allow/ask/deny tab: the tab's explanation, its search box, and the rule
+ * list with the create action as its first row. The tab header and this content
+ * take turns owning the arrow keys — the Select is muted while the header or
+ * the search box is in focus.
+ */
+function RulesTabContent({
+  rows,
+  explanation,
+  searchQuery,
+  searchActive,
+  onSelectRow,
+  onClose,
+  onSearchQueryChange,
+  onSearchActiveChange,
+  onHeaderFocusChange,
+  defaultFocusValue,
+  onFocusRow,
+}: RulesTabContentProps): React.ReactElement {
+  const { headerFocused } = useTabHeaderFocus();
+
+  useEffect(() => {
+    onHeaderFocusChange(headerFocused);
+  }, [headerFocused, onHeaderFocusChange]);
+
+  const searchFocused = searchActive && !headerFocused;
+
+  // The search box owns the keyboard while it is active.
+  useInput((input, key) => {
+    if (!searchActive) return;
+    if (key.escape) {
+      onSearchQueryChange("");
+      onSearchActiveChange(false);
+      return;
+    }
+    if (key.return) {
+      onSearchActiveChange(false); // back to the list with the filter applied
+      return;
+    }
+    if (key.backspace || key.delete) {
+      if (searchQuery.length <= 1) {
+        onSearchQueryChange("");
+        onSearchActiveChange(false);
+      } else {
+        onSearchQueryChange(searchQuery.slice(0, -1));
+      }
+      return;
+    }
+    // The old guard tested `input.startsWith("[<")` — a report that was not
+    // first in the chunk still got typed, and a paste starting with those two
+    // characters was dropped whole. Strip the reports and keep the rest.
+    const typed = stripMouseSequences(input);
+    if (key.ctrl || key.meta || typed.length === 0) return;
+    onSearchQueryChange(searchQuery + typed);
+  });
+
+  // List keys: Esc leaves the screen (or returns from the header), and the
+  // first typed character starts a search. j/k stay with the Select.
+  useInput((input, key) => {
+    if (searchActive) return;
+    if (headerFocused) {
+      if (key.escape) onClose();
+      return;
+    }
+    if (key.escape) return; // the focused list's Select owns Esc (→ close)
+    if (key.ctrl || key.meta || input.length !== 1 || input.startsWith("[<")) return;
+    if (input === "j" || input === "k" || input === " ") return;
+    onSearchQueryChange(input);
+    onSearchActiveChange(true);
+  });
+
+  const options: SelectOption[] = [];
+  // The create action is the first row of every tab, and disappears while a
+  // query is active (the reference drops it from search results).
+  if (!searchQuery) options.push({ label: "Add a new rule…", value: "add-new-rule" });
+  for (const row of rows) options.push({ label: row.text, value: row.id });
+
+  return (
+    <Box flexDirection="column">
+      <Text>{explanation}</Text>
+      <Box marginBottom={1} flexDirection="column">
+        <RuleSearchBox query={searchQuery} focused={searchFocused} />
+      </Box>
+      {options.length > 0 && (
+        <Select
+          options={options}
+          onChange={onSelectRow}
+          onCancel={onClose}
+          onFocus={onFocusRow}
+          defaultValue={defaultFocusValue}
+          visibleOptionCount={10}
+          highlightText={searchQuery || undefined}
+          keysActive={!searchActive && !headerFocused}
+        />
+      )}
+    </Box>
+  );
+}
+
 /**
  * Interactive /permissions manager (Claude Code PermissionRuleList equivalent):
- * allow/ask/deny rules from settings plus this-session rules, with add (choose
- * a save destination), delete (Enter a rule → Yes/No confirmation panel),
- * type-to-filter, and shadowed-rule warnings. Rules use the Tool(spec:pattern)
- * syntax from the permission engine.
+ * a "Permissions:" tabbed pane with one list per behavior (Allow / Ask / Deny),
+ * an always-present search box, "Add a new rule…" as the first row of each tab,
+ * and a rounded delete confirmation. Rules come from settings, the workspace
+ * config and this session; they use the Tool(spec:pattern) syntax from the
+ * permission engine.
  */
 export default function PermissionsView({
-  persistedRules,
+  userRules,
+  projectRules,
   sessionRules,
   onPersistRules,
   onPersistProjectRules,
@@ -97,81 +365,71 @@ export default function PermissionsView({
   onSummary,
   onClose,
 }: PermissionsViewProps): React.ReactElement {
-  const [rules, setRules] = useState<PermissionRulesShape>(() => ({
-    allow: [...sectionRules(persistedRules, "allow")],
-    ask: [...sectionRules(persistedRules, "ask")],
-    deny: [...sectionRules(persistedRules, "deny")],
-  }));
+  const copy = (rules: PermissionRulesShape | undefined): PermissionRulesShape => ({
+    allow: [...sectionRules(rules ?? {}, "allow")],
+    ask: [...sectionRules(rules ?? {}, "ask")],
+    deny: [...sectionRules(rules ?? {}, "deny")],
+  });
+  const [rules, setRules] = useState<PermissionRulesShape>(() => copy(userRules));
+  // Shown only when they can be written back: a workspace's rules exist to be
+  // read only in a trusted workspace, and that is also when the callback is
+  // supplied. Rows that cannot be deleted would be a lie about the file.
+  const [project, setProject] = useState<PermissionRulesShape>(() =>
+    onPersistProjectRules ? copy(projectRules) : copy({}),
+  );
   const [session, setSession] = useState(() => ({
     allow: [...sessionRules.allow],
     deny: [...sessionRules.deny],
   }));
+  const [tab, setTab] = useState<Section>("allow");
   const [detailsRule, setDetailsRule] = useState<RuleRow | null>(null);
-  const [mode, setMode] = useState<"list" | "add-section" | "add-rule" | "add-destination">("list");
+  const [mode, setMode] = useState<"list" | "add-rule" | "add-destination">("list");
   const [addSection, setAddSection] = useState<Section>("allow");
   const [pendingRule, setPendingRule] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [searchActive, setSearchActive] = useState(false);
+  const [headerFocused, setHeaderFocused] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   // rule text -> higher-precedence rules that shadow it (dim row warnings).
   const [shadowedBy, setShadowedBy] = useState<Record<string, string[]>>(() => {
-    const r: PermissionRulesShape = {
-      allow: [...sectionRules(persistedRules, "allow")],
-      ask: [...sectionRules(persistedRules, "ask")],
-      deny: [...sectionRules(persistedRules, "deny")],
-    };
+    const r = copy(userRules);
+    const p = onPersistProjectRules ? copy(projectRules) : {};
     const s = { allow: [...sessionRules.allow], deny: [...sessionRules.deny] };
-    return computeShadowedMap(ruleEntries(r, s));
+    return computeShadowedMap(ruleEntries([r, p], s));
   });
   const focusedIdRef = useRef<string | null>(null);
   const changeRef = useRef<string[]>([]);
 
-  // Rows sorted within each section by lowercase rule text (localeCompare).
+  // Rows of the active tab, sorted by lowercase rule text (localeCompare).
   const rows = useMemo<RuleRow[]>(() => {
     const out: RuleRow[] = [];
-    for (const section of SECTION_ORDER) {
-      sectionRules(rules, section)
+    const append = (source: RuleSource, settings: PermissionRulesShape) => {
+      sectionRules(settings, tab)
         .slice()
         .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
         .forEach((text, i) => {
-          out.push({ id: `settings:${section}:${i}`, section, source: "settings", text });
+          out.push({ id: `${source}:${tab}:${i}`, section: tab, source, text });
         });
-    }
-    for (const section of ["allow", "deny"] as const) {
-      session[section]
+    };
+    append("user", rules);
+    append("project", project);
+    // Session rules are allow/deny only — the engine has no session "ask".
+    if (tab === "allow" || tab === "deny") {
+      session[tab]
         .slice()
         .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
         .forEach((text, i) => {
-          out.push({ id: `session:${section}:${i}`, section, source: "session", text });
+          out.push({ id: `session:${tab}:${i}`, section: tab, source: "session", text });
         });
     }
     return out;
-  }, [rules, session]);
+  }, [rules, project, session, tab]);
 
   const filteredRows = useMemo(() => {
     if (!filterQuery) return rows;
     const q = filterQuery.toLowerCase();
     return rows.filter((r) => r.text.toLowerCase().includes(q));
   }, [rows, filterQuery]);
-
-  const options = useMemo<SelectOption[]>(
-    () =>
-      filteredRows.map((row) => {
-        const shadowers = shadowedBy[row.text];
-        const warning =
-          shadowers && shadowers.length > 0
-            ? ` · Warning: shadowed by ${shadowers.join(", ")}`
-            : "";
-        return {
-          value: row.id,
-          label: row.text,
-          description: `${row.section} rule · ${
-            row.source === "settings" ? "From settings" : "(this session)"
-          }${warning}`,
-        };
-      }),
-    [filteredRows, shadowedBy],
-  );
 
   // Keep the focused-row ref valid as the list changes underneath us.
   useEffect(() => {
@@ -190,10 +448,23 @@ export default function PermissionsView({
     onPersistRules(next);
   };
 
+  const commitProject = (next: PermissionRulesShape) => {
+    setProject(next);
+    onPersistProjectRules?.(next);
+  };
+
   const commitSession = (next: { allow: string[]; deny: string[] }) => {
     setSession(next);
     onSessionRulesChange(next);
   };
+
+  /** The shadow scan runs over every scope, since that is what the engine
+   *  matches against: a rule can be shadowed by one written in another file. */
+  const rescan = (
+    user: PermissionRulesShape,
+    proj: PermissionRulesShape,
+    sess: { allow: string[]; deny: string[] },
+  ) => setShadowedBy(computeShadowedMap(ruleEntries([user, proj], sess)));
 
   const deleteRow = (row: RuleRow) => {
     if (row.source === "session") {
@@ -202,12 +473,15 @@ export default function PermissionsView({
         (r) => r !== row.text,
       );
       commitSession(next);
-      setShadowedBy(computeShadowedMap(ruleEntries(rules, next)));
+      rescan(rules, project, next);
+    } else if (row.source === "project") {
+      const next = removeRuleFromScope(project, row.section, row.text);
+      commitProject(next);
+      rescan(rules, next, session);
     } else {
-      const next = { ...rules };
-      next[row.section] = sectionRules(next, row.section).filter((r) => r !== row.text);
+      const next = removeRuleFromScope(rules, row.section, row.text);
       commit(next);
-      setShadowedBy(computeShadowedMap(ruleEntries(next, session)));
+      rescan(next, project, session);
     }
     changeRef.current = [...changeRef.current, `Deleted ${row.section} rule ${row.text}`];
     setDetailsRule(null);
@@ -217,12 +491,19 @@ export default function PermissionsView({
 
   const commitAdd = (destination: "project" | "user") => {
     if (!pendingRule) return;
-    const next = { ...rules };
-    next[addSection] = [...sectionRules(next, addSection), pendingRule];
-    setRules(next);
-    if (destination === "project") onPersistProjectRules?.(next);
-    else onPersistRules(next);
-    const shadowers = findShadowingRules(pendingRule, addSection, ruleEntries(next, session));
+    // Only the chosen scope is rewritten. Adding a rule to one file must not
+    // copy the other file's rules into it — for a workspace that write is
+    // trust-gated, and the two scopes are not interchangeable.
+    let user = rules;
+    let proj = project;
+    if (destination === "project") {
+      proj = addRuleToScope(project, addSection, pendingRule);
+      commitProject(proj);
+    } else {
+      user = addRuleToScope(rules, addSection, pendingRule);
+      commit(user);
+    }
+    const shadowers = findShadowingRules(pendingRule, addSection, ruleEntries([user, proj], session));
     if (shadowers.length > 0) {
       setShadowedBy((prev) => ({ ...prev, [pendingRule]: shadowers }));
     }
@@ -243,59 +524,19 @@ export default function PermissionsView({
     onClose();
   };
 
-  // List-mode commands + type-to-filter trigger. Select owns arrows/enter/esc
-  // while it is rendered; Esc falls back to this handler when no Select shows.
-  useInput((input, key) => {
-    if (mode !== "list" || detailsRule || searchActive) return;
+  const handleHeaderFocusChange = useCallback((focused: boolean) => setHeaderFocused(focused), []);
 
-    if (key.escape) {
-      if (rows.length === 0 || filteredRows.length === 0) {
-        if (filterQuery) clearFilter();
-        else close();
-      }
+  /** Enter on a row: the create action starts the add flow for this tab,
+   *  anything else opens that rule's delete confirmation. */
+  const selectRow = (value: string) => {
+    if (value === "add-new-rule") {
+      setAddSection(tab);
+      setNote(null);
+      setMode("add-rule");
       return;
     }
-    if (key.ctrl || key.meta || input.length !== 1 || input.startsWith("[<")) return;
-
-    if (input === "a") {
-      setMode("add-section");
-      return;
-    }
-    if (input === "d") {
-      const target = rows.find((r) => r.id === focusedIdRef.current) ?? rows[0];
-      if (target) setDetailsRule(target);
-      return;
-    }
-    // j/k are Select navigation; space makes no sense as a filter start.
-    if (input === "j" || input === "k" || input === " ") return;
-    setFilterQuery(input);
-    setSearchActive(true);
-  });
-
-  // The filter input owns the keyboard while searchActive (Select keysActive off).
-  useInput((input, key) => {
-    if (mode !== "list" || detailsRule || !searchActive) return;
-
-    if (key.escape) {
-      clearFilter();
-      return;
-    }
-    if (key.return) {
-      setSearchActive(false); // back to the list with the filter applied
-      return;
-    }
-    if (key.backspace || key.delete) {
-      if (filterQuery.length <= 1) clearFilter();
-      else setFilterQuery((prev) => prev.slice(0, -1));
-      return;
-    }
-    if (key.ctrl || key.meta || input.startsWith("[<") || input.length === 0) return;
-    setFilterQuery((prev) => prev + input);
-  });
-
-  const handleListCancel = () => {
-    if (filterQuery) clearFilter();
-    else close();
+    const row = rows.find((r) => r.id === value);
+    if (row) setDetailsRule(row);
   };
 
   const destinationOptions = useMemo<SelectOption<"project" | "user">[]>(() => {
@@ -308,59 +549,17 @@ export default function PermissionsView({
     return opts;
   }, [onPersistProjectRules]);
 
+  const guide = permissionsGuide(headerFocused, searchActive);
+
   return (
     <>
       {detailsRule ? (
-        <Dialog
-          title={`Delete ${behaviorLabel(detailsRule.section)} tool?`}
+        <DeleteRuleCard
+          rule={detailsRule}
+          shadowers={shadowedBy[detailsRule.text]}
+          onDelete={() => deleteRow(detailsRule)}
           onCancel={() => setDetailsRule(null)}
-          color="error"
-          footer={
-            <Text>
-              <Text bold>↑↓</Text> choose · <Text bold>enter</Text> confirm · <Text bold>esc</Text>{" "}
-              cancel
-            </Text>
-          }
-        >
-          <Box flexDirection="column" gap={1}>
-            <Text bold>{detailsRule.text}</Text>
-            <RuleDescriptionText text={detailsRule.text} />
-            <Text dimColor>
-              {detailsRule.source === "settings" ? "From settings" : "From this session"}
-            </Text>
-            <Text>Are you sure you want to delete this permission rule?</Text>
-            <Select
-              options={[
-                { label: "Yes", value: "yes" },
-                { label: "No", value: "no" },
-              ]}
-              onChange={(value) => (value === "yes" ? deleteRow(detailsRule) : setDetailsRule(null))}
-              onCancel={() => setDetailsRule(null)}
-            />
-          </Box>
-        </Dialog>
-      ) : mode === "add-section" ? (
-        <Dialog
-          title="Add permission rule"
-          subtitle="Which section should the rule live in?"
-          onCancel={() => setMode("list")}
-          footer="↑↓ to choose · enter to continue · esc to cancel"
-        >
-          <Select
-            options={[
-              { label: "allow", value: "allow", description: "Auto-approve matching tool calls" },
-              { label: "ask", value: "ask", description: "Always prompt, even if another rule allows" },
-              { label: "deny", value: "deny", description: "Hard-block matching tool calls" },
-            ]}
-            defaultValue={addSection}
-            onChange={(value) => {
-              setAddSection(value);
-              setMode("add-rule");
-            }}
-            onCancel={() => setMode("list")}
-            enableNumberKeys
-          />
-        </Dialog>
+        />
       ) : mode === "add-rule" ? (
         <InputDialog
           title={`Add ${addSection} rule`}
@@ -393,62 +592,51 @@ export default function PermissionsView({
           />
         </Dialog>
       ) : (
-        <Dialog
-          title="Permission rules"
-          subtitle="Tool(spec:pattern) · deny > ask > allow · settings + this-session rules"
-          onCancel={close}
-          cancelActive={false}
-          footer={
-            <Text>
-              <Text bold>type</Text> to filter · <Text bold>enter</Text>/<Text bold>↓</Text> select ·{" "}
-              <Text bold>esc</Text> clear/close · <Text bold>a</Text> add
-            </Text>
-          }
-        >
-          {searchActive && (
-            <Box marginBottom={1}>
-              <Text color={resolveColor(theme.claude)}>{"> "}</Text>
-              <Text>{filterQuery}</Text>
-              <Text inverse> </Text>
-            </Box>
-          )}
-          {rows.length === 0 ? (
-            <Text dimColor>
-              No rules configured — tools prompt interactively. Press <Text bold>a</Text> to add one.
-            </Text>
-          ) : filteredRows.length === 0 ? (
-            <Text dimColor>
-              No rules match the filter — press <Text bold>esc</Text> to clear.
-            </Text>
-          ) : (
-            <Select
-              options={options}
-              onChange={(id) => {
-                const row = rows.find((r) => r.id === id);
-                if (row) setDetailsRule(row);
-              }}
-              onCancel={handleListCancel}
-              onFocus={(id) => {
-                focusedIdRef.current = id;
-              }}
-              defaultValue={focusedIdRef.current ?? undefined}
-              visibleOptionCount={10}
-              highlightText={filterQuery || undefined}
-              keysActive={!searchActive}
-            />
-          )}
+        <Pane color="permission">
+          <Tabs
+            title="Permissions:"
+            color="permission"
+            selectedTab={tab}
+            onTabChange={(id) => setTab(id as Section)}
+            navFromContent={!searchActive}
+            initialHeaderFocused
+          >
+            {TABS.map((section) => (
+              <Tab key={section} id={section} title={TAB_TITLES[section]}>
+                <RulesTabContent
+                  rows={filteredRows}
+                  explanation={TAB_EXPLANATIONS[section]}
+                  searchQuery={filterQuery}
+                  searchActive={searchActive}
+                  onSelectRow={selectRow}
+                  onClose={close}
+                  onSearchQueryChange={setFilterQuery}
+                  onSearchActiveChange={setSearchActive}
+                  onHeaderFocusChange={handleHeaderFocusChange}
+                  defaultFocusValue={focusedIdRef.current ?? undefined}
+                  onFocusRow={(id) => {
+                    focusedIdRef.current = id;
+                  }}
+                />
+              </Tab>
+            ))}
+          </Tabs>
           {note && (
             <Box marginTop={1}>
               <Text dimColor>{note}</Text>
             </Box>
           )}
+          <Box marginTop={1} paddingLeft={1}>
+            <Text dimColor>{guide}</Text>
+          </Box>
           <Box marginTop={1}>
             <Text dimColor>
-              Settings rules persist to ~/.deepseek-code/settings.json · session rules vanish on
-              /clear or exit
+              Settings rules persist to ~/.deepseek-code/settings.json
+              {onPersistProjectRules ? ` · project rules to ${PROJECT_CONFIG_PATH}` : ""} · session
+              rules vanish on /clear or exit
             </Text>
           </Box>
-        </Dialog>
+        </Pane>
       )}
     </>
   );

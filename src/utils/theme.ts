@@ -25,6 +25,91 @@
 
 
 
+/** Which family of syntax colours a palette highlights with. A theme carries
+ *  the name rather than the table so that `theme[keyof Theme]` stays a string
+ *  for the design system's dynamic token lookups. */
+export type SyntaxScopes = 'monokai' | 'github' | 'ansi'
+
+/** highlight.js scope → foreground, as the reference's color-diff module
+ *  measures them (native-ts/color-diff/index.ts): Monokai Extended for the
+ *  dark palettes, GitHub for the light ones, and the bright half of the
+ *  16-colour palette for the ansi variants — which stay symbolic so they
+ *  follow the terminal's own colours. */
+export const MONOKAI_SCOPES: Record<string, string> = {
+  keyword: 'rgb(249,38,114)',
+  _storage: 'rgb(102,217,239)',
+  built_in: 'rgb(166,226,46)',
+  type: 'rgb(166,226,46)',
+  literal: 'rgb(190,132,255)',
+  number: 'rgb(190,132,255)',
+  string: 'rgb(230,219,116)',
+  title: 'rgb(166,226,46)',
+  'title.function': 'rgb(166,226,46)',
+  'title.class': 'rgb(166,226,46)',
+  'title.class.inherited': 'rgb(166,226,46)',
+  params: 'rgb(253,151,31)',
+  comment: 'rgb(117,113,94)',
+  meta: 'rgb(117,113,94)',
+  attr: 'rgb(166,226,46)',
+  attribute: 'rgb(166,226,46)',
+  variable: 'rgb(255,255,255)',
+  'variable.language': 'rgb(255,255,255)',
+  property: 'rgb(255,255,255)',
+  operator: 'rgb(249,38,114)',
+  punctuation: 'rgb(248,248,242)',
+  symbol: 'rgb(190,132,255)',
+  regexp: 'rgb(230,219,116)',
+  subst: 'rgb(248,248,242)',
+}
+
+export const GITHUB_SCOPES: Record<string, string> = {
+  keyword: 'rgb(167,29,93)',
+  _storage: 'rgb(167,29,93)',
+  built_in: 'rgb(0,134,179)',
+  type: 'rgb(0,134,179)',
+  literal: 'rgb(0,134,179)',
+  number: 'rgb(0,134,179)',
+  string: 'rgb(24,54,145)',
+  title: 'rgb(121,93,163)',
+  'title.function': 'rgb(121,93,163)',
+  'title.class': 'rgb(0,0,0)',
+  'title.class.inherited': 'rgb(0,0,0)',
+  params: 'rgb(0,134,179)',
+  comment: 'rgb(150,152,150)',
+  meta: 'rgb(150,152,150)',
+  attr: 'rgb(0,134,179)',
+  attribute: 'rgb(0,134,179)',
+  variable: 'rgb(0,134,179)',
+  'variable.language': 'rgb(0,134,179)',
+  property: 'rgb(0,134,179)',
+  operator: 'rgb(167,29,93)',
+  punctuation: 'rgb(51,51,51)',
+  symbol: 'rgb(0,134,179)',
+  regexp: 'rgb(24,54,145)',
+  subst: 'rgb(51,51,51)',
+}
+
+export const ANSI_SCOPES: Record<string, string> = {
+  keyword: 'ansi:magentaBright',
+  _storage: 'ansi:cyanBright',
+  built_in: 'ansi:cyanBright',
+  type: 'ansi:cyanBright',
+  literal: 'ansi:blueBright',
+  number: 'ansi:blueBright',
+  string: 'ansi:greenBright',
+  title: 'ansi:yellowBright',
+  'title.function': 'ansi:yellowBright',
+  'title.class': 'ansi:yellowBright',
+  comment: 'ansi:blackBright',
+  meta: 'ansi:blackBright',
+}
+
+export const SYNTAX_SCOPES: Record<SyntaxScopes, Record<string, string>> = {
+  monokai: MONOKAI_SCOPES,
+  github: GITHUB_SCOPES,
+  ansi: ANSI_SCOPES,
+}
+
 export type Theme = {
   autoAccept: string
   bashBorder: string
@@ -65,9 +150,29 @@ export type Theme = {
    *  backgrounds; syntax-highlighted tokens override it per-run). */
   diffAddedText?: string
   diffRemovedText?: string
-  /** Gutter (line number + sigil) text color for add/remove rows. */
+  /** Gutter (line number + sigil) text color for add/remove rows.
+   *
+   *  The one part of a diff the app theme does not get to choose. The native
+   *  renderer builds its own palette from the theme NAME (`buildTheme(name,
+   *  mode)`) and reads this pair out of that; the override that folds the
+   *  tokens above into it (`applyUserDiffColors`) replaces the line and word
+   *  backgrounds only. So these are the native palette's `addDecoration` /
+   *  `deleteDecoration`, copied per family — dark and light, the two
+   *  daltonized variants, and the bright 8-colour ansi pair. */
   diffAddedGutter: string
   diffRemovedGutter: string
+
+  /** Foreground for diff content no highlighter has claimed, and for an
+   *  unchanged row's line number. Same provenance as the gutter pair above:
+   *  the native palette's own `foreground`, which the app theme does not get
+   *  to override — it is not the `text` token, so a light diff is a softer
+   *  grey than the theme's black and an ansi one takes plain white/black
+   *  rather than the bright variants. */
+  diffForeground: string
+
+  /** Which family of highlight.js scope colours this palette highlights
+   *  with — see SYNTAX_SCOPES. */
+  syntaxScopes: SyntaxScopes
 
   red_FOR_SUBAGENTS_ONLY: string
   blue_FOR_SUBAGENTS_ONLY: string
@@ -147,7 +252,6 @@ const BRAND_BLUE_LIGHT = 'rgb(47,74,208)'
 const BRAND_BLUE_SHIM_DARK = 'rgb(127,150,255)' 
 const BRAND_BLUE_SHIM_LIGHT = 'rgb(99,119,220)' 
 const BRAND_PERMISSION = 'rgb(177,185,249)'
-const BRAND_PERMISSION_SHIM_LIGHT = 'rgb(217,225,255)' 
 
 
 const lightTheme: Theme = {
@@ -157,8 +261,8 @@ const lightTheme: Theme = {
   claudeShimmer: BRAND_BLUE_SHIM_LIGHT, 
   claudeBlue_FOR_SYSTEM_SPINNER: 'rgb(87,105,247)', 
   claudeBlueShimmer_FOR_SYSTEM_SPINNER: 'rgb(117,135,255)', 
-  permission: BRAND_PERMISSION, 
-  permissionShimmer: BRAND_PERMISSION_SHIM_LIGHT, 
+  permission: 'rgb(87,105,247)', 
+  permissionShimmer: 'rgb(137,155,255)', 
   planMode: 'rgb(0,102,102)', 
   ide: 'rgb(71,130,200)', 
   promptBorder: 'rgb(153,153,153)', 
@@ -176,16 +280,18 @@ const lightTheme: Theme = {
   warning: 'rgb(150,108,30)', 
   merged: 'rgb(135,0,255)', 
   warningShimmer: 'rgb(200,158,80)', 
-  diffAdded: '#022900',
-  diffRemoved: '#3D0100',
+  diffAdded: 'rgb(105,219,124)',
+  diffRemoved: 'rgb(255,168,180)',
   diffAddedDimmed: 'rgb(199,225,203)',
   diffRemovedDimmed: 'rgb(253,210,216)',
-  diffAddedWord: '#054601',
-  diffRemovedWord: '#5C0100',
+  diffAddedWord: 'rgb(47,157,68)',
+  diffRemovedWord: 'rgb(209,69,75)',
   diffAddedText: 'rgb(255,255,255)',
   diffRemovedText: 'rgb(255,255,255)',
-  diffAddedGutter: '#50c850',
-  diffRemovedGutter: '#db5b5a',
+  diffAddedGutter: 'rgb(36,138,61)',
+  diffRemovedGutter: 'rgb(207,34,46)',
+  diffForeground: 'rgb(51,51,51)',
+  syntaxScopes: 'github',
 
   red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)',
   blue_FOR_SUBAGENTS_ONLY: 'rgb(37,99,235)',
@@ -267,6 +373,9 @@ const lightAnsiTheme: Theme = {
   diffRemovedWord: 'ansi:redBright',
   diffAddedGutter: 'ansi:greenBright',
   diffRemovedGutter: 'ansi:redBright',
+  diffForeground: 'ansi:black',
+
+  syntaxScopes: 'ansi',
 
   red_FOR_SUBAGENTS_ONLY: 'ansi:red',
   blue_FOR_SUBAGENTS_ONLY: 'ansi:blue',
@@ -347,6 +456,9 @@ const darkAnsiTheme: Theme = {
   diffRemovedWord: 'ansi:redBright',
   diffAddedGutter: 'ansi:greenBright',
   diffRemovedGutter: 'ansi:redBright',
+  diffForeground: 'ansi:white',
+
+  syntaxScopes: 'ansi',
 
   red_FOR_SUBAGENTS_ONLY: 'ansi:redBright',
   blue_FOR_SUBAGENTS_ONLY: 'ansi:blueBright',
@@ -419,16 +531,18 @@ const darkTheme: Theme = {
   warning: 'rgb(255,193,7)', 
   merged: 'rgb(175,135,255)', 
   warningShimmer: 'rgb(255,223,57)', 
-  diffAdded: '#022900',
-  diffRemoved: '#3D0100',
+  diffAdded: 'rgb(34,92,43)',
+  diffRemoved: 'rgb(122,41,54)',
   diffAddedDimmed: 'rgb(71,88,74)',
   diffRemovedDimmed: 'rgb(105,72,77)',
-  diffAddedWord: '#054601',
-  diffRemovedWord: '#5C0100',
+  diffAddedWord: 'rgb(56,166,96)',
+  diffRemovedWord: 'rgb(179,89,107)',
   diffAddedText: 'rgb(255,255,255)',
   diffRemovedText: 'rgb(255,255,255)',
-  diffAddedGutter: '#50c850',
-  diffRemovedGutter: '#db5b5a',
+  diffAddedGutter: 'rgb(80,200,80)',
+  diffRemovedGutter: 'rgb(220,90,90)',
+  diffForeground: 'rgb(248,248,242)',
+  syntaxScopes: 'monokai',
 
   red_FOR_SUBAGENTS_ONLY: 'rgb(220,38,38)',
   blue_FOR_SUBAGENTS_ONLY: 'rgb(37,99,235)', 
@@ -499,8 +613,20 @@ const lightDaltonizedTheme: Theme = {
   diffRemoved: 'rgb(255,204,204)', 
   diffAddedDimmed: 'rgb(209,231,253)', 
   diffRemovedDimmed: 'rgb(255,233,233)', 
-  diffAddedWord: 'rgb(51,102,204)', 
-  diffRemovedWord: 'rgb(153,51,51)', 
+  diffAddedWord: 'rgb(51,102,204)',
+  diffRemovedWord: 'rgb(153,51,51)',
+  diffAddedGutter: 'rgb(36,87,138)',
+  diffRemovedGutter: 'rgb(207,34,46)',
+  red_FOR_SUBAGENTS_ONLY: 'rgb(204,0,0)',
+  blue_FOR_SUBAGENTS_ONLY: 'rgb(0,102,204)',
+  green_FOR_SUBAGENTS_ONLY: 'rgb(0,204,0)',
+  yellow_FOR_SUBAGENTS_ONLY: 'rgb(255,204,0)',
+  purple_FOR_SUBAGENTS_ONLY: 'rgb(128,0,128)',
+  orange_FOR_SUBAGENTS_ONLY: 'rgb(255,128,0)',
+  pink_FOR_SUBAGENTS_ONLY: 'rgb(255,102,178)',
+  cyan_FOR_SUBAGENTS_ONLY: 'rgb(0,178,178)',
+  rate_limit_fill: 'rgb(51,102,255)',
+  rate_limit_empty: 'rgb(23,46,114)',
   userMessageBackground: 'rgb(220, 220, 220)', 
   userMessageBackgroundHover: 'rgb(232, 232, 232)',
   messageActionsBackground: 'rgb(210, 216, 226)', 
@@ -529,10 +655,20 @@ const darkDaltonizedTheme: Theme = {
   diffRemovedWord: 'rgb(179,0,0)',
   diffAddedText: 'rgb(153,204,255)',
   diffRemovedText: 'rgb(255,204,204)',
+  diffAddedGutter: 'rgb(81,160,200)',
+  diffRemovedGutter: 'rgb(220,90,90)',
+  red_FOR_SUBAGENTS_ONLY: 'rgb(255,102,102)',
+  blue_FOR_SUBAGENTS_ONLY: 'rgb(102,178,255)',
+  green_FOR_SUBAGENTS_ONLY: 'rgb(102,255,102)',
+  yellow_FOR_SUBAGENTS_ONLY: 'rgb(255,255,102)',
+  purple_FOR_SUBAGENTS_ONLY: 'rgb(178,102,255)',
+  orange_FOR_SUBAGENTS_ONLY: 'rgb(255,178,102)',
+  pink_FOR_SUBAGENTS_ONLY: 'rgb(255,153,204)',
+  cyan_FOR_SUBAGENTS_ONLY: 'rgb(102,204,204)',
   rate_limit_fill: 'rgb(153,204,255)',
-  rate_limit_empty: 'rgb(23,46,114)', 
-  fastMode: 'rgb(255,178,102)', 
-  fastModeShimmer: 'rgb(255,204,153)', 
+  rate_limit_empty: 'rgb(69,92,115)',
+  fastMode: 'rgb(255,120,20)',
+  fastModeShimmer: 'rgb(255,165,70)',
 }
 
 
@@ -704,11 +840,11 @@ const lightPalette = {
   assistantDim: "rgb(35, 55, 165)",
   text: "rgb(0, 0, 0)",
   inverseText: "rgb(255, 255, 255)",
-  subtle: "rgb(150, 150, 150)",
-  inactive: "rgb(100, 100, 100)",
+  subtle: "rgb(175, 175, 175)",
+  inactive: "rgb(102, 102, 102)",
   userMessageBg: "rgb(230, 230, 230)",
   toolMessageBg: "rgb(230, 230, 230)",
-  promptBorder: "rgb(180, 180, 180)",
+  promptBorder: "rgb(153, 153, 153)",
 };
 
 let currentThemeMode: "dark" | "light" = "dark";

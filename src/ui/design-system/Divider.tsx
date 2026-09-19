@@ -28,7 +28,8 @@ export type DividerProps = {
 };
 
 
-function displayWidth(str: string): number {
+/** Columns a string occupies in the terminal (wide glyphs count two). */
+export function displayWidth(str: string): number {
   let width = 0;
   for (const char of str) {
     const code = char.codePointAt(0)!;

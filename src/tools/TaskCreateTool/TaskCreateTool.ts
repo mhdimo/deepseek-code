@@ -18,6 +18,7 @@ const inputSchema = z.object({
 
 export const TaskCreateTool = buildTool({
   name: "TaskCreate",
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema,
 

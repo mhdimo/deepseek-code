@@ -9,6 +9,22 @@
  * a gutter (line number + sigil) and the content — so fullscreen selection
  * yields clean code, and the content rows double as a copy/selection model
  * (runs + trailing padding fill marked copySkip).
+ *
+ * Colours follow Fallback.tsx exactly. Its Texts write
+ * `color={overrideTheme ? 'text' : undefined}`, and `overrideTheme` is always
+ * the current theme name (StructuredDiffFallback reads it with useTheme() and
+ * passes it into formatDiff), so nothing in a diff is left to the terminal's
+ * default foreground: a row is the theme's `text` token, or `inactive` where
+ * the reference sets dimColor — which its ThemedText resolves to a colour
+ * rather than to an ANSI faint attribute — and, for code the highlighter
+ * recognises, that line's syntax colour (the reference runs cliHighlight over
+ * every diff line). Only words that changed within a line get a diff
+ * background (diffAddedWord/diffRemovedWord); the line itself keeps
+ * diffAdded/diffRemoved (or their Dimmed twins).
+ *
+ * Syntax and the diff are independent axes: the highlighter supplies the
+ * foreground, the diff supplies the background, and neither overwrites the
+ * other.
  */
 
 import React, { useMemo } from "react";
@@ -20,6 +36,7 @@ import { getTheme, resolveColor, type Theme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import type { StyledRun, TextStyle, TextRow } from "../services/selection/lineModel.js";
 import { RowText } from "./Markdown.js";
+import { highlightLine } from "./codeHighlight.js";
 
 export interface LineObject {
   code: string;
@@ -43,7 +60,16 @@ interface StructuredDiffProps {
   patch: StructuredPatchHunk;
   dim?: boolean;
   width: number;
+  /** The patched file's language, for syntax highlighting (see
+   *  buildDiffModel). Absent means the C-like default. */
+  language?: string;
 }
+
+/** Past this share of a line pair's characters, the word-level highlight is
+ *  dropped and both lines render as plain bands — a mostly-rewritten line
+ *  lights up everywhere, which reads as noise rather than as a change. The
+ *  reference gates both its renderers on the same number. */
+const CHANGE_THRESHOLD = 0.4;
 
 function wrapText(text: string, maxWidth: number): string {
   return wrapAnsi(text, maxWidth, { trim: false, hard: true });
@@ -92,7 +118,10 @@ export const DASHED_BORDER = {
   bottomRight: " ",
 } as const;
 
-/** Dashed frame around diff content (Claude Code's DiffFrame). */
+/** Dashed frame around diff content (Claude Code's DiffFrame). The frame is
+ *  always drawn — the loading placeholder sits inside it, as the reference
+ *  does (`{placeholder ? <Text dimColor>…</Text> : children}`), and the border
+ *  takes the theme's `subtle` token. */
 export function DiffFrame({
   children,
   paddingX,
@@ -102,20 +131,19 @@ export function DiffFrame({
   paddingX?: number;
   placeholder?: boolean;
 }): React.ReactElement {
-  if (placeholder) {
-    return <Text dimColor>…</Text>;
-  }
+  const [themeName] = useTheme();
+  const theme = getTheme(themeName);
   return (
     <Box flexDirection="column">
       <Box
-        borderColor="gray"
+        borderColor={resolveColor(theme.subtle)}
         borderStyle={DASHED_BORDER}
         flexDirection="column"
         borderLeft={false}
         borderRight={false}
         paddingX={paddingX}
       >
-        {children}
+        {placeholder ? <Text dimColor>…</Text> : children}
       </Box>
     </Box>
   );
@@ -125,8 +153,13 @@ export function DiffFrame({
 export interface DiffRowModel {
   /** Line number + sigil (rendered in its own Text; never copied). */
   gutter: string;
-  /** Resolved fg color for the gutter; undefined for unchanged rows. */
+  /** Resolved fg for the gutter: the palette's decoration on a changed row,
+   *  the row's own foreground on an unchanged one (`inactive` when the whole
+   *  diff is dim), and never a mix of the two. */
   gutterColor?: string;
+  /** Faint the gutter. Only an unchanged row's number is quietened this way,
+   *  and only while the diff is not dim as a whole. */
+  gutterDim?: boolean;
   /** Content runs: code (+ word-diff backgrounds) + trailing padding
    *  fill (marked copySkip so copy yields clean code). */
   runs: StyledRun[];
@@ -256,18 +289,70 @@ function lineBg(type: DiffLine["type"], dim: boolean, theme: Theme): string | un
   return undefined;
 }
 
-/** Bright text color for add/remove lines; undefined falls back to default text. */
-function lineTextColor(type: DiffLine["type"], theme: Theme): string | undefined {
-  const token = type === "add" ? theme.diffAddedText : type === "remove" ? theme.diffRemovedText : undefined;
-  return token ? resolveColor(token) : undefined;
+/** Content fg for a diff row.
+ *
+ *  What the terminal falls back to when the highlighter has no colour for a
+ *  token: the native renderer's own `foreground`, not the app theme's `text`
+ *  (see the token's note in the theme). A dimmed row is the port's usual
+ *  colour-rather-than-attribute trade — the reference DIMs the whole line,
+ *  ours reaches for `inactive`. */
+function rowTextColor(dim: boolean, theme: Theme): string | undefined {
+  return resolveColor(dim ? theme.inactive : theme.diffForeground);
 }
 
-/** Gutter (line number + sigil) color for add/remove rows; unchanged rows
- *  keep the default text color. */
-function gutterColor(type: DiffLine["type"], theme: Theme): string | undefined {
-  if (type === "nochange") return undefined;
-  const token = type === "add" ? theme.diffAddedGutter : theme.diffRemovedGutter;
-  return resolveColor(token);
+/** Gutter (line number + sigil) fg.
+ *
+ *  A changed row's number and sigil are the brightest thing on the band: the
+ *  native renderer's `decorationColor(marker, theme)` answers `addDecoration`
+ *  for a `+` and `deleteDecoration` for a `-`, and those decorations are the
+ *  one part of the palette the app theme cannot override. The marker alone
+ *  decides, so `dim` never reaches them — a dimmed diff keeps the same bright
+ *  numbers, only the band underneath it changes. An unchanged row falls
+ *  through to a neutral foreground, which is where `inactive` sits. */
+function gutterColor(type: DiffLine["type"], dim: boolean, theme: Theme): string | undefined {
+  if (type === "add") return resolveColor(theme.diffAddedGutter);
+  if (type === "remove") return resolveColor(theme.diffRemovedGutter);
+  return resolveColor(dim ? theme.inactive : theme.diffForeground);
+}
+
+/** Whether the gutter carries a DIM attribute — `shouldDim && !fullDim` in the
+ *  reference's addLineNumber: unchanged rows only, and not when the diff is
+ *  dim as a whole (where the colour already says it). */
+function gutterFaint(type: DiffLine["type"], dim: boolean): boolean {
+  return type === "nochange" && !dim;
+}
+
+/** Trailing fill for a row, so the band reaches the full terminal width.
+ *
+ *  The fill is marked copySkip so a selection copies clean code — except on a
+ *  row with no visible content, where the fill is all the row has. RowText
+ *  draws a run set whose copy-visible text is empty as a single blank space
+ *  with no background, which would drop the band of an added or removed blank
+ *  line entirely (the reference keeps both the band and the padding there, its
+ *  padding being part of the same Text as the line). */
+function fillRun(padding: number, style: TextStyle, hasContent: boolean): StyledRun {
+  return { text: " ".repeat(padding), style: hasContent ? { ...style, copySkip: true } : style };
+}
+
+/** One line of code as syntax-coloured runs, on top of `base` (the row's fg +
+ *  diff band).
+ *
+ *  The highlighter returns raw colours, the way Markdown's fenced blocks take
+ *  them, and a span it has no opinion about keeps the row's fg (`text`, or
+ *  `inactive` when dimmed) rather than falling through to the terminal
+ *  default — every run in a diff stays explicitly coloured. The base style is
+ *  spread first so the band survives the highlight; syntax only ever
+ *  contributes the foreground. */
+function highlightRuns(
+  code: string,
+  language: string,
+  base: TextStyle,
+  theme: Theme,
+): StyledRun[] {
+  return highlightLine(code, language, theme).map((span): StyledRun => ({
+    text: span.text,
+    style: { ...base, color: span.color ?? base.color },
+  }));
 }
 
 /** Word-level diff rows for one item; null when it falls back to standard. */
@@ -277,6 +362,7 @@ function buildWordDiffRows(
   maxWidth: number,
   dim: boolean,
   theme: Theme,
+  language: string,
 ): DiffRowModel[] | null {
   const { type, i, wordDiff, matchedLine, originalCode } = item;
   if (!wordDiff || !matchedLine) return null;
@@ -284,8 +370,14 @@ function buildWordDiffRows(
   const addedLineText = type === "remove" ? matchedLine.originalCode : originalCode;
   const wordDiffs = calculateWordDiffs(removedLineText, addedLineText);
 
-  if (dim) {
-    return null; // Dimmed rows render standard (muted) line colors
+  const totalLength = removedLineText.length + addedLineText.length;
+  const changedLength = wordDiffs
+    .filter((part) => part.added || part.removed)
+    .reduce((sum, part) => sum + part.value.length, 0);
+  const changeRatio = totalLength > 0 ? changedLength / totalLength : 0;
+
+  if (changeRatio > CHANGE_THRESHOLD || dim) {
+    return null; // Falls back to standard rendering for major changes
   }
 
   const diffPrefix = type === "add" ? "+" : "-";
@@ -293,7 +385,7 @@ function buildWordDiffRows(
   const availableContentWidth = Math.max(1, width - maxWidth - 1 - diffPrefixWidth);
   const partBg = resolveColor(type === "add" ? theme.diffAddedWord : theme.diffRemovedWord);
   const bg = lineBg(type, dim, theme)!;
-  const textColor = lineTextColor(type, theme);
+  const textColor = rowTextColor(dim, theme);
 
   // Collect the shown parts (changed parts get the word bg, the rest the
   // line bg). The shown parts concatenate exactly to this line's text.
@@ -321,18 +413,62 @@ function buildWordDiffRows(
   });
 
   // Runs: the shown parts with the line/word backgrounds; changed parts get
-  // the word bg, the rest the line bg (plain text color, no highlighting).
-  const runs: StyledRun[] = parts.map((p) => ({
-    text: p.text,
-    style: { dim, color: textColor, backgroundColor: p.bg ?? bg },
-  }));
+  // the word bg, the rest the line bg. The line's fg is the syntax colour
+  // where the highlighter has one and the theme text token underneath — the
+  // reference hands the nested part Texts no colour of their own, so they
+  // inherit the row Text's, which cliHighlight has already coloured.
+  //
+  // The two segmentations are independent — the highlighter cuts the line at
+  // tokens, the word diff cuts it at changed runs — so they have to be
+  // reconciled rather than layered. This walks the highlight spans and cuts
+  // each at the band boundaries, which is what the reference's
+  // `applyBackground` does by re-slicing the line's blocks.
+  // Each band's end offset within the line, so a highlight span can be cut
+  // where the band under it changes.
+  const bands: { end: number; background: string }[] = [];
+  let cursor = 0;
+  for (const p of parts) {
+    cursor += p.text.length;
+    bands.push({ end: cursor, background: p.bg ?? bg });
+  }
+
+  const runs: StyledRun[] = [];
+  if (type === "remove") {
+    // Removed lines are not highlighted (see buildStandardRows).
+    for (const p of parts) {
+      runs.push({ text: p.text, style: { color: textColor, backgroundColor: p.bg ?? bg } });
+    }
+  } else {
+    let at = 0;
+    let bandIdx = 0;
+    for (const span of highlightLine(originalCode, language, theme)) {
+      let pieceStart = 0;
+      while (pieceStart < span.text.length) {
+        while (bandIdx < bands.length && bands[bandIdx]!.end <= at) bandIdx++;
+        const band = bands[bandIdx];
+        const remaining = span.text.length - pieceStart;
+        const take = band ? Math.min(remaining, band.end - at) : remaining;
+        runs.push({
+          text: span.text.slice(pieceStart, pieceStart + take),
+          style: {
+            color: span.color ?? textColor,
+            backgroundColor: band?.background ?? bg,
+          },
+        });
+        pieceStart += take;
+        at += take;
+      }
+    }
+  }
 
   const packed = wrapRunsToRows(runs, availableContentWidth);
 
-  // Nothing packed (e.g. both sides empty): fall through to standard rendering.
-  if (packed.length === 0) return null;
-
-  const gc = gutterColor(type, theme);
+  // The reference returns whatever this packed to — including nothing at all
+  // — without falling back to standard rendering, so a change between two
+  // blank lines (whose parts all pack away) draws no row. It only returns
+  // null from the ratio/dim gate above.
+  const gc = gutterColor(type, dim, theme);
+  const faint = gutterFaint(type, dim);
   return packed.map(({ runs: rowRuns, contentWidth }, lineIndex) => {
     const lineNum = lineIndex === 0 ? i : undefined;
     const lineNumStr =
@@ -342,9 +478,9 @@ function buildWordDiffRows(
     const padding = Math.max(0, width - usedWidth);
     const allRuns = [...rowRuns];
     if (padding > 0) {
-      allRuns.push({ text: " ".repeat(padding), style: { dim, color: textColor, backgroundColor: bg, copySkip: true } });
+      allRuns.push(fillRun(padding, { color: textColor, backgroundColor: bg }, contentWidth > 0));
     }
-    return { gutter: lineNumStr + diffPrefix, gutterColor: gc, runs: allRuns, type };
+    return { gutter: lineNumStr + diffPrefix, gutterColor: gc, gutterDim: faint, runs: allRuns, type };
   });
 }
 
@@ -355,6 +491,7 @@ function buildStandardRows(
   maxWidth: number,
   dim: boolean,
   theme: Theme,
+  language: string,
 ): DiffRowModel[] {
   const { type, code, i } = item;
   const diffPrefixWidth = 2; // "  " for unchanged, "+ " or "- " for changes
@@ -364,40 +501,59 @@ function buildStandardRows(
     (i !== undefined ? i.toString().padStart(maxWidth) : " ".repeat(maxWidth)) + " ";
   const sigil = type === "add" ? "+" : type === "remove" ? "-" : " ";
   const bg = lineBg(type, dim, theme);
-  // Dimmed rows stay muted (default text); full-color rows get white text.
-  const textColor = dim ? undefined : lineTextColor(type, theme);
+  // Context lines are NOT dimmed in the reference's content Text (only its
+  // gutter is), and a dimmed row is dimmed by colour, not by an ANSI faint.
+  const textColor = rowTextColor(dim, theme);
 
-  const wrapped = wrapText(code, availableContentWidth).split("\n");
-  const finalLines = wrapped.length === 0 ? [""] : wrapped;
-  const contentStyle: TextStyle = { dim };
+  const contentStyle: TextStyle = { color: textColor };
   if (bg) contentStyle.backgroundColor = bg;
-  if (textColor) contentStyle.color = textColor;
-  const rows = finalLines.map((line) => ({
-    runs: [{ text: line, style: contentStyle }],
-    contentWidth: stringWidth(line),
-  }));
+  // Added and context lines are highlighted; removed ones are not. The
+  // reference branches on the marker before tokenizing — `marker === '-' ?
+  // [[defaultStyle(theme), code]] : highlightLine(...)` — so a removed line
+  // keeps the row's foreground and the band alone carries the delete signal.
+  const highlighted =
+    type === "remove"
+      ? [{ text: code, style: contentStyle }]
+      : highlightRuns(code, language, contentStyle, theme);
+  const packed = wrapRunsToRows(highlighted, availableContentWidth);
+  // A blank line packs to nothing, but it still owns a row: the reference
+  // paints its whole width with the band.
+  const rows =
+    packed.length > 0 ? packed : [{ runs: [{ text: "", style: contentStyle }], contentWidth: 0 }];
 
-  const gc = gutterColor(type, theme);
+  const gc = gutterColor(type, dim, theme);
+  const faint = gutterFaint(type, dim);
   return rows.map(({ runs, contentWidth }, li) => {
-    const gutter = li === 0 ? lineNumStr + sigil : " ".repeat(maxWidth + 2);
-    // Calculate padding to fill the entire terminal width
+    // A wrapped continuation is still part of the same line, so the sigil
+    // column keeps its marker and only the number goes blank.
+    const gutter = (li === 0 ? lineNumStr : " ".repeat(maxWidth) + " ") + sigil;
+    // Calculate padding to fill the entire terminal width — for a changed row
+    // only: the fill exists to carry the band to the edge, and an unchanged
+    // row has none. The reference does the same, and its padding is written
+    // from inside the marker branch.
     const used = stringWidth(gutter) + contentWidth;
-    const padding = Math.max(0, safeWidth - used);
+    const padding = type === "nochange" ? 0 : Math.max(0, safeWidth - used);
     const allRuns = [...runs];
     if (padding > 0) {
-      allRuns.push({ text: " ".repeat(padding), style: { dim, color: textColor, backgroundColor: bg, copySkip: true } });
+      allRuns.push(fillRun(padding, { color: textColor, backgroundColor: bg }, contentWidth > 0));
     }
-    return { gutter, gutterColor: gc, runs: allRuns, type };
+    return { gutter, gutterColor: gc, gutterDim: faint, runs: allRuns, type };
   });
 }
 
-/** Full diff pipeline: lines → numbered, per-row models (gutter + runs). */
+/** Full diff pipeline: lines → numbered, per-row models (gutter + runs).
+ *
+ *  `language` is the file's language for syntax highlighting, as
+ *  `languageFromPath` returns it ("" meaning no grammar applies, the same
+ *  convention Markdown's fenced blocks use). It only ever affects the
+ *  foreground — the diff bands are unchanged. */
 export function buildDiffModel(
   lines: string[],
   startingLineNumber: number,
   width: number,
   dim: boolean,
   theme: Theme,
+  language = "",
 ): DiffRowModel[] {
   // Ensure width is at least 1 to prevent rendering issues with very narrow terminals
   const safeWidth = Math.max(1, Math.floor(width));
@@ -412,10 +568,10 @@ export function buildDiffModel(
 
   return ls.flatMap((item): DiffRowModel[] => {
     if (item.wordDiff && item.matchedLine) {
-      const wordRows = buildWordDiffRows(item, safeWidth, maxWidth, dim, theme);
+      const wordRows = buildWordDiffRows(item, safeWidth, maxWidth, dim, theme, language);
       if (wordRows !== null) return wordRows;
     }
-    return buildStandardRows(item, safeWidth, maxWidth, dim, theme);
+    return buildStandardRows(item, safeWidth, maxWidth, dim, theme, language);
   });
 }
 
@@ -439,7 +595,12 @@ export function DiffRow({
   const textRow: TextRow = { runs: row.runs, softWrapped: false };
   return (
     <Box flexDirection="row">
-      <Text backgroundColor={bg} color={row.gutterColor} dimColor={dim || row.type === "nochange"}>
+      {/* A changed row's number is the decoration colour on the band; an
+          unchanged one is the row's own foreground, faint — the one place the
+          reference asks ink for a DIM attribute rather than a colour. The
+          content Text next to it carries the same background, so the band is
+          continuous. */}
+      <Text backgroundColor={bg} color={row.gutterColor} dimColor={row.gutterDim}>
         {row.gutter}
       </Text>
       <RowText row={textRow} selCols={selCols ?? null} rowWidth={contentWidth} />
@@ -447,12 +608,12 @@ export function DiffRow({
   );
 }
 
-export function StructuredDiff({ patch, dim = false, width }: StructuredDiffProps) {
+export function StructuredDiff({ patch, dim = false, width, language = "" }: StructuredDiffProps) {
   const [themeName] = useTheme();
   const theme = getTheme(themeName);
   const rows = useMemo(
-    () => buildDiffModel(patch.lines, patch.oldStart, width, dim, theme),
-    [patch.lines, patch.oldStart, width, dim, theme],
+    () => buildDiffModel(patch.lines, patch.oldStart, width, dim, theme, language),
+    [patch.lines, patch.oldStart, width, dim, theme, language],
   );
   // All gutters share one width (line digits + space + sigil); the content
   // area is the remainder (selection column math is content-relative).
@@ -469,63 +630,38 @@ export function StructuredDiff({ patch, dim = false, width }: StructuredDiffProp
   );
 }
 
-/** Intersperse hunks with "..." separators (Claude Code's StructuredDiffList). */
+/** Intersperse hunks with "..." separators (Claude Code's StructuredDiffList).
+ *
+ *  Every hunk it is handed is rendered: the reference has no truncation row,
+ *  and its only marker is the dim "..." between two hunks. A caller that wants
+ *  a diff to stop at some height has to cut the text it passes in, not ask for
+ *  fewer rows here — a silent row cap would drop content the reference draws. */
 export function StructuredDiffList({
   hunks,
   dim = false,
   width,
-  maxRows,
+  language = "",
 }: {
   hunks: StructuredPatchHunk[];
   dim?: boolean;
   width: number;
-  /** Hard cap on rendered rows (each hunk's "@@ ... @@" header line counts as
-   *  a row too). Rows past the cap are dropped and a single trailing "…" row
-   *  is rendered in their place. Undefined/absent renders everything. */
-  maxRows?: number;
+  /** The patched file's language, for syntax highlighting. */
+  language?: string;
 }): React.ReactElement | null {
   if (hunks.length === 0) return null;
 
-  // Truncate the hunk list to maxRows total rows. h.lines[0] is the
-  // "@@ ... @@" header line and counts as a row too. Originals are never
-  // mutated — a hunk that straddles the cap is shallow-copied with a sliced
-  // lines array.
-  let shownHunks = hunks;
-  let dropped = false;
-  if (maxRows != null) {
-    const kept: StructuredPatchHunk[] = [];
-    let running = 0;
-    for (const h of hunks) {
-      if (running + h.lines.length > maxRows) {
-        if (running < maxRows) {
-          kept.push({ ...h, lines: h.lines.slice(0, maxRows - running) });
-        }
-        dropped = true;
-        break;
-      }
-      kept.push(h);
-      running += h.lines.length;
-    }
-    shownHunks = kept;
-  }
-
   return (
     <Box flexDirection="column">
-      {shownHunks.map((h, i) => (
+      {hunks.map((h, i) => (
         <React.Fragment key={h.newStart}>
           {i > 0 && (
             <Box flexDirection="row">
               <Text dimColor>...</Text>
             </Box>
           )}
-          <StructuredDiff patch={h} dim={dim} width={width} />
+          <StructuredDiff patch={h} dim={dim} width={width} language={language} />
         </React.Fragment>
       ))}
-      {dropped && (
-        <Box flexDirection="row">
-          <Text dimColor>…</Text>
-        </Box>
-      )}
     </Box>
   );
 }

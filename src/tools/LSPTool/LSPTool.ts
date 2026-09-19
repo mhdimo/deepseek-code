@@ -27,6 +27,7 @@ import {
   waitForInitialization,
   type LSPServerManager,
 } from "../../services/lsp/manager.js";
+import { formatDiagnosticsReport } from "../../services/lsp/editDiagnostics.js";
 import { DESCRIPTION, LSP_TOOL_NAME } from "./prompt.js";
 import {
   formatDocumentSymbolResult,
@@ -77,6 +78,7 @@ export const LSP_OPERATIONS = [
   "prepareCallHierarchy",
   "incomingCalls",
   "outgoingCalls",
+  "diagnostics",
 ] as const;
 
 export type LSPOperation = (typeof LSP_OPERATIONS)[number];
@@ -84,6 +86,22 @@ export type LSPOperation = (typeof LSP_OPERATIONS)[number];
 
 export function isValidLSPOperation(operation: string): operation is LSPOperation {
   return (LSP_OPERATIONS as readonly string[]).includes(operation);
+}
+
+
+/**
+ * Operations that name a position in the file.
+ *
+ * The rest ask about the file as a whole, and requiring a line for them would
+ * make the model invent one — which then becomes a parameter that looks
+ * meaningful in the transcript and is not.
+ */
+export function operationNeedsPosition(operation: LSPOperation): boolean {
+  return (
+    operation !== "documentSymbol" &&
+    operation !== "workspaceSymbol" &&
+    operation !== "diagnostics"
+  );
 }
 
 
@@ -96,12 +114,18 @@ const lspToolInputSchema = z.object({
     .number()
     .int()
     .positive()
-    .describe("The line number (1-based, as shown in editors)"),
+    .optional()
+    .describe(
+      "The line number (1-based, as shown in editors). Required for every operation except documentSymbol, workspaceSymbol and diagnostics.",
+    ),
   character: z
     .number()
     .int()
     .positive()
-    .describe("The character offset (1-based, as shown in editors)"),
+    .optional()
+    .describe(
+      "The character offset (1-based, as shown in editors). Required with line.",
+    ),
 });
 
 export type LSPToolInput = z.infer<typeof lspToolInputSchema>;
@@ -118,6 +142,7 @@ export interface LSPToolOutput {
 export function buildLSPTool(manager?: LSPServerManager): Tool {
   return buildTool({
     name: LSP_TOOL_NAME,
+    requiredPermission: "allowRead",
     description: DESCRIPTION,
     inputSchema: lspToolInputSchema,
 
@@ -131,13 +156,6 @@ export function buildLSPTool(manager?: LSPServerManager): Tool {
     isConcurrencySafe: () => true,
 
     maxResultSizeChars: 100_000,
-
-    checkPermissions: async (_input, context) => {
-      if (!context.permissions.allowRead) {
-        return { approved: false, feedback: "Read permission denied for this agent." };
-      }
-      return { approved: true };
-    },
 
     call: async (input, context) => {
       const absolutePath = resolvePath(context.workingDir, input.filePath);
@@ -178,12 +196,22 @@ export function buildLSPTool(manager?: LSPServerManager): Tool {
       }
 
       
-      const { method, params } = getMethodAndParams(input, absolutePath);
+      if (operationNeedsPosition(input.operation) && (input.line === undefined || input.character === undefined)) {
+        return {
+          data: {
+            operation: input.operation,
+            result: `The '${input.operation}' operation needs a line and character. Pass the 1-based position to look at — the one an editor shows.`,
+            filePath: input.filePath,
+          },
+        };
+      }
+
+      const openedAt = Date.now();
 
       try {
-        
-        
-        
+
+
+
         if (!resolvedManager.isFileOpen(absolutePath)) {
           const handle = await open(absolutePath, "r");
           try {
@@ -204,7 +232,35 @@ export function buildLSPTool(manager?: LSPServerManager): Tool {
           }
         }
 
-        
+        // Diagnostics are answered from what the servers have already sent,
+        // not from a request: nothing in LSP asks a server for them, it tells
+        // you. A document opened just now has told us nothing yet, so the
+        // report our didOpen triggers is worth a short wait; one that was
+        // already open has been kept current by every Edit and Write.
+        if (input.operation === "diagnostics") {
+          let reported = resolvedManager.getDiagnostics(absolutePath);
+          if (reported.length === 0) {
+            reported = await resolvedManager.waitForDiagnostics(absolutePath, {
+              afterMs: openedAt,
+            });
+          }
+
+          const findings = reported.flatMap((entry) =>
+            entry.diagnostics.map((diagnostic) => ({ server: entry.server, diagnostic })),
+          );
+
+          return {
+            data: {
+              operation: input.operation,
+              result: formatDiagnosticsReport(findings, input.filePath),
+              filePath: input.filePath,
+              resultCount: findings.length,
+            },
+          };
+        }
+
+        const { method, params } = getMethodAndParams(input, absolutePath);
+
         let result = await resolvedManager.sendRequest(absolutePath, method, params);
 
         if (result === undefined) {
@@ -340,10 +396,12 @@ function getMethodAndParams(
   absolutePath: string,
 ): { method: string; params: unknown } {
   const uri = pathToFileURL(absolutePath).href;
-  
+
+  // Only the position-bearing operations reach here with a line (the caller
+  // refuses the rest otherwise), and the fallback is never used by them.
   const position = {
-    line: input.line - 1,
-    character: input.character - 1,
+    line: (input.line ?? 1) - 1,
+    character: (input.character ?? 1) - 1,
   };
 
   switch (input.operation) {
@@ -404,9 +462,9 @@ function getMethodAndParams(
       };
     case "incomingCalls":
     case "outgoingCalls":
-      
-      
-      
+
+
+
       return {
         method: "textDocument/prepareCallHierarchy",
         params: {
@@ -414,6 +472,11 @@ function getMethodAndParams(
           position,
         },
       };
+    case "diagnostics":
+      // Answered from the notifications the manager collects, not from a
+      // request — nothing in LSP asks a server for its diagnostics. The
+      // caller never routes this operation here.
+      return { method: "textDocument/diagnostic", params: { textDocument: { uri } } };
   }
 }
 
@@ -531,8 +594,16 @@ function toLocation(item: LspLocation | LspLocationLink): LspLocation {
 }
 
 
+/**
+ * Every operation that goes out as a request. `diagnostics` is not one of
+ * them — it is answered from the notifications the manager collects and
+ * returns before this path — so the narrowing here is what keeps this switch
+ * exhaustive without a case for a result that never arrives.
+ */
+type RequestOperation = Exclude<LSPOperation, "diagnostics">;
+
 function formatResult(
-  operation: LSPOperation,
+  operation: RequestOperation,
   result: unknown,
   cwd: string,
 ): { formatted: string; resultCount: number; fileCount: number } {

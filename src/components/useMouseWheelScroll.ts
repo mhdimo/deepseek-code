@@ -41,14 +41,39 @@ const WHEEL_IDLE_MS = 500;
 const SGR_WHEEL_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
 
 /**
- * True when an input string (as delivered by ink's useInput, ESC already
- * stripped) is a terminal SGR mouse sequence like `[<64;10;15M`. Every
- * useInput handler must reject these up front — ink gives them an empty
- * key name, so without a guard the raw sequence gets typed into the prompt
- * buffer or misread as a keypress.
+ * An SGR mouse report anywhere in a chunk: `ESC [ < Cb ; Cx ; Cy M|m`.
+ *
+ * The ESC is optional because ink's useInput strips exactly one leading ESC
+ * from the sequence it hands the handler, but does not touch the ones behind
+ * it — a chunk holding two reports arrives as `[<...M` + `ESC[<...m`.
+ */
+const SGR_MOUSE_ANYWHERE = /\x1b?\[<\d+;\d+;\d+[Mm]/g;
+
+/**
+ * Drop every terminal SGR mouse report from a chunk of input, leaving whatever
+ * the user actually typed.
+ *
+ * Every useInput handler that inserts typed text must run its input through
+ * this first — ink gives a mouse report an empty key name, so without the
+ * guard the raw sequence gets typed into the buffer or misread as a keypress.
+ *
+ * Stripping (rather than rejecting the whole chunk) matters because a chunk is
+ * not guaranteed to be one report: the terminal writes press and release as
+ * separate sequences, and one read can hand both — or a report plus a
+ * keystroke — to ink as a single event. Deciding on the shape of the whole
+ * string drops the real keystrokes that came with it.
+ */
+export function stripMouseSequences(input: string): string {
+  return input.replace(SGR_MOUSE_ANYWHERE, "");
+}
+
+/**
+ * True when an input string (as delivered by ink's useInput, leading ESC
+ * already stripped) is nothing but terminal SGR mouse reports, like
+ * `[<64;10;15M` — a chunk with no real keystrokes in it, safe to drop whole.
  */
 export function isMouseSequence(input: string): boolean {
-  return /^\[<\d+;\d+;\d+[Mm]$/.test(input);
+  return input.length > 0 && stripMouseSequences(input).length === 0;
 }
 
 export function useMouseWheelScroll(target: React.RefObject<WheelScrollTarget | null>) {

@@ -17,9 +17,7 @@ import { getTheme, getThemeMode, resolveColor, type Theme } from "../../utils/th
 import { ProgressBar } from "../../ui/design-system/ProgressBar.js";
 import { listSessions, type SessionData } from "../../state/storage.js";
 import { formatTokenCount } from "../../services/tokenTracker.js";
-
-
-const CONTEXT_WINDOW = 1_000_000;
+import { contextWindowFor } from "../../services/contextManager.js";
 
 const SPEND_BAR_SCALE = 10;
 
@@ -30,7 +28,10 @@ export interface UsageAggregate {
   totalTokens: number;
   
   lastSessionTokens: number;
-  
+  /** The model the newest session ran on — the window is its window, and a
+   *  different model means a different one. */
+  lastSessionModel?: string;
+
   spend: number;
 }
 
@@ -57,6 +58,7 @@ export function aggregateUsage(sessions: SessionData[]): UsageAggregate {
     totalSessions: sessions.length,
     totalTokens,
     lastSessionTokens,
+    lastSessionModel: newest?.model,
     spend: (totalTokens / 1_000_000) * PRICE_PER_MILLION,
   };
 }
@@ -112,7 +114,11 @@ export function Usage(): React.ReactNode {
     );
   }
 
-  const sessionUtil = Math.min(100, (aggregate.lastSessionTokens / CONTEXT_WINDOW) * 100);
+  // The window belongs to the model the session ran on. Dividing by the
+  // unknown-model default while the label beside it said "1M" was how this
+  // bar came to report a session as eight times fuller than it was.
+  const sessionWindow = contextWindowFor(aggregate.lastSessionModel ?? "");
+  const sessionUtil = Math.min(100, (aggregate.lastSessionTokens / sessionWindow) * 100);
   const spendUtil = Math.min(100, (aggregate.spend / SPEND_BAR_SCALE) * 100);
 
   return (
@@ -120,7 +126,7 @@ export function Usage(): React.ReactNode {
       <LimitBar
         title="Current session"
         utilization={sessionUtil}
-        subtext={`${formatTokenCount(aggregate.lastSessionTokens)} / 1M tokens · with /clear`}
+        subtext={`${formatTokenCount(aggregate.lastSessionTokens)} / ${formatTokenCount(sessionWindow)} tokens · with /clear`}
       />
       <LimitBar
         title="Spend"

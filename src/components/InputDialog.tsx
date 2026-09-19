@@ -3,6 +3,7 @@ import React, { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
+import { stripMouseSequences } from "./useMouseWheelScroll.js";
 
 export interface InputDialogProps {
   title: string;
@@ -114,18 +115,20 @@ export default function InputDialog({
     }
     // Paste arrives as one multi-char input; keys like arrows come with a
     // named key and should not type anything. Terminal mouse sequences
-    // ("[<64;10;15M") arrive as raw strings with no named key — drop them.
-    const isMouseSequence = input.startsWith("[<");
+    // ("[<64;10;15M") arrive as raw strings with no named key — strip them
+    // out of the chunk instead of typing them. (The old guard tested
+    // `startsWith("[<")`, which both typed a report that was not first in the
+    // chunk and swallowed any paste that began with those two characters.)
+    const typed = stripMouseSequences(input);
     if (
-      input.length > 0 &&
-      !isMouseSequence &&
+      typed.length > 0 &&
       !key.ctrl &&
       !key.meta &&
       !key.upArrow &&
       !key.downArrow &&
       !key.tab
     ) {
-      insert(input);
+      insert(typed);
     }
   });
 
@@ -140,7 +143,7 @@ export default function InputDialog({
       cancelActive={false}
       footer={
         <Text>
-          <Text bold>enter</Text> to save · <Text bold>esc</Text> to cancel
+          Enter to confirm · Esc to cancel
           {initial ? " · edits start from the current value" : ""}
         </Text>
       }

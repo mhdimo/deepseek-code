@@ -31,6 +31,7 @@ const TaskOutputInputSchema = z.object({
 
 export const TaskOutputTool = buildTool({
   name: TASK_OUTPUT_TOOL_NAME,
+  requiredPermission: "allowRead",
   description: DESCRIPTION,
   inputSchema: TaskOutputInputSchema,
 

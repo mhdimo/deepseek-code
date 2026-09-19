@@ -1,37 +1,33 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { theme } from "../utils/theme.js";
+import { theme, resolveColor } from "../utils/theme.js";
 
 interface QueuePreviewProps {
   queueItems: string[];
 }
 
-const PREVIEW_MAX = 60;
-
+/**
+ * Queued submissions render as the user prompts they will become: one
+ * full-width `❯ <message>` row per item, indented two columns, on the
+ * user-message band — no count, no "▸" bullet, no truncation.
+ */
 export default function QueuePreview({ queueItems }: QueuePreviewProps) {
   if (queueItems.length === 0) return null;
 
-  const first = queueItems[0]!;
-  const preview =
-    first.length > PREVIEW_MAX
-      ? first.slice(0, PREVIEW_MAX - 1) + "…"
-      : first;
-  const remaining = queueItems.length - 1;
-
   return (
-    <Box paddingX={0}>
-      <Text>
-        <Text color={theme.warning} bold>
-          {queueItems.length} queued
-        </Text>
-        <Text dimColor>
-          {" · ▸ "}
-          {preview}
-          {remaining > 0 ? ` · +${remaining} more` : ""}
-          {" · "}
-          <Text bold>Ctrl+Q</Text> clear
-        </Text>
-      </Text>
+    <Box marginTop={1} flexDirection="column" paddingX={2}>
+      {queueItems.map((item, i) => (
+        <Box
+          key={i}
+          backgroundColor={resolveColor(theme.userMessageBackground)}
+          paddingRight={1}
+        >
+          <Text>
+            <Text color={resolveColor(theme.subtle)}>{"❯ "}</Text>
+            <Text color={resolveColor(theme.text)}>{item}</Text>
+          </Text>
+        </Box>
+      ))}
     </Box>
   );
 }
