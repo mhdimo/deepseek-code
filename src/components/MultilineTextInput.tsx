@@ -605,7 +605,10 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
     },
     [insertAtCursor],
   );
-  const regionRef = useClickRegion(handleRegionClick, focus);
+  // Right-clicking the prompt pastes (the button-2 branch above) — this is
+  // the one region that opts into right presses; everywhere else activation
+  // is left-click-only.
+  const regionRef = useClickRegion(handleRegionClick, focus, true);
 
   
 

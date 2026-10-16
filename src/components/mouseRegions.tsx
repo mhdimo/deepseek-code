@@ -4,6 +4,10 @@
  * Components register their EXISTING root Box (a ref is layout-neutral) with
  * `useClickRegion`; `App` routes every left/right SGR press through
  * `createHitTester` before the transcript selection state machine sees it.
+ * Activation is left-click-only: a right press on a hit region is still
+ * claimed (it never leaks into the selection) but does nothing unless the
+ * region opts in with `acceptRightClick` — right-click's one meaning in the
+ * app is paste, which only the prompt region registers for.
  * Hit testing walks the yoga tree the same way `ChatPanel.getViewport()`
  * does — accumulating `getComputedTop()/getComputedLeft()` up to the root —
  * because stock ink gives us no DOM hit test (the reference forks ink for
@@ -41,6 +45,8 @@ export interface RegisteredMouseRegion {
   ref: React.RefObject<DOMElement | null>;
   handlerRef: React.RefObject<(ev: RegionClickEvent) => void>;
   enabledRef: React.RefObject<boolean>;
+  /** Opt-in: right presses reach `handlerRef` instead of being swallowed. */
+  acceptRightClickRef: React.RefObject<boolean>;
 }
 
 export interface MouseRegistry {
@@ -91,6 +97,10 @@ export function elementRect(el: DOMElement | null | undefined): ElementRect | un
  * Resolve one press. Returns true when a region claimed it (the caller must
  * then swallow the press). Innermost region wins — greatest yoga depth; ties
  * go to the last registered.
+ *
+ * Activation is left-click-only. A right press over a region that did not
+ * opt in (`acceptRightClick`) is still claimed — it must not fall through to
+ * the transcript — but the handler is not called: the press does nothing.
  */
 export function createHitTester(
   registry: MouseRegistry,
@@ -111,6 +121,9 @@ export function createHitTester(
       }
     }
     if (!hit || !hitRect) return false;
+    // Claimed but inert: the right press is swallowed here so it cannot start
+    // a transcript selection, and no handler runs.
+    if (button === 2 && !hit.acceptRightClickRef.current) return true;
     try {
       hit.handlerRef.current({
         row: row - hitRect.top,
@@ -131,10 +144,13 @@ export function createHitTester(
 /**
  * Register the calling component's root Box as a click region. Returns the
  * ref to attach. No provider → no-op (components stay usable in isolation).
+ * `acceptRightClick` opts the region into right presses; without it a right
+ * press is swallowed unhandled (activation is left-click-only).
  */
 export function useClickRegion(
   handler: (ev: RegionClickEvent) => void,
   enabled = true,
+  acceptRightClick = false,
 ): React.RefObject<DOMElement | null> {
   const registry = useContext(MouseRegionContext);
   const ref = useRef<DOMElement | null>(null);
@@ -142,11 +158,13 @@ export function useClickRegion(
   handlerRef.current = handler;
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  const acceptRightClickRef = useRef(acceptRightClick);
+  acceptRightClickRef.current = acceptRightClick;
 
   useEffect(() => {
     if (!registry) return;
     const id = registry.nextId++;
-    registry.regions.set(id, { ref, handlerRef, enabledRef });
+    registry.regions.set(id, { ref, handlerRef, enabledRef, acceptRightClickRef });
     return () => {
       registry.regions.delete(id);
     };
@@ -158,6 +176,8 @@ export function useClickRegion(
 export interface ClickRegionBoxProps extends Omit<React.ComponentProps<typeof Box>, "ref"> {
   onClickRegion: (ev: RegionClickEvent) => void;
   clickEnabled?: boolean;
+  /** Opt in to right presses; default false (left-click-only activation). */
+  acceptRightClick?: boolean;
 }
 
 /**
@@ -167,10 +187,11 @@ export interface ClickRegionBoxProps extends Omit<React.ComponentProps<typeof Bo
 export function ClickRegionBox({
   onClickRegion,
   clickEnabled = true,
+  acceptRightClick = false,
   children,
   ...boxProps
 }: ClickRegionBoxProps): React.ReactElement {
-  const ref = useClickRegion(onClickRegion, clickEnabled);
+  const ref = useClickRegion(onClickRegion, clickEnabled, acceptRightClick);
   return (
     <Box {...boxProps} ref={ref}>
       {children}

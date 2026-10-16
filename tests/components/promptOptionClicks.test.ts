@@ -16,8 +16,13 @@ import React from "react";
 import { PermissionSelect } from "../../src/components/PermissionPrompt.js";
 import AskUserQuestionsPrompt from "../../src/components/AskUserQuestionsPrompt.js";
 import type { AskUserQuestion } from "../../src/types/index.js";
-import type { RegionClickEvent } from "../../src/components/mouseRegions.js";
-import { mountWithMouse } from "./mouseTestHarness.js";
+import type { AskUserQuestionsResult } from "../../src/Tool.js";
+import {
+  createHitTester,
+  elementRect,
+  type RegionClickEvent,
+} from "../../src/components/mouseRegions.js";
+import { mountWithMouse, settle, write, type MountedMouseApp } from "./mouseTestHarness.js";
 
 let mounted: { unmount: () => void } | null = null;
 afterEach(() => {
@@ -27,12 +32,24 @@ afterEach(() => {
 
 const click: RegionClickEvent = { row: 0, col: 0, clickCount: 1, button: 0, width: 40, height: 1 };
 
-/** Mount and return the registered handlers in render (row) order. */
-async function rowHandlers(node: React.ReactElement): Promise<Array<(ev: RegionClickEvent) => void>> {
+/** Mount and return the app (for follow-up keystrokes and hit testing) plus
+ *  the registered handlers in render (row) order. */
+async function mountRows(node: React.ReactElement): Promise<{
+  app: MountedMouseApp;
+  handlers: Array<(ev: RegionClickEvent) => void>;
+}> {
   const app = mountWithMouse(node);
   mounted = app;
   await Bun.sleep(5);
-  return [...app.registry.regions.values()].map((r) => r.handlerRef.current);
+  return {
+    app,
+    handlers: [...app.registry.regions.values()].map((r) => r.handlerRef.current),
+  };
+}
+
+/** Mount and return the registered handlers in render (row) order. */
+async function rowHandlers(node: React.ReactElement): Promise<Array<(ev: RegionClickEvent) => void>> {
+  return (await mountRows(node)).handlers;
 }
 
 describe("permission select rows", () => {
@@ -111,11 +128,11 @@ const multiQuestion: AskUserQuestion = {
 
 describe("ask-user-question rows", () => {
   test("a multi-select option row toggles (Space semantics)", async () => {
-    const results: unknown[] = [];
-    const handlers = await rowHandlers(
+    const results: AskUserQuestionsResult[] = [];
+    const { app, handlers } = await mountRows(
       React.createElement(AskUserQuestionsPrompt, {
         questions: [multiQuestion],
-        onResult: (r: unknown) => results.push(r),
+        onResult: (r: AskUserQuestionsResult) => results.push(r),
       } as never),
     );
     // Rows: 0 Apple, 1 Banana, 2 Other, 3 Chat.
@@ -123,6 +140,53 @@ describe("ask-user-question rows", () => {
     handlers[1]!(click);
     await Bun.sleep(5);
     expect(results).toEqual([]); // multi-select does not submit
+
+    // Continue and submit: the clicked row must be in the answer payload.
+    // This is the assertion that fails if clickRow stops calling toggleRow
+    // (a bare "nothing submitted" check passes either way).
+    await write(app, "\r"); // Enter continues from the question
+    await write(app, "\r"); // Enter submits from the review view
+    expect(results).toEqual([
+      { kind: "answered", answers: { [multiQuestion.question]: "Banana" } },
+    ]);
+  });
+
+  test("a right press on an option row does not answer; a left press on it does", async () => {
+    const results: AskUserQuestionsResult[] = [];
+    const app = mountWithMouse(
+      React.createElement(AskUserQuestionsPrompt, {
+        questions: [
+          {
+            question: "Which fruit?",
+            header: "fruit",
+            options: [
+              { label: "Apple", description: "a" },
+              { label: "Banana", description: "b" },
+            ],
+          } satisfies AskUserQuestion,
+        ],
+        onResult: (r: AskUserQuestionsResult) => results.push(r),
+      } as never),
+    );
+    mounted = app;
+    await settle();
+
+    // The Banana row, located through yoga rather than by hand.
+    const row = [...app.registry.regions.values()][1]!;
+    const rect = elementRect(row.ref.current);
+    expect(rect).toBeDefined();
+    const hit = createHitTester(app.registry);
+
+    // Right press: claimed (swallowed whole) but inert — activation is
+    // left-click-only, so the question must not be answered.
+    expect(hit(rect!.top, rect!.left, 1, 2)).toBe(true);
+    await Bun.sleep(5);
+    expect(results).toEqual([]);
+
+    // The same cell on a left press answers and submits.
+    expect(hit(rect!.top, rect!.left, 1, 0)).toBe(true);
+    await Bun.sleep(5);
+    expect(results).toMatchObject([{ kind: "answered", answers: { "Which fruit?": "Banana" } }]);
   });
 
   test("a single-select option row answers and submits", async () => {

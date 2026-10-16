@@ -85,13 +85,17 @@ describe("intercept arbitration", () => {
     expect(counts).toEqual([1, 2]);
   });
 
-  test("right press is offered with button 2; releases and wheels are not", async () => {
+  test("right press is offered with button 2 to an opted-in region; releases and wheels are not", async () => {
     const buttons: number[] = [];
     function Claimed() {
       return React.createElement(
         ClickRegionBox,
         {
           onClickRegion: (ev: { button: number }) => buttons.push(ev.button),
+          // Right presses are left-click-only by default; the prompt is the
+          // one region that opts in (its right-click pastes). This test pins
+          // the opt-in path end to end.
+          acceptRightClick: true,
         },
         React.createElement(Text, null, "x"),
       );
@@ -104,6 +108,25 @@ describe("intercept arbitration", () => {
     await write(app, report(32, 2, 1)); // bare drag
     await settle();
     expect(buttons).toEqual([2]);
+  });
+
+  test("a right press on a default region is swallowed without dispatch", async () => {
+    const seen: number[] = [];
+    function Claimed() {
+      return React.createElement(
+        ClickRegionBox,
+        {
+          onClickRegion: (ev: { button: number }) => seen.push(ev.button),
+        },
+        React.createElement(Text, null, "x"),
+      );
+    }
+    const app = mount(React.createElement(Claimed));
+    await write(app, report(2, 1, 1)); // right press inside the region
+    await write(app, report(0, 1, 1)); // left press on the same cell still fires
+    await settle();
+    expect(seen).toEqual([0]);
+    expect(app.selections.length).toBe(0); // and neither press anchored a selection
   });
 
   test("a press outside every region falls through untouched", async () => {
