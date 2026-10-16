@@ -1180,7 +1180,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   pickerActiveRef.current = showCommandPicker;
 
-  
+  // One activation path for Enter/Tab on the command picker and for a click
+  // on a picker row: fill the usage (or run a no-arg command on Enter).
+  const activateCommand = (index: number, viaReturn: boolean): void => {
+    const safeIdx = Math.min(index, filteredCommands.length - 1);
+    const cmd = filteredCommands[safeIdx];
+    if (!cmd) return;
+    const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
+    if (viaReturn && !cmd.acceptsArgs) {
+      handleSubmitRef.current(`/${cmd.name}`);
+    } else {
+      setInput(usage);
+    }
+    setCommandPickerIndex(0);
+  };
+
   const mention = useMemo(
     () => (isLoading || showCommandPicker ? null : detectTrailingMention(input)),
     [input, isLoading, showCommandPicker],
@@ -1897,17 +1911,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return;
       }
       if (key.tab || key.return) {
-        const safeIdx = Math.min(commandPickerIndex, filteredCommands.length - 1);
-        const cmd = filteredCommands[safeIdx];
-        if (cmd) {
-          const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
-          if (key.return && !cmd.acceptsArgs) {
-            handleSubmitRef.current(`/${cmd.name}`);
-          } else {
-            setInput(usage);
-          }
-          setCommandPickerIndex(0);
-        }
+        activateCommand(commandPickerIndex, key.return);
         return;
       }
     }
@@ -5312,6 +5316,7 @@ Based on the above changes:
             <CommandPicker
               commands={filteredCommands}
               selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+              onPick={(index) => activateCommand(index, true)}
             />
           )}
 
