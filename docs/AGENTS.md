@@ -211,12 +211,12 @@ class AgentManager {
 
 To add a new agent:
 
-1. Add the agent name to `AgentName` type in `src/core/types.ts`:
+1. Add the agent name to `AgentName` in `src/types/index.ts`:
    ```typescript
    export type AgentName = "code" | "plan" | "review" | "your-agent";
    ```
 
-2. Add agent configuration in `src/agent/index.ts`:
+2. Add agent configuration in `src/services/agent/index.ts`:
    ```typescript
    const AGENTS: Record<AgentName, AgentConfig> = {
      // ... existing agents
