@@ -272,6 +272,8 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
                   setSelectedIndex(i);
                   openSkill(row.name);
                 }}
+                // Hover only moves the focus; opening is Enter/click's job.
+                onHoverRegion={() => setSelectedIndex(i)}
               >
                 <Text color={markerColor}>{marker}</Text>
                 <Text color={focused ? focusColor : undefined} bold={focused}>

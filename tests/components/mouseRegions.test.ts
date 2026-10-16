@@ -13,9 +13,11 @@ import {
   ClickRegionBox,
   MouseRegionProvider,
   createHitTester,
+  createHoverDispatcher,
   createMouseRegistry,
   elementRect,
   type RegionClickEvent,
+  type RegionHoverEvent,
   type RegisteredMouseRegion,
 } from "../../src/components/mouseRegions.js";
 
@@ -52,6 +54,7 @@ function register(
   handler: (ev: RegionClickEvent) => void,
   enabled = true,
   acceptRightClick = false,
+  onHover: ((ev: RegionHoverEvent) => void) | null = null,
 ): void {
   const id = registry.nextId++;
   registry.regions.set(id, {
@@ -59,6 +62,7 @@ function register(
     handlerRef: { current: handler },
     enabledRef: { current: enabled },
     acceptRightClickRef: { current: acceptRightClick },
+    hoverHandlerRef: { current: onHover },
   } as RegisteredMouseRegion);
 }
 
@@ -173,6 +177,73 @@ describe("createHitTester", () => {
   });
 });
 
+describe("createHoverDispatcher", () => {
+  test("dispatches to the innermost region that carries a hover handler", () => {
+    const registry = createMouseRegistry();
+    const calls: Array<[string, RegionHoverEvent]> = [];
+    // Outer has the hover handler; the deeper region does not — so the outer
+    // one lights up under the pointer rather than the hit going nowhere.
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 5 }), () => {}, true, false,
+      (ev) => calls.push(["outer", ev]));
+    register(registry, fakeNode({ top: 2, left: 2, width: 3, height: 1 }), () => {});
+    register(registry, fakeNode({ top: 4, left: 0, width: 10, height: 1 }), () => {}, true, false,
+      (ev) => calls.push(["inner", ev]));
+    const hover = createHoverDispatcher(registry);
+
+    hover(2, 3);
+    expect(calls).toEqual([["outer", { row: 2, col: 3, width: 10, height: 5 }]]);
+    hover(4, 1);
+    expect(calls[1]).toEqual(["inner", { row: 0, col: 1, width: 10, height: 1 }]);
+  });
+
+  test("is change-guarded per region AND row", () => {
+    const registry = createMouseRegistry();
+    const calls: string[] = [];
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 4 }), () => {}, true, false,
+      () => calls.push("hover"));
+    const hover = createHoverDispatcher(registry);
+
+    hover(1, 2);
+    hover(1, 9); // same row, different cell: no second dispatch
+    expect(calls.length).toBe(1);
+    hover(2, 2); // a new row re-dispatches
+    expect(calls.length).toBe(2);
+    hover(9, 9); // off every region: the guard resets …
+    expect(calls.length).toBe(2);
+    hover(2, 2); // … so coming back to the same row lights it again
+    expect(calls.length).toBe(3);
+    hover(9, 9);
+    hover(9, 9); // off-region twice dispatches nothing at all
+    expect(calls.length).toBe(3);
+  });
+
+  test("disabled regions and regions without a hover handler are transparent", () => {
+    const registry = createMouseRegistry();
+    const calls: string[] = [];
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 5 }), () => {}, true, false,
+      () => calls.push("outer"));
+    register(registry, fakeNode({ top: 1, left: 1, width: 3, height: 1 }), () => {}, false, false,
+      () => calls.push("disabled"));
+    register(registry, fakeNode({ top: 3, left: 1, width: 3, height: 1 }), () => {});
+    const hover = createHoverDispatcher(registry);
+
+    hover(1, 1); // the disabled region is skipped, its ancestor lights
+    expect(calls).toEqual(["outer"]);
+    hover(3, 1); // the handler-less region is skipped too — the ancestor
+    expect(calls).toEqual(["outer", "outer"]); // catches the pointer again
+    expect(calls).not.toContain("disabled"); // …and the disabled one never fires
+  });
+
+  test("a throwing hover handler is swallowed, not a crash", () => {
+    const registry = createMouseRegistry();
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 5 }), () => {}, true, false,
+      () => {
+        throw new Error("boom");
+      });
+    expect(() => createHoverDispatcher(registry)(1, 1)).not.toThrow();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Contributed components: registration follows mount, refs, and enabled
 // ---------------------------------------------------------------------------
@@ -241,6 +312,35 @@ test("ClickRegionBox forwards acceptRightClick to the registration", async () =>
   await Bun.sleep(5);
   expect(hit(0, 0, 1, 2)).toBe(true);
   expect(events).toMatchObject([{ row: 0, col: 0, button: 2 }]);
+});
+
+test("ClickRegionBox forwards onHoverRegion without wiring it to the click", async () => {
+  const registry = createMouseRegistry();
+  const hit = createHitTester(registry);
+  const hovered: RegionHoverEvent[] = [];
+  const clicked: RegionClickEvent[] = [];
+  const app = render(
+    React.createElement(
+      MouseRegionProvider,
+      { registry },
+      React.createElement(
+        ClickRegionBox,
+        {
+          onClickRegion: (ev: RegionClickEvent) => clicked.push(ev),
+          onHoverRegion: (ev: RegionHoverEvent) => hovered.push(ev),
+        },
+        React.createElement(Text, null, "x"),
+      ),
+    ),
+    { patchConsole: false },
+  );
+  mounted = app;
+  await Bun.sleep(5);
+  createHoverDispatcher(registry)(0, 0);
+  expect(hovered).toMatchObject([{ row: 0, col: 0 }]);
+  expect(clicked).toEqual([]); // a pointer move is not a click
+  expect(hit(0, 0, 1, 0)).toBe(true); // the region still takes clicks
+  expect(clicked.length).toBe(1);
 });
 
 test("ClickRegionBox without a provider renders and no-ops", async () => {

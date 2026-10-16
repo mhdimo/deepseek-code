@@ -225,6 +225,8 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
                   key={task.id}
                   flexDirection="column"
                   onClickRegion={() => openTask(index)}
+                  // Hover moves the cursor; Enter (or a click) opens the row.
+                  onHoverRegion={() => setSelectedIndex(index)}
                 >
                   <Box>
                     <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>

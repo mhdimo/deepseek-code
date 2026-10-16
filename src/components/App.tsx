@@ -20,7 +20,12 @@ import { adoptSession } from "./adoptSession.js";
 import { persistedThinkingMode } from "./settingsRows.js";
 import { useMouseWheelScroll, isMouseSequence } from "./useMouseWheelScroll.js";
 import { useMouseSelection, type ContentSelection } from "./useMouseSelection.js";
-import { createHitTester, createMouseRegistry, MouseRegionProvider } from "./mouseRegions.js";
+import {
+  createHitTester,
+  createHoverDispatcher,
+  createMouseRegistry,
+  MouseRegionProvider,
+} from "./mouseRegions.js";
 import { ctrlCAction, overlaysOf, type CtrlCOverlay } from "./ctrlC.js";
 import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON } from "./terminalLayout.js";
 import { onExitCleanup } from "../services/exitCleanup.js";
@@ -470,7 +475,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   // every press to the innermost registered region first.
   const mouseRegistry = useMemo(() => createMouseRegistry(), []);
   const mouseHitTester = useMemo(() => createHitTester(mouseRegistry), [mouseRegistry]);
-  useMouseSelection(chatRef, setSelection, mouseHitTester);
+  const mouseHover = useMemo(() => createHoverDispatcher(mouseRegistry), [mouseRegistry]);
+  useMouseSelection(chatRef, setSelection, mouseHitTester, mouseHover);
 
   
   
@@ -5307,6 +5313,7 @@ Based on the above changes:
               selectedIndex={mentionIndex}
               query={mention.query}
               onPick={(index) => fillMention(index)}
+              onHover={(index) => setMentionIndex(index)}
             />
           )}
 
@@ -5330,6 +5337,7 @@ Based on the above changes:
               commands={filteredCommands}
               selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
               onPick={(index) => activateCommand(index, true)}
+              onHover={(index) => setCommandPickerIndex(index)}
             />
           )}
 

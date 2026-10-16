@@ -535,6 +535,8 @@ export function PermissionSelect({
               flexDirection="column"
               flexShrink={0}
               onClickRegion={() => handleRowClick(option)}
+              // Hover moves the focus only — deciding stays Enter's job.
+              onHoverRegion={() => focusOption(option.value)}
             >
               <Box flexDirection="row" flexShrink={0}>
                 <OptionSegments segments={[...row.prefix, ...row.label]} />
@@ -585,6 +587,7 @@ export function PermissionSelect({
             flexDirection="column"
             flexShrink={0}
             onClickRegion={() => handleRowClick(option)}
+            onHoverRegion={() => focusOption(option.value)}
           >
             <Box flexDirection="row">
               {/* Reference parity: EVERY option is numbered (dimmed) behind the

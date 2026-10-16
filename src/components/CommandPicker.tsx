@@ -7,7 +7,7 @@ import {
 } from "../services/commands/commandRegistry.js";
 import { commandColumnWidth, truncateCommandDescription, visibleCommandRange } from "./commandPickerLayout.js";
 import { getTheme, getThemeMode, resolveColor } from "../utils/theme.js";
-import { useClickRegion, type RegionClickEvent } from "./mouseRegions.js";
+import { useClickRegion, type RegionClickEvent, type RegionHoverEvent } from "./mouseRegions.js";
 
 export type CommandDef = CommandDefinition;
 
@@ -26,11 +26,14 @@ interface CommandPickerProps {
   selectedIndex: number;
   /** Click activation: the index into `commands` (Enter's semantics). */
   onPick?: (index: number) => void;
+  /** Pointer highlight: the index into `commands` under the cursor. Moves the
+   *  selection only — Enter (or a click) then acts on it. */
+  onHover?: (index: number) => void;
 }
 
 const MAX_VISIBLE = 6;
 
-export default React.memo(function CommandPicker({ commands, selectedIndex, onPick }: CommandPickerProps) {
+export default React.memo(function CommandPicker({ commands, selectedIndex, onPick, onHover }: CommandPickerProps) {
   if (commands.length === 0) return null;
 
   const { stdout } = useStdout();
@@ -52,7 +55,18 @@ export default React.memo(function CommandPicker({ commands, selectedIndex, onPi
     if (row < 0 || row >= visible.length) return; // the "…" markers themselves
     onPick(start + row);
   };
-  const regionRef = useClickRegion(handleRegionClick, Boolean(onPick));
+  const handleRegionHover = (ev: RegionHoverEvent): void => {
+    if (!onHover) return;
+    const row = ev.row - (showTopEllipsis ? 1 : 0);
+    if (row < 0 || row >= visible.length) return; // the "…" markers themselves
+    onHover(start + row);
+  };
+  const regionRef = useClickRegion(
+    handleRegionClick,
+    Boolean(onPick),
+    false,
+    onHover ? handleRegionHover : undefined,
+  );
 
   return (
     <Box flexDirection="column" paddingX={2} ref={regionRef}>

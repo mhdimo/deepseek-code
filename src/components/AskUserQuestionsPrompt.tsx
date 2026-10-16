@@ -284,6 +284,9 @@ export default function AskUserQuestionsPrompt({
                   key={`${questionIndex}-${rowIndex}`}
                   flexDirection="column"
                   onClickRegion={() => clickRow(rowIndex)}
+                  // Hover moves the focus, never toggles or answers — a click
+                  // still runs the row's own key action.
+                  onHoverRegion={() => setFocusedRowIndex(rowIndex)}
                 >
                   <Text>
                     <Text color={focused ? theme.claude : undefined}>

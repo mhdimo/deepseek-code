@@ -288,6 +288,9 @@ export default function ExportView({
                 // where Enter closes the dialog).
                 clickEnabled={phase === "choose"}
                 onClickRegion={() => activateRow(i)}
+                // Hover moves the cursor; Enter (or a click) runs the row,
+                // and like the click it is inert outside the choosing phase.
+                onHoverRegion={() => setSelected(i)}
               >
                 <Text color={active ? token("suggestion") : undefined} bold={active}>
                   {active ? "❯ " : "  "}

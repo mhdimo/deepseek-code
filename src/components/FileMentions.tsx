@@ -5,7 +5,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
-import { useClickRegion, type RegionClickEvent } from "./mouseRegions.js";
+import { useClickRegion, type RegionClickEvent, type RegionHoverEvent } from "./mouseRegions.js";
 
 interface FileMentionsProps {
   matches: string[];
@@ -13,9 +13,12 @@ interface FileMentionsProps {
   query: string;
   /** Click activation: fill this match in at the mention's position. */
   onPick?: (index: number) => void;
+  /** Pointer highlight: move the selection to the match under the cursor
+   *  without filling it in. */
+  onHover?: (index: number) => void;
 }
 
-export default function FileMentions({ matches, selectedIndex, onPick }: FileMentionsProps): React.ReactElement | null {
+export default function FileMentions({ matches, selectedIndex, onPick, onHover }: FileMentionsProps): React.ReactElement | null {
   if (matches.length === 0) return null;
   const cols = process.stdout.columns || 80;
   const maxW = cols - 6;
@@ -27,7 +30,17 @@ export default function FileMentions({ matches, selectedIndex, onPick }: FileMen
     if (ev.row < 0 || ev.row >= matches.length) return;
     onPick(ev.row);
   };
-  const regionRef = useClickRegion(handleRegionClick, Boolean(onPick));
+  const handleRegionHover = (ev: RegionHoverEvent): void => {
+    if (!onHover) return;
+    if (ev.row < 0 || ev.row >= matches.length) return;
+    onHover(ev.row);
+  };
+  const regionRef = useClickRegion(
+    handleRegionClick,
+    Boolean(onPick),
+    false,
+    onHover ? handleRegionHover : undefined,
+  );
 
   return (
     <Box flexDirection="column" paddingX={2} marginTop={0} ref={regionRef}>

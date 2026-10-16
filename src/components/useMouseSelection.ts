@@ -106,12 +106,17 @@ export function useMouseSelection(
   /** First refusal on every left/right press, in 0-based SCREEN coordinates.
    *  Return true to claim the press (it is then swallowed whole). */
   intercept?: (row: number, col: number, clickCount: number, button: number) => boolean,
+  /** Pointer motion with no button held, in the same 0-based SCREEN
+   *  coordinates. Never claimed — the pointer is not a gesture. */
+  onHover?: (row: number, col: number) => void,
 ): void {
   const { stdin, setRawMode, internal_eventEmitter } = useStdin();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const interceptRef = useRef(intercept);
   interceptRef.current = intercept;
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
   const stateRef = useRef<DragState>({
     anchorRow: 0,
     anchorCol: 0,
@@ -126,8 +131,10 @@ export function useMouseSelection(
   useEffect(() => {
     if (!stdin?.isTTY) return;
     setRawMode(true);
-    // Button-event tracking (?1002h) is required for drag sequences.
-    process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+    // Button-event tracking (?1002h) is required for drag sequences, and
+    // any-event tracking (?1003h) for hover — the pointer's no-button motion
+    // is the one report 1002 withholds. The higher mode subsumes the lower.
+    process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
 
     // Screen-space multi-click tracking for click regions. Deliberately NOT
     // the DragState's `lastPress`: that one only ticks for presses inside the
@@ -178,6 +185,19 @@ export function useMouseSelection(
             claimed = false; // a throwing region must not kill the input loop
           }
           if (claimed) continue;
+        } else if (regionButton === 35 && m[4] === "M") {
+          // Hover: pointer motion with no button held. SGR encodes it 32|3 =
+          // 35 — the motion bit plus "no button", and the 28 mask above only
+          // strips shift/meta/ctrl, so 35 is what reaches here (a plain
+          // release is 3). Handled before the transcript math and never
+          // claimed — motion over an overlay, the banner, or empty space is
+          // just a position. Drags (32|0) and wheels (64/65) stay out.
+          try {
+            onHoverRef.current?.(row - 1, col - 1);
+          } catch {
+            // a throwing hover handler must not kill the input loop
+          }
+          continue;
         }
 
         const vp = chatRef.current?.getViewport();
@@ -311,7 +331,7 @@ export function useMouseSelection(
 
     const disable = () => {
       try {
-        process.stdout.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+        process.stdout.write("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l");
       } catch {}
     };
     internal_eventEmitter?.on("input", onInput);

@@ -220,6 +220,13 @@ export default function Config({
     toggleSetting(filteredSettingsItems[index]);
   };
 
+  // Hover moves the cursor only — the pointer must not change a setting.
+  const hoverSettingLine = (id: string): void => {
+    const index = filteredSettingsItems.findIndex((setting) => setting.id === id);
+    if (index === -1) return;
+    selectIndex(index);
+  };
+
   const commitEdit = (): void => {
     const setting = filteredSettingsItems.find((s) => s.id === editSetting);
     setEditSetting(null);
@@ -507,6 +514,7 @@ export default function Config({
                   key={line.id}
                   flexDirection="row"
                   onClickRegion={() => clickSettingLine(line.id)}
+                  onHoverRegion={() => hoverSettingLine(line.id)}
                 >
                   <Box width={SETTINGS_LABEL_WIDTH}>
                     <Text color={line.selected ? suggestion : undefined}>

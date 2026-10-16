@@ -13,6 +13,12 @@
  * because stock ink gives us no DOM hit test (the reference forks ink for
  * its `hit-test.ts`; we do not).
  *
+ * The same regions also carry an optional HOVER handler: a no-button pointer
+ * motion report makes the row under the pointer the highlighted row — the
+ * mouse and the arrow keys then drive one highlight. Hover never activates
+ * (no handler decides, toggles, or runs anything), and `createHoverDispatcher`
+ * is change-guarded so re-entering the same row does not re-render.
+ *
  * Coordinates: 0-based screen cells in, 0-based region-local cells out.
  * The single 1-based → 0-based conversion happens in useMouseSelection.
  */
@@ -27,6 +33,15 @@ export interface RegionClickEvent {
   clickCount: number;
   /** SGR button with modifiers stripped: 0 left, 2 right. */
   button: number;
+  /** The region rect's computed size, so handlers can measure themselves. */
+  width: number;
+  height: number;
+}
+
+export interface RegionHoverEvent {
+  /** Region-local, 0-based, relative to the region rect's top-left. */
+  row: number;
+  col: number;
   /** The region rect's computed size, so handlers can measure themselves. */
   width: number;
   height: number;
@@ -47,6 +62,8 @@ export interface RegisteredMouseRegion {
   enabledRef: React.RefObject<boolean>;
   /** Opt-in: right presses reach `handlerRef` instead of being swallowed. */
   acceptRightClickRef: React.RefObject<boolean>;
+  /** Optional: null regions are transparent to the pointer (no highlight). */
+  hoverHandlerRef: React.RefObject<((ev: RegionHoverEvent) => void) | null>;
 }
 
 export interface MouseRegistry {
@@ -142,15 +159,63 @@ export function createHitTester(
 }
 
 /**
+ * Resolve one pointer position for hover. Same innermost-wins walk as the hit
+ * tester, but: regions without a hover handler and disabled regions are
+ * transparent, nothing is ever "claimed" (the pointer is not a gesture), and
+ * dispatch is change-guarded on `region:row` — one call per row transition,
+ * so moving within a row (or across inert chrome) re-renders nothing. Leaving
+ * every region resets the guard, so coming back to the same row re-fires.
+ */
+export function createHoverDispatcher(
+  registry: MouseRegistry,
+): (row: number, col: number) => void {
+  let lastKey: string | null = null;
+  return (row, col) => {
+    let hit: RegisteredMouseRegion | null = null;
+    let hitId = -1;
+    let hitRect: ElementRect | null = null;
+    for (const [id, region] of registry.regions) {
+      if (!region.hoverHandlerRef.current) continue;
+      if (!region.enabledRef.current) continue;
+      const rect = elementRect(region.ref.current);
+      if (!rect) continue;
+      if (row < rect.top || row >= rect.top + rect.height) continue;
+      if (col < rect.left || col >= rect.left + rect.width) continue;
+      if (!hitRect || rect.depth >= hitRect.depth) {
+        hit = region;
+        hitId = id;
+        hitRect = rect;
+      }
+    }
+    const key = hit ? `${hitId}:${row}` : null;
+    if (key === lastKey) return;
+    lastKey = key;
+    if (!hit || !hitRect) return;
+    try {
+      hit.hoverHandlerRef.current?.({
+        row: row - hitRect.top,
+        col: col - hitRect.left,
+        width: hitRect.width,
+        height: hitRect.height,
+      });
+    } catch {
+      // A throwing handler must never kill the input loop.
+    }
+  };
+}
+
+/**
  * Register the calling component's root Box as a click region. Returns the
  * ref to attach. No provider → no-op (components stay usable in isolation).
  * `acceptRightClick` opts the region into right presses; without it a right
- * press is swallowed unhandled (activation is left-click-only).
+ * press is swallowed unhandled (activation is left-click-only). `onHover`
+ * adds a pointer highlight — same region, and it never fires the click.
  */
 export function useClickRegion(
   handler: (ev: RegionClickEvent) => void,
   enabled = true,
   acceptRightClick = false,
+  onHover?: (ev: RegionHoverEvent) => void,
 ): React.RefObject<DOMElement | null> {
   const registry = useContext(MouseRegionContext);
   const ref = useRef<DOMElement | null>(null);
@@ -160,11 +225,13 @@ export function useClickRegion(
   enabledRef.current = enabled;
   const acceptRightClickRef = useRef(acceptRightClick);
   acceptRightClickRef.current = acceptRightClick;
+  const hoverHandlerRef = useRef<((ev: RegionHoverEvent) => void) | null>(onHover ?? null);
+  hoverHandlerRef.current = onHover ?? null;
 
   useEffect(() => {
     if (!registry) return;
     const id = registry.nextId++;
-    registry.regions.set(id, { ref, handlerRef, enabledRef, acceptRightClickRef });
+    registry.regions.set(id, { ref, handlerRef, enabledRef, acceptRightClickRef, hoverHandlerRef });
     return () => {
       registry.regions.delete(id);
     };
@@ -178,6 +245,8 @@ export interface ClickRegionBoxProps extends Omit<React.ComponentProps<typeof Bo
   clickEnabled?: boolean;
   /** Opt in to right presses; default false (left-click-only activation). */
   acceptRightClick?: boolean;
+  /** Highlight-only pointer handler; never activates the row. */
+  onHoverRegion?: (ev: RegionHoverEvent) => void;
 }
 
 /**
@@ -188,10 +257,11 @@ export function ClickRegionBox({
   onClickRegion,
   clickEnabled = true,
   acceptRightClick = false,
+  onHoverRegion,
   children,
   ...boxProps
 }: ClickRegionBoxProps): React.ReactElement {
-  const ref = useClickRegion(onClickRegion, clickEnabled, acceptRightClick);
+  const ref = useClickRegion(onClickRegion, clickEnabled, acceptRightClick, onHoverRegion);
   return (
     <Box {...boxProps} ref={ref}>
       {children}

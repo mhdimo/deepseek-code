@@ -6,7 +6,8 @@ import { useStdin } from "ink";
  *
  * Stock ink has no mouse support, so this hook:
  *   1. enables terminal mouse reporting in SGR mode (`?1000h` = wheel + button
- *      press events, `?1006h` = SGR coordinates) on mount, disables on unmount
+ *      press events, `?1002h` = drag, `?1003h` = any-event motion for hover,
+ *      `?1006h` = SGR coordinates) on mount, disables on unmount
  *      AND on process exit (React cleanup never runs on process.exit());
  *   2. listens on ink's internal input emitter — the raw stdin chunks, ESC
  *      intact — NOT on `stdin.on("data")`, which would switch the stream to
@@ -92,9 +93,10 @@ export function useMouseWheelScroll(target: React.RefObject<WheelScrollTarget | 
     // Enable mouse reporting. Written directly to stdout (not through ink's
     // renderer) so it lands in the terminal's state machine as raw control.
     // ?1002h (button-event tracking) is required by useMouseSelection's
-    // drag sequences; enabling it here too keeps the two hooks' modes
-    // identical (writes are idempotent).
-    process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+    // drag sequences and ?1003h (any-event tracking) by its hover dispatch;
+    // enabling them here too keeps the two hooks' modes identical (writes
+    // are idempotent).
+    process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
 
     const onInput = (raw: string) => {
       SGR_WHEEL_RE.lastIndex = 0;
@@ -126,7 +128,7 @@ export function useMouseWheelScroll(target: React.RefObject<WheelScrollTarget | 
     // cleanup never runs there, so the terminal would be left with mouse
     // reporting enabled and the next shell would flood with raw SGR
     // sequences. Disable on process exit too (reverse order: 1006 first).
-    const disable = () => process.stdout.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+    const disable = () => process.stdout.write("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l");
     process.on("exit", disable);
 
     return () => {

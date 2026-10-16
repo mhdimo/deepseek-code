@@ -372,6 +372,9 @@ export function Select<T extends string = string>({
               flexDirection="row"
               onClickRegion={() => pick(i)}
               clickEnabled={keysActive}
+              // Hover moves the highlight, never confirms the option — the
+              // mouse and the arrow keys drive one focus.
+              onHoverRegion={() => moveTo(i)}
             >
               <Box flexDirection="row" flexShrink={0}>
                 {marker}
@@ -397,6 +400,7 @@ export function Select<T extends string = string>({
             flexDirection="row"
             onClickRegion={() => pick(i)}
             clickEnabled={keysActive}
+            onHoverRegion={() => moveTo(i)}
           >
             {marker}
             {indexCell}

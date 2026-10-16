@@ -14,6 +14,7 @@ import { createSanitizedStdin } from "../../src/components/inkStdin.js";
 import {
   MouseRegionProvider,
   createHitTester,
+  createHoverDispatcher,
   createMouseRegistry,
   type MouseRegistry,
 } from "../../src/components/mouseRegions.js";
@@ -51,6 +52,17 @@ export const ESC = "\x1b";
 export const report = (btn: number, col: number, row: number, final = "M") =>
   `${ESC}[<${btn};${col};${row}${final}`;
 
+/** Pointer motion with no button held: the `?1003h` any-event report a
+ *  terminal sends on every move (32|3 = motion bit, button 3 = none).
+ *  `col`/`row` are 1-based, exactly as in `report`. */
+export async function move(
+  app: MountedMouseApp,
+  col: number,
+  row: number,
+): Promise<void> {
+  await write(app, report(35, col, row));
+}
+
 /** A chat handle with no content: unclaimed presses land on no text and the
  *  release copies nothing (so pbcopy is never spawned from a test). */
 function stubChatRef(overrides: Partial<ChatPanelHandle> = {}): React.RefObject<ChatPanelHandle> {
@@ -78,6 +90,7 @@ export function mountWithMouse(
 ): MountedMouseApp {
   const registry = createMouseRegistry();
   const hitTester = createHitTester(registry);
+  const hover = createHoverDispatcher(registry);
   const chatRef = stubChatRef(options.chat);
   const selections: Array<ContentSelection | null> = [];
   let out = "";
@@ -88,7 +101,7 @@ export function mountWithMouse(
   });
 
   function Bridge({ children }: { children: React.ReactNode }) {
-    useMouseSelection(chatRef, (sel) => selections.push(sel), hitTester);
+    useMouseSelection(chatRef, (sel) => selections.push(sel), hitTester, hover);
     return React.createElement(React.Fragment, null, children);
   }
 
