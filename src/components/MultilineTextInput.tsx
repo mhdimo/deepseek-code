@@ -614,7 +614,18 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   
   
   return (
-    <Box flexDirection="column" flexGrow={1} ref={regionRef}>
+    // flexBasis={0} with flexGrow: the box's main-axis basis must come from
+    // the free space, not its content. With flexGrow alone the content-derived
+    // basis is shrunk fractionally off the text's natural width, and the text
+    // node inside then lays out a cell wider than the click region reports
+    // (119 vs the region's 118 in a 120-column terminal) — the click grid and
+    // the wrap grid drift apart and the first rendered row overflows.
+    // CAUTION: flexBasis is the *main-axis* basis, i.e. the HEIGHT basis in a
+    // column host. Every host today is a row container (TextInput's prompt
+    // row, PermissionPrompt's focused row, the mouse tests), so it only zeroes
+    // the width basis; a future column-host mount would need flexBasis="auto"
+    // or an explicit width instead.
+    <Box flexDirection="column" flexGrow={1} flexBasis={0} ref={regionRef}>
       {value === ""
         ? renderPlaceholder(placeholder, focus)
         : renderTextContent(value, cursorOffset, color)}
