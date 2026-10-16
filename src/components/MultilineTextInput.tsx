@@ -22,6 +22,8 @@ import { theme, resolveColor } from "../utils/theme.js";
 import { isMouseSequence, stripMouseSequences } from "./useMouseWheelScroll.js";
 import { closesPaste, normalizePaste, opensPaste, pasteInFlight } from "./paste.js";
 import { findUltrathinkPositions, type KeywordRange } from "../utils/thinkingKeywords.js";
+import { useClickRegion, type RegionClickEvent } from "./mouseRegions.js";
+import { visualOffsetAt } from "./inputClickMapping.js";
 
 
 interface MultilineTextInputProps {
@@ -315,6 +317,24 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  // One insertion path for every producer — typed chunks and right-click
+  // paste cannot drift apart. Writes the same four things every keyboard
+  // path writes: the buffer, the CRLF-pending flag's sibling state is left to
+  // the caller, internalChange, and the cursor.
+  const insertAtCursor = useCallback((text: string): void => {
+    if (text.length === 0) return;
+    const pos = cursorRef.current;
+    const curVal = bufferRef.current;
+    const newValue = curVal.slice(0, pos) + text + curVal.slice(pos);
+    bufferRef.current = newValue;
+    internalChange.current = true;
+    prevExternalValue.current = newValue;
+    const nextPos = pos + text.length;
+    cursorRef.current = nextPos;
+    setCursorOffset(nextPos);
+    onChangeRef.current(newValue);
+  }, []);
+
   const handleInput = useCallback(
     (input: string, key: import("ink").Key) => {
       // Terminal mouse sequences reach every useInput handler as a raw string
@@ -557,15 +577,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         }
         if (text.length > 0) {
           pendingCRRef.current = rejoined.pendingCR;
-          const curVal = bufferRef.current;
-          const newValue = curVal.slice(0, pos) + text + curVal.slice(pos);
-          bufferRef.current = newValue;
-          internalChange.current = true;
-          prevExternalValue.current = newValue;
-          const nextPos = pos + text.length;
-          cursorRef.current = nextPos;
-          setCursorOffset(nextPos);
-          onChangeRef.current(newValue);
+          insertAtCursor(text);
         }
       }
     },
@@ -574,6 +586,19 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
 
   useInput(handleInput, { isActive: focus });
 
+  // A click in the text places the caret. The region is the text box itself
+  // (the "❯ " prefix lives outside it), so region col 0 is the first text
+  // cell; the wrap grid comes from the box's own computed width.
+  const handleRegionClick = useCallback(
+    (ev: RegionClickEvent): void => {
+      const offset = visualOffsetAt(bufferRef.current, ev.width, ev.row, ev.col);
+      cursorRef.current = offset;
+      setCursorOffset(offset);
+    },
+    [],
+  );
+  const regionRef = useClickRegion(handleRegionClick, focus);
+
   
 
   
@@ -581,7 +606,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   
   
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} ref={regionRef}>
       {value === ""
         ? renderPlaceholder(placeholder, focus)
         : renderTextContent(value, cursorOffset, color)}
