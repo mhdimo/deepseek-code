@@ -14,6 +14,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { basename } from "path";
 import { getTheme, getThemeMode, resolveColor, type Theme } from "../utils/theme.js";
+import { DEEPY_IDLE } from "./deepyWhale.js";
+import { DEEPY_BLUE, deepyTruecolor, deepyWhaleFrame, deepyWhaleSolid, useDeepyFrame } from "./deepyMascot.js";
 
 
 
@@ -79,8 +81,13 @@ export default function WelcomeScreen({
 }: WelcomeScreenProps) {
   
   
-  void frozen;
-  const mascot = MASCOT_FRAMES[0];
+  // The Deepy whale (deepyWhale.ts). `frozen` pins frame 0 — used when the
+  // welcome is parked somewhere a timer has no business repainting.
+  const whaleFrame = useDeepyFrame(!frozen);
+  const whaleTruecolor = deepyTruecolor();
+  const whaleRows = whaleTruecolor
+    ? deepyWhaleFrame(DEEPY_IDLE[whaleFrame]!)
+    : deepyWhaleSolid(DEEPY_IDLE[whaleFrame]!);
   const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
   const color = (token: keyof Theme): string => resolveColor(theme[token]!);
 
@@ -100,11 +107,20 @@ export default function WelcomeScreen({
         {}
         <Box>
           <Box flexDirection="column">
-            <Text color={color("claude")}>{mascot.top}</Text>
-            <Text color={color("claude")}>{mascot.mid}</Text>
-            <Text color={color("claude")}>{mascot.bot}</Text>
+            {whaleRows.map((row, i) => (
+              // Truecolor rows carry their own SGR; the solid fallback is a
+              // plain silhouette the Text colors.
+              <Text key={i} color={whaleTruecolor ? undefined : DEEPY_BLUE}>
+                {row}
+              </Text>
+            ))}
           </Box>
-          <Box flexDirection="column" marginLeft={2}>
+          <Box
+            flexDirection="column"
+            marginLeft={2}
+            justifyContent="center"
+            height={whaleRows.length}
+          >
             <Text>
               <Text color={color("claude")} bold>
                 DeepSeek
