@@ -1180,7 +1180,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   pickerActiveRef.current = showCommandPicker;
 
-  
+  // One activation path for Enter/Tab on the command picker and for a click
+  // on a picker row: fill the usage (or run a no-arg command on Enter).
+  const activateCommand = (index: number, viaReturn: boolean): void => {
+    const safeIdx = Math.min(index, filteredCommands.length - 1);
+    const cmd = filteredCommands[safeIdx];
+    if (!cmd) return;
+    const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
+    if (viaReturn && !cmd.acceptsArgs) {
+      handleSubmitRef.current(`/${cmd.name}`);
+    } else {
+      setInput(usage);
+    }
+    setCommandPickerIndex(0);
+  };
+
   const mention = useMemo(
     () => (isLoading || showCommandPicker ? null : detectTrailingMention(input)),
     [input, isLoading, showCommandPicker],
@@ -1225,6 +1239,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     const idx = fileIndexRef.current ?? [];
     return fuzzyFilter(mention.query, idx, (s) => s, 8).map((r) => r.item);
   }, [mention, mentionSuppressed, workingDirectory]);
+  // One fill path for Tab and for a click: the same pick and the same
+  // reset of the mention state.
+  const fillMention = useCallback(
+    (index: number): void => {
+      const match =
+        mentionMatches[Math.min(index, mentionMatches.length - 1)] ?? mentionMatches[0];
+      if (!match || !mention) return;
+      setInput(input.slice(0, mention.atPos) + match + " ");
+      setMentionIndex(0);
+      setMentionSuppressed(false);
+    },
+    [input, mention, mentionMatches],
+  );
   useEffect(() => {
     setMentionIndex(0);
   }, [mention?.query]);
@@ -1787,13 +1814,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (mention && mentionMatches.length > 0) {
-      const pick = () =>
-        mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)] ?? mentionMatches[0]!;
       if (key.tab) {
-        const value = input.slice(0, mention.atPos) + pick() + " ";
-        setInput(value);
-        setMentionIndex(0);
-        setMentionSuppressed(false);
+        fillMention(mentionIndex);
         return;
       }
       if (key.upArrow) {
@@ -1897,17 +1919,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return;
       }
       if (key.tab || key.return) {
-        const safeIdx = Math.min(commandPickerIndex, filteredCommands.length - 1);
-        const cmd = filteredCommands[safeIdx];
-        if (cmd) {
-          const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
-          if (key.return && !cmd.acceptsArgs) {
-            handleSubmitRef.current(`/${cmd.name}`);
-          } else {
-            setInput(usage);
-          }
-          setCommandPickerIndex(0);
-        }
+        activateCommand(commandPickerIndex, key.return);
         return;
       }
     }
@@ -5290,7 +5302,12 @@ Based on the above changes:
 
           {}
           {mention && !mentionSuppressed && mentionMatches.length > 0 && (
-            <FileMentions matches={mentionMatches} selectedIndex={mentionIndex} query={mention.query} />
+            <FileMentions
+              matches={mentionMatches}
+              selectedIndex={mentionIndex}
+              query={mention.query}
+              onPick={(index) => fillMention(index)}
+            />
           )}
 
           {}
@@ -5312,6 +5329,7 @@ Based on the above changes:
             <CommandPicker
               commands={filteredCommands}
               selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+              onPick={(index) => activateCommand(index, true)}
             />
           )}
 
