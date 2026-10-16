@@ -20,6 +20,7 @@ import { adoptSession } from "./adoptSession.js";
 import { persistedThinkingMode } from "./settingsRows.js";
 import { useMouseWheelScroll, isMouseSequence } from "./useMouseWheelScroll.js";
 import { useMouseSelection, type ContentSelection } from "./useMouseSelection.js";
+import { createHitTester, createMouseRegistry, MouseRegionProvider } from "./mouseRegions.js";
 import { ctrlCAction, overlaysOf, type CtrlCOverlay } from "./ctrlC.js";
 import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON } from "./terminalLayout.js";
 import { onExitCleanup } from "../services/exitCleanup.js";
@@ -465,7 +466,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const chatRef = useRef<ChatPanelHandle>(null);
   useMouseWheelScroll(chatRef);
   const [selection, setSelection] = useState<ContentSelection | null>(null);
-  useMouseSelection(chatRef, setSelection);
+  // The click layer: one registry for the whole tree, one hit tester routing
+  // every press to the innermost registered region first.
+  const mouseRegistry = useMemo(() => createMouseRegistry(), []);
+  const mouseHitTester = useMemo(() => createHitTester(mouseRegistry), [mouseRegistry]);
+  useMouseSelection(chatRef, setSelection, mouseHitTester);
 
   
   
@@ -4982,6 +4987,7 @@ Based on the above changes:
       initialState={themeMode}
       onThemeSave={(setting) => handleThemeModeChange(setting)}
     >
+    <MouseRegionProvider registry={mouseRegistry}>
     {trustRequest ? (
       <TrustPrompt
         directory={trustRequest.directory}
@@ -5338,6 +5344,7 @@ Based on the above changes:
       </Box>
     </Box>
     )}
+    </MouseRegionProvider>
     </ThemeProvider>
   );
 }
