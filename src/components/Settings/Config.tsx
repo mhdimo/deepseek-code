@@ -15,6 +15,7 @@ import {
   type ThemeSetting,
 } from "../../utils/theme.js";
 import ThemePicker from "../ThemePicker.js";
+import { ClickRegionBox } from "../mouseRegions.js";
 import { stripMouseSequences } from "../useMouseWheelScroll.js";
 import {
   buildSettingsRows,
@@ -185,8 +186,7 @@ export default function Config({
     onIsSearchModeChange?.(ownsEsc);
   }, [ownsEsc, onIsSearchModeChange]);
 
-  const toggleSetting = (): void => {
-    const setting = filteredSettingsItems[selectedIndex];
+  const toggleSetting = (setting = filteredSettingsItems[selectedIndex]): void => {
     if (!setting) return;
     // The managed rows open their picker; neither the enum cycle below nor the
     // inline text editor is what the same key does upstream.
@@ -209,6 +209,15 @@ export default function Config({
       setEditValue(setting.editSeed);
       return;
     }
+  };
+
+  // A click selects AND activates in one go — the same thing the keyboard
+  // does with arrows then Enter, run through the same function.
+  const clickSettingLine = (id: string): void => {
+    const index = filteredSettingsItems.findIndex((setting) => setting.id === id);
+    if (index === -1) return;
+    selectIndex(index);
+    toggleSetting(filteredSettingsItems[index]);
   };
 
   const commitEdit = (): void => {
@@ -490,7 +499,11 @@ export default function Config({
                     : `↓ ${line.count} more below`}
                 </Text>
               ) : (
-                <Box key={line.id} flexDirection="row">
+                <ClickRegionBox
+                  key={line.id}
+                  flexDirection="row"
+                  onClickRegion={() => clickSettingLine(line.id)}
+                >
                   <Box width={SETTINGS_LABEL_WIDTH}>
                     <Text color={line.selected ? suggestion : undefined}>
                       {line.selected ? `${SETTINGS_POINTER} ` : "  "}
@@ -498,7 +511,7 @@ export default function Config({
                     </Text>
                   </Box>
                   <Text color={line.selected ? suggestion : undefined}>{line.value}</Text>
-                </Box>
+                </ClickRegionBox>
               ),
             )}
           </Box>
