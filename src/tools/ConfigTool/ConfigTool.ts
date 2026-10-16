@@ -58,8 +58,16 @@ const SUPPORTED_SETTINGS: Record<string, SettingConfig> = {
     path: ["model"],
     type: "string",
     label: "model",
-    options: ["deepseek-chat", "deepseek-reasoner"],
+    options: ["deepseek-flash", "deepseek-v4-pro"],
     description: "Override the default model",
+  },
+  effort: {
+    path: ["effort"],
+    type: "string",
+    label: "effort",
+    options: ["off", "low", "medium", "high", "xhigh", "max"],
+    description:
+      "Reasoning effort — off disables thinking, a level sets it; clearing the key leaves it to the provider",
   },
   baseURL: {
     path: ["baseURL"],
@@ -87,13 +95,6 @@ const SUPPORTED_SETTINGS: Record<string, SettingConfig> = {
     label: "defaultAgent",
     options: ["code", "plan", "review"],
     description: "Default agent to start with",
-  },
-  thinkingMode: {
-    path: ["thinkingMode"],
-    type: "string",
-    label: "thinkingMode",
-    options: ["off", "whale"],
-    description: "Extended-thinking mode",
   },
   themeMode: {
     path: ["themeMode"],
@@ -453,8 +454,8 @@ function needsRestartNote(setting: string): string | null {
     case "baseURL":
     case "provider":
     case "apiKey":
+    case "effort":
       return "Takes effect on the next turn (the C++ backend re-reads provider config per query).";
-    case "thinkingMode":
     case "themeMode":
     case "verbose":
     case "spinnerTipsEnabled":

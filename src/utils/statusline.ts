@@ -224,7 +224,7 @@ export interface StatusLineCommandInput {
   vim?: { mode: string };
   /** Only when a non-default agent is active. */
   agent?: { name: string };
-  /** "default" | "acceptEdits" | "plan" | "bypassPermissions". */
+  /** "default" | "acceptEdits" | "auto" | "plan" | "bypassPermissions". */
   permission_mode?: string;
 }
 

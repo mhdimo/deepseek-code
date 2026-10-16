@@ -16,7 +16,6 @@ import { useInput, useStdout } from "ink";
 import { Pane } from "../../ui/design-system/Pane.js";
 import { Tabs, Tab } from "../../ui/design-system/Tabs.js";
 import type { ThemeSetting } from "../../utils/theme.js";
-import type { ThinkingMode } from "../../types/index.js";
 import { Status } from "./Status.js";
 import Config from "./Config.js";
 import { Usage } from "./Usage.js";
@@ -29,7 +28,6 @@ export type SettingsProps = {
   /** Config rows whose value the running session also reads; App owns the
    *  state behind them, so it owns the handlers too. */
   onSkipPermissionsChange?: (value: boolean) => void;
-  onThinkingModeChange?: (mode: ThinkingMode) => void;
   onThemeModeChange?: (setting: ThemeSetting) => void;
 };
 
@@ -38,7 +36,6 @@ export function Settings({
   context,
   defaultTab,
   onSkipPermissionsChange,
-  onThinkingModeChange,
   onThemeModeChange,
 }: SettingsProps): React.ReactNode {
   const [selectedTab, setSelectedTab] = useState<string>(defaultTab);
@@ -85,7 +82,6 @@ export function Settings({
           onIsSearchModeChange={setConfigOwnsEsc}
           contentHeight={contentHeight}
           onSkipPermissionsChange={onSkipPermissionsChange}
-          onThinkingModeChange={onThinkingModeChange}
           onThemeModeChange={onThemeModeChange}
         />
       </Suspense>

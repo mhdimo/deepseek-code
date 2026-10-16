@@ -16,12 +16,16 @@ import { Box, Text } from "ink";
 import { getTheme, getThemeMode, resolveColor, type Theme } from "../../utils/theme.js";
 import { ProgressBar } from "../../ui/design-system/ProgressBar.js";
 import { listSessions, type SessionData } from "../../state/storage.js";
-import { formatTokenCount } from "../../services/tokenTracker.js";
+import { formatTokenCount, inputRatePerMillion } from "../../services/tokenTracker.js";
 import { contextWindowFor } from "../../services/contextManager.js";
 
 const SPEND_BAR_SCALE = 10;
 
-const PRICE_PER_MILLION = 0.27;
+/** The all-time spend is a single-rate estimate: the newest session's model
+ *  prices every token ever counted (services/tokenTracker.ts holds the table). */
+function pricePerMillion(model: string | undefined): number {
+  return inputRatePerMillion(model ?? "");
+}
 
 export interface UsageAggregate {
   totalSessions: number;
@@ -59,7 +63,7 @@ export function aggregateUsage(sessions: SessionData[]): UsageAggregate {
     totalTokens,
     lastSessionTokens,
     lastSessionModel: newest?.model,
-    spend: (totalTokens / 1_000_000) * PRICE_PER_MILLION,
+    spend: (totalTokens / 1_000_000) * pricePerMillion(newest?.model),
   };
 }
 

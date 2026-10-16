@@ -8,7 +8,6 @@ import {
 import { useTabHeaderFocus } from "../../ui/design-system/Tabs.js";
 import { Select, type SelectOption } from "../../ui/design-system/Select.js";
 import { listOutputStyles } from "../../services/outputStyles.js";
-import type { ThinkingMode } from "../../types/index.js";
 import {
   resolveColor,
   theme,
@@ -58,7 +57,6 @@ export interface ConfigProps {
   contentHeight?: number;
   /** Live-apply hooks for the rows whose value is also read while running. */
   onSkipPermissionsChange?: (value: boolean) => void;
-  onThinkingModeChange?: (mode: ThinkingMode) => void;
   onThemeModeChange?: (setting: ThemeSetting) => void;
 }
 
@@ -108,7 +106,6 @@ export default function Config({
   onIsSearchModeChange,
   contentHeight,
   onSkipPermissionsChange,
-  onThinkingModeChange,
   onThemeModeChange,
 }: ConfigProps): React.ReactElement {
   const { headerFocused, focusHeader } = useTabHeaderFocus();
@@ -137,7 +134,6 @@ export default function Config({
 
   const handlers: SettingsRowHandlers = {
     onSkipPermissionsChange,
-    onThinkingModeChange,
     onThemeModeChange,
   };
   const settingsItems: Setting[] = buildSettingsRows({

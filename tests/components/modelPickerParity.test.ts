@@ -22,7 +22,7 @@ const ANSI = /\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[=>]/g;
 function frame(props: Record<string, unknown> = {}, columns = 140): string {
   return renderToString(
     React.createElement(ModelPicker, {
-      currentModel: "deepseek-chat",
+      currentModel: "deepseek-flash",
       currentProvider: "deepseek",
       onSelect: () => {},
       onCancel: () => {},

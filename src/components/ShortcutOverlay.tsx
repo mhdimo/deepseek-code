@@ -1,17 +1,14 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { ThinkingMode } from "../types/index.js";
 import { theme } from "../utils/theme.js";
 
 interface ShortcutOverlayProps {
-  thinkingMode: ThinkingMode;
   mcpCount: number;
   mcpEnabledCount: number;
   onCloseHint?: string;
 }
 
 export default function ShortcutOverlay({
-  thinkingMode,
   mcpCount,
   mcpEnabledCount,
   onCloseHint = "Press ? or Esc to close",
@@ -48,9 +45,7 @@ export default function ShortcutOverlay({
       <Text dimColor> </Text>
 
       <Box>
-        <Text>Thinking: </Text>
-        <Text color={theme.thinking}>{thinkingMode === "off" ? "off" : "whalethink"}</Text>
-        <Text> · MCP: </Text>
+        <Text>MCP: </Text>
         <Text color={theme.assistant}>{mcpEnabledCount}/{mcpCount}</Text>
       </Box>
       <Text dimColor>{onCloseHint}</Text>

@@ -462,14 +462,14 @@ const EFFORT_LEVELS = new Set(["off", "low", "medium", "high", "xhigh", "max"]);
 const THEME_MODES = new Set(["dark", "light", "auto"]);
 const HOOK_EVENTS = new Set(["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "Notification"]);
 const KNOWN_KEYS = new Set([
-  "apiKey", "model", "baseURL", "provider", "defaultAgent", "thinkingMode",
+  "apiKey", "model", "baseURL", "provider", "defaultAgent",
   "effort", "themeMode", "onboarded", "lastSessionHash", "schemaVersion",
   "includeCoAuthoredBy", "cleanupPeriodDays", "spinnerTipsEnabled", "verbose",
   "outputStyle", "env", "permissions", "hooks", "statusLine", "copyFullResponse", "lsp",
 ]);
 
 const STRING_KEYS = [
-  "apiKey", "model", "baseURL", "provider", "defaultAgent", "thinkingMode",
+  "apiKey", "model", "baseURL", "provider", "defaultAgent",
   "lastSessionHash", "outputStyle",
 ] as const;
 const BOOLEAN_KEYS = [

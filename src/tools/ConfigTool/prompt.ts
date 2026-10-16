@@ -10,12 +10,12 @@ View or change DeepSeek Code's persisted settings (stored in ~/.deepseek-code/se
 - Set a value to "default" / null to clear a key and restore its default.
 
 ## Configurable settings
-- model: string - Override the default model. Options: "deepseek-chat", "deepseek-reasoner", or a full model ID.
+- model: string - Override the default model. Options: "deepseek-flash", "deepseek-v4-pro", or a full model ID.
 - baseURL: string - Override the API endpoint (e.g. for a proxy). Set to "default" / null to clear.
 - provider: string - Provider type (currently only "deepseek").
 - apiKey: string - Override the API key. The user will be asked to approve writes to this field.
 - defaultAgent: string - Default agent to start with. Options: "code", "plan", "review".
-- thinkingMode: string - Extended-thinking mode. Options: "off", "whale".
+- effort: string - Reasoning effort: "off" turns thinking off, "low" | "medium" | "high" | "xhigh" | "max" set it, "default"/null leaves it to the provider.
 - themeMode: string - Color theme. Options: "dark", "light".
 - verbose: boolean - Show detailed debug output. true/false.
 - spinnerTipsEnabled: boolean - Show the spinner tip/elapsed line. true/false.
@@ -31,12 +31,12 @@ View or change DeepSeek Code's persisted settings (stored in ~/.deepseek-code/se
 - Reads (omitting "value") require no permission and run without prompting the user.
 - Writes require Write permission and the user is shown a confirmation prompt.
 - apiKey writes are always treated as sensitive; the prompt hides the new value.
-- Some settings (model, baseURL, thinkingMode, themeMode, verbose) only take full effect on the next turn or app restart - tell the user this.
+- Some settings (model, baseURL, effort, themeMode, verbose) only take full effect on the next turn or app restart - tell the user this.
 
 ## Examples
 - Get theme: { "setting": "themeMode" }
 - Set light theme: { "setting": "themeMode", "value": "light" }
 - Enable verbose: { "setting": "verbose", "value": true }
-- Change model: { "setting": "model", "value": "deepseek-reasoner" }
+- Change model: { "setting": "model", "value": "deepseek-v4-pro" }
 - Add a permission allow rule: { "setting": "permissions.allow", "value": ["Bash(npm test:*)"] }
 `;

@@ -8,7 +8,7 @@ import { createDeepSeek, type Model, type ProviderInstance } from "ai-sdk-cpp";
 import type { ProviderConfig, ProviderType } from "../../types/index.js";
 
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
-const DEEPSEEK_DEFAULT_MODEL = "deepseek-chat";
+const DEEPSEEK_DEFAULT_MODEL = "deepseek-flash";
 
 export interface ProviderAdapter {
   

@@ -18,8 +18,10 @@
  */
 import { existsSync, readFileSync } from "fs";
 
-/** The four modes the UI can be in, in the order Shift+Tab walks them. */
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+/** The modes the UI can be in, in the order Shift+Tab walks them. `auto` is
+ *  the wide one: every tool call settles without a prompt, commands included,
+ *  where `acceptEdits` settles file edits alone. */
+export type PermissionMode = "default" | "acceptEdits" | "auto" | "plan" | "bypassPermissions";
 
 /** The grant, as it is carried around: the CLI flag, the config file, the
  *  persisted setting, or `false` in the absence of any of them. */
@@ -101,13 +103,26 @@ export function assertBypassSafe(config: BypassGrant, headless: boolean): void {
  * lookup misses, and `default` is where a session that cannot bypass belongs.
  */
 export function permissionModeCycle(grant: BypassGrant): PermissionMode[] {
-  const cycle: PermissionMode[] = ["default", "acceptEdits", "plan"];
+  // `auto` follows `acceptEdits` — the narrow mode first, its superset next —
+  // and is not gated: it is a shortcut past the prompts within a session, not
+  // the persisted grant that `bypassPermissions` stands for. The floors are
+  // the same in both (services/protectedPaths.ts, the safety check in
+  // tools.ts, settings deny rules), so what is reachable by one keypress here
+  // is the same class of reach the cycle has always offered.
+  const cycle: PermissionMode[] = ["default", "acceptEdits", "auto", "plan"];
   if (grant.dangerouslySkipPermissions && bypassIsPermitted()) cycle.push("bypassPermissions");
   return cycle;
 }
 
-/** Where a session starts. The same question as the cycle's, so a process that
- *  may not exercise the grant never spends its first turn in the mode. */
+/** Where a session starts: `auto` unless the process is holding the bypass
+ *  grant, in which case it starts in the mode the grant names.
+ *
+ *  Auto mode is the default because it is what the app is for — the agent
+ *  works, and you read the result rather than answering a dialog before every
+ *  command. It is not bypassPermissions: the grant still decides whether the
+ *  ungated mode is bypass, and `auto` is in the cycle for everyone, grant or
+ *  not. Getting back to a prompt before every action is one Shift+Tab away
+ *  (the cycle's `default`, shown as "manual mode on"). */
 export function initialPermissionMode(grant: BypassGrant): PermissionMode {
-  return permissionModeCycle(grant).includes("bypassPermissions") ? "bypassPermissions" : "default";
+  return permissionModeCycle(grant).includes("bypassPermissions") ? "bypassPermissions" : "auto";
 }

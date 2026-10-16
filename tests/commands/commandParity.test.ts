@@ -8,6 +8,10 @@ test("supports the useful local aliases from Claude-style command workflows", ()
   expect(resolveCommandName("/tasks")).toBe("bashes");
   expect(resolveCommandName("/todos")).toBe("todos");
   expect(resolveCommandName("/login")).toBe("setup");
+  // The toggle was called /think first; the old spelling stays an alias so the
+  // muscle memory keeps working and the rename costs nobody a retry.
+  expect(resolveCommandName("/think")).toBe("thinking");
+  expect(resolveCommandName("/reason")).toBe("thinking");
   expect(BUILTIN_COMMANDS.map((command) => command.name)).toContain("test");
   expect(BUILTIN_COMMANDS.map((command) => command.name)).toContain("files");
   expect(BUILTIN_COMMANDS.map((command) => command.name)).toContain("terminal-setup");

@@ -5,7 +5,6 @@ import { join } from "path";
 
 import {
   buildSettingsRows,
-  persistedThinkingMode,
   type Setting,
   type SettingsRowContext,
 } from "../../src/components/settingsRows";
@@ -68,7 +67,6 @@ test("every key the app reads back has a row", () => {
   const ids = rows.map((r) => r.id);
   expect(ids).toContain("copyFullResponse");
   expect(ids).toContain("skipPermissions");
-  expect(ids).toContain("thinkingMode");
   expect(ids).toContain("includeCoAuthoredBy");
 });
 
@@ -79,6 +77,10 @@ test("no row writes a key nothing reads back", () => {
   const ids = rows.map((r) => r.id);
   expect(ids).not.toContain("spinnerTipsEnabled");
   expect(ids).not.toContain("verbose");
+  // thinkingMode was a display flag (off|whale) that painted a StatusBar chip
+  // and reached no further — the engine never read it, which is why /think
+  // looked inert. Thinking is reasoning effort now, and effort has its own row.
+  expect(ids).not.toContain("thinkingMode");
   // The provider row wrote settings.provider, which loadConfig discards
   // outright (`merged.provider = "deepseek"`), so it changed nothing either.
   expect(ids).not.toContain("provider");
@@ -126,29 +128,17 @@ test("refuses to grant bypass where the startup gate would refuse it", () => {
   expect(written).toEqual([{ dangerouslySkipPermissions: false }]);
 });
 
-test("a fresh session starts on the thinking mode that was saved", () => {
-  writeSettingsFile({ schemaVersion: 3, thinkingMode: "whale" });
-  expect(persistedThinkingMode()).toBe("whale");
-  // Anything but the one other valid mode is "off": the file is hand-editable
-  // and the state is a two-value union.
-  writeSettingsFile({ schemaVersion: 3, thinkingMode: "mars" });
-  expect(persistedThinkingMode()).toBe("off");
-  writeSettingsFile({ schemaVersion: 3 });
-  expect(persistedThinkingMode()).toBe("off");
-});
-
-test("thinking mode persists and moves the live state", () => {
-  const modes: string[] = [];
-  const { rows, written } = build(
-    { thinkingMode: "whale" },
-    { handlers: { onThinkingModeChange: (m) => modes.push(m) } },
-  );
-  const setting = row<"enum">(rows, "thinkingMode");
-  // Read back from the settings it was given, not defaulted to "off".
-  expect(setting.value).toBe("whale");
+test("effort writes a level, and auto clears the key", () => {
+  // "off" disables thinking on purpose; "auto" is the key being absent, which
+  // is what leaves the choice to the provider. Writing "off" for auto is how
+  // the two got confused — /effort auto used to silently disable thinking.
+  const { rows, written } = build({ effort: "medium" });
+  const setting = row<"enum">(rows, "effort");
+  expect(setting.value).toBe("medium");
   setting.onChange("off");
-  expect(written).toEqual([{ thinkingMode: "off" }]);
-  expect(modes).toEqual(["off"]);
+  expect(written).toEqual([{ effort: "off" }]);
+  setting.onChange("auto");
+  expect(written).toEqual([{ effort: "off" }, { effort: undefined }]);
 });
 
 test("theme row hands the value to App rather than repainting behind it", () => {

@@ -75,13 +75,15 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
   command("plan", "Switch to the plan agent (read-only)", "agent"),
   command("review", "Review uncommitted changes with the review agent", "agent"),
   command("security-review", "Run a security review of uncommitted changes", "agent"),
-  command("think", "Toggle extended reasoning", "agent", {
-    aliases: ["reason"],
-    usage: ["/think off", "/think whale"],
+  command("thinking", "Toggle extended reasoning on or off", "agent", {
+    // The old spelling stays an alias: it is what the command was called
+    // first, and the muscle memory for it outlives the label.
+    aliases: ["think", "reason"],
+    usage: ["/thinking [on|off]"],
     acceptsArgs: true,
   }),
   command("effort", "Set reasoning effort", "agent", {
-    usage: ["/effort [off|low|medium|high|max]"],
+    usage: ["/effort [off|low|medium|high|xhigh|max|auto]"],
     acceptsArgs: true,
   }),
   command("skills", "Browse skills and read their instructions", "agent", {
@@ -367,7 +369,7 @@ const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] =
   },
   {
     title: "Agents & reasoning",
-    names: ["agent", "think", "effort", "plan", "review", "security-review", "skills", "tools", "hooks"],
+    names: ["agent", "thinking", "effort", "plan", "review", "security-review", "skills", "tools", "hooks"],
   },
   {
     title: "Project",

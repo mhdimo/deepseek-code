@@ -1,18 +1,18 @@
 {
   "provider": "deepseek",
-  "model": "deepseek-chat",
+  "model": "deepseek-flash",
   "apiKey": "env:DEEPSEEK_API_KEY",
   "defaultAgent": "code",
   "maxSteps": 25,
   "profiles": {
     "chat": {
       "provider": "deepseek",
-      "model": "deepseek-chat",
+      "model": "deepseek-flash",
       "apiKey": "env:DEEPSEEK_API_KEY"
     },
     "reasoner": {
       "provider": "deepseek",
-      "model": "deepseek-reasoner",
+      "model": "deepseek-v4-pro",
       "apiKey": "env:DEEPSEEK_API_KEY"
     }
   },

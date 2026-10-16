@@ -209,8 +209,8 @@ test("Enter saves and closes; Space is what changes a row", async () => {
 });
 
 test("Space on the Theme row opens the theme picker instead of cycling", async () => {
-  // ↓↓↓ from Model to Theme, then accept.
-  const frame = await driveConfig(ENTER, DOWN, DOWN, DOWN, " ");
+  // ↓↓ from Model to Theme, then accept.
+  const frame = await driveConfig(ENTER, DOWN, DOWN, " ");
   expect(frame.text).toContain("Choose the text style that looks best with your terminal");
   expect(frame.text).toContain("Enter to select · Esc to cancel");
   // The picker covers the panel: the row list is gone, and so is the search
@@ -222,7 +222,7 @@ test("Space on the Theme row opens the theme picker instead of cycling", async (
 
 test("Space on the Model row opens the model list, not an edit field", async () => {
   const frame = await driveConfig(ENTER, " ");
-  expect(frame.text).toContain("Advanced reasoning with extended thinking");
+  expect(frame.text).toContain("Frontier reasoning with extended thinking");
   expect(frame.text).toContain("Enter to confirm · Esc to cancel");
   expect(frame.text).not.toContain("✎ Edit Model:");
   expect(frame.text).not.toContain("Copy full response");

@@ -160,8 +160,6 @@ export interface TeamConfig {
 }
 
 
-export type ThinkingMode = "off" | "whale";
-
 export interface AgentConfig {
   /** Built-in name or a discovered custom-agent name (`.claude/agents/*.md`). */
   name: AgentName | (string & {});

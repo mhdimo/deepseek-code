@@ -2,14 +2,32 @@ import React from "react";
 import { Box, Text } from "ink";
 import { theme, resolveColor } from "../utils/theme.js";
 import { parseAnsi } from "../utils/statusline.js";
+import { formatWorkingDirectory } from "../utils/gitStatus.js";
 import { DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT_TOKENS } from "../services/contextManager.js";
-import type { AgentName, ThinkingMode, TokenBudget } from "../types/index.js";
+import { inputRatePerMillion } from "../services/tokenTracker.js";
+import type { AgentName, TokenBudget } from "../types/index.js";
 import type { EffortLevel } from "../state/storage.js";
+import type { PermissionMode } from "../services/bypassMode.js";
 
 
 interface StatusBarProps {
   model: string;
   agentName: AgentName;
+
+  /** The workspace the session runs in, and its git state when it has one.
+   *  Both segments are simply absent outside a repository — the bar is not
+   *  the place to report a missing git. */
+  workingDirectory?: string;
+  branch?: string;
+  branchDirty?: boolean;
+
+  /** Generated tokens per second over the session's model calls. 0 until one
+   *  has finished: a rate with no elapsed time behind it is not a rate. */
+  tokensPerSecond?: number;
+
+  /** settings.outputStyle — the label the bar carries as `[name]`. Unset and
+   *  "default" are the same thing here and neither renders. */
+  outputStyle?: string;
 
   isLoading?: boolean;
   tokenCount?: number;
@@ -21,7 +39,6 @@ interface StatusBarProps {
   /** Input tokens the last request sent — what the context window holds. The
    *  engine reports it per turn (services/contextUsage.ts); 0 until it has. */
   contextTokens?: number;
-  thinkingMode?: ThinkingMode;
 
   effort?: EffortLevel;
   mcpEnabledCount?: number;
@@ -34,7 +51,7 @@ interface StatusBarProps {
   awaitingPermission?: boolean;
   cost?: number;
   inspectMode?: boolean;
-  permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
+  permissionMode?: PermissionMode;
 
   tokenBudget?: TokenBudget;
 
@@ -70,6 +87,7 @@ const EFFORT_SYMBOLS: Record<string, string> = {
 const PERMISSION_MODE_SYMBOLS: Record<string, string> = {
   plan: "⏸",
   acceptEdits: "⏵⏵",
+  auto: "⏵⏵",
   bypassPermissions: "⏵⏵",
 };
 
@@ -77,22 +95,29 @@ const PERMISSION_MODE_SYMBOLS: Record<string, string> = {
 const PERMISSION_MODE_TITLES: Record<string, string> = {
   plan: "Plan Mode",
   acceptEdits: "Accept edits",
+  auto: "Auto mode",
   bypassPermissions: "Bypass Permissions",
 };
 
 /** Reference getModeColor: plan → planMode, acceptEdits → autoAccept,
- *  bypassPermissions → error. */
+ *  bypassPermissions → error. Auto mode has its own gold rather than a palette
+ *  token: the mode is this app's, the colour is part of its identity, and it
+ *  has to say "the agent is deciding" in a shade that is not the error red and
+ *  not the plan teal. */
 const PERMISSION_MODE_COLORS: Record<string, string> = {
   plan: "planMode",
   acceptEdits: "autoAccept",
   bypassPermissions: "error",
 };
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
+const AUTO_MODE_COLOR = "rgb(253, 191, 7)";
+
+/** The default mode's own chip: nothing is settled for you, so the chip says
+ *  so rather than disappearing — the line keeps its shape and its meaning
+ *  whatever mode you are in. Reads in the muted grey, since a mode that does
+ *  nothing on your behalf has nothing to announce. */
+const MANUAL_MODE_SYMBOL = "⏸";
+const MANUAL_MODE_COLOR = "inactive";
 
 function formatCost(cost: number): string {
   if (cost < 0.0001) return "<$0.001";
@@ -102,13 +127,10 @@ function formatCost(cost: number): string {
 }
 
 
+/** Before the first finish reports a real cost: the session's tokens at the
+ *  model's input rate. The reported figure replaces it as soon as one arrives. */
 function estimateCost(model: string, tokens: number): number {
-  const pricing: Record<string, number> = {
-    "deepseek-chat": 0.27,
-    "deepseek-reasoner": 0.55,
-  };
-  const perMillion = pricing[model] ?? 0.69;
-  return (tokens / 1_000_000) * perMillion;
+  return (tokens / 1_000_000) * inputRatePerMillion(model);
 }
 
 /** Render statusline stdout ANSI-aware; unsupported escapes were stripped by parseAnsi. */
@@ -142,12 +164,16 @@ function themeColor(token: string): string {
 export default React.memo(function StatusBar({
   model,
   agentName,
+  workingDirectory,
+  branch,
+  branchDirty = false,
+  tokensPerSecond = 0,
+  outputStyle,
   isLoading = false,
   tokenCount = 0,
   inputTokens = 0,
   outputTokens = 0,
   contextTokens = 0,
-  thinkingMode = "off",
   effort,
   mcpEnabledCount = 0,
   queueCount = 0,
@@ -199,10 +225,9 @@ export default React.memo(function StatusBar({
       : usedPct > 50
         ? resolveColor(theme.warning)
         : resolveColor(theme.success);
-  const hasTokens = inputTokens + outputTokens > 0 || tokenCount > 0;
-  // The engine compacts on its own, so the readout carries the reference's
-  // auto-compact-enabled wording ("12% until auto-compact"); once the bar is
-  // in its error band the reference's /compact advice replaces it.
+  // The engine compacts on its own; the readout says how much headroom is
+  // left until it does — just the number, no prose. Once the bar is in its
+  // error band the advice joins it.
   const contextLow = usedPct > 80;
 
 
@@ -233,6 +258,12 @@ export default React.memo(function StatusBar({
         </Box>
       ) : null}
 
+      {/* The standard row: model │ directory │ branch │ context │ rate │ style.
+          It is the same row from a fresh session as from the twentieth turn —
+          every segment renders whether or not anything has been spent yet, so
+          the bar reads as one line that fills in rather than one that appears.
+          Anything else the session has to say (agent, effort, MCP, file, cost)
+          is appended after the standard six. */}
       <Box flexDirection="row" justifyContent="space-between">
         {}
         <Box flexShrink={1}>
@@ -248,14 +279,29 @@ export default React.memo(function StatusBar({
               </Text>
             )}
             <Text color={resolveColor(theme.text)}>{model}</Text>
-            {permissionMode !== "default" && (
-              <Text color={themeColor(PERMISSION_MODE_COLORS[permissionMode] ?? "text")} bold>
-                {" · "}
-                {modeSymbol ? `${modeSymbol} ` : ""}
-                {(PERMISSION_MODE_TITLES[permissionMode] ?? permissionMode).toLowerCase()} on
-                <Text dimColor> (shift+tab to cycle)</Text>
+            {workingDirectory && (
+              <Text dimColor>
+                {" │ "}
+                {formatWorkingDirectory(workingDirectory)}
               </Text>
             )}
+            {branch && (
+              <Text dimColor>
+                {" │ ⎇ "}
+                {branch}
+                {branchDirty ? "*" : ""}
+              </Text>
+            )}
+            <Text dimColor>{" │ "}</Text>
+            <Text color={ctxColor}>{ctxBar}</Text>
+            <Text dimColor>{` ${usedPct}%`}</Text>
+            {contextLow && (
+              <Text color={resolveColor(theme.error)}>{" · Context low · Run /compact to compact & continue"}</Text>
+            )}
+            {tokensPerSecond > 0 && (
+              <Text dimColor>{` │ ${Math.round(tokensPerSecond)} tok/s`}</Text>
+            )}
+            {outputStyle && <Text dimColor>{" │ ["}{outputStyle}{"]"}</Text>}
             {agentName !== "code" && (
               <Text dimColor>
                 {" · "}
@@ -264,26 +310,12 @@ export default React.memo(function StatusBar({
                 </Text>
               </Text>
             )}
-            {thinkingMode === "whale" && <Text color="magenta" bold> · WHALE</Text>}
             {effortChip && <Text dimColor>{effortChip}</Text>}
             {mcpEnabledCount > 0 && <Text dimColor> · MCP {mcpEnabledCount}</Text>}
             {displayFile && <Text dimColor> · {displayFile}</Text>}
-            {hasTokens && (
+            {usedTokens > 0 && (
               <Text dimColor>
-                {" · "}
-                <Text color={ctxColor}>{ctxBar}</Text>
-                {contextLow ? (
-                  <Text color={resolveColor(theme.error)}>
-                    {` Context low (${100 - usedPct}% remaining) · Run /compact to compact & continue`}
-                  </Text>
-                ) : (
-                  ` ${100 - usedPct}% until auto-compact`
-                )}
-                {" · ↑ "}
-                {formatTokens(inputTokens)}
-                {" tokens · ↓ "}
-                {formatTokens(outputTokens)}
-                {" tokens · ~"}
+                {" · ~"}
                 {formatCost(calculatedCost)}
               </Text>
             )}
@@ -293,6 +325,35 @@ export default React.memo(function StatusBar({
         </Box>
 
         {}
+      </Box>
+
+      {}
+      {/* Row two: what the session may do to your files on the left — the
+          permission mode — and how to drive the app on the right. The mode
+          chip sits here rather than beside the model so the standard row
+          above is the same line whatever mode you are in. */}
+      <Box flexDirection="row" justifyContent="space-between">
+        <Box flexShrink={1}>
+          {permissionMode === "default" ? (
+            <Text color={themeColor(MANUAL_MODE_COLOR)} wrap="truncate-end">
+              {`${MANUAL_MODE_SYMBOL} manual mode on`}
+            </Text>
+          ) : (
+            <Text
+              color={
+                permissionMode === "auto"
+                  ? AUTO_MODE_COLOR
+                  : themeColor(PERMISSION_MODE_COLORS[permissionMode] ?? "text")
+              }
+              bold
+              wrap="truncate-end"
+            >
+              {modeSymbol ? `${modeSymbol} ` : ""}
+              {(PERMISSION_MODE_TITLES[permissionMode] ?? permissionMode).toLowerCase()} on
+              <Text dimColor> (shift+tab to cycle)</Text>
+            </Text>
+          )}
+        </Box>
         {rightHints ? (
           <Box flexShrink={1}>
             <Text dimColor wrap="truncate-end">

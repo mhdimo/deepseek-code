@@ -57,7 +57,7 @@ Configuration is loaded with the following priority (highest to lowest):
 
 ### Environment Variables
 - `DEEPSEEK_API_KEY`: DeepSeek API key
-- `DEEPSEEK_MODEL`: Model ID (`deepseek-chat` or `deepseek-reasoner`)
+- `DEEPSEEK_MODEL`: Model ID (`deepseek-flash` or `deepseek-v4-pro`)
 - `DEEPSEEK_BASE_URL`: Optional endpoint override
 
 ### Configuration File
@@ -68,8 +68,8 @@ Supports:
 - MCP server configuration
 
 ## Available Models
-- `deepseek-chat`: General-purpose coding assistant (default)
-- `deepseek-reasoner`: Advanced reasoning with extended thinking
+- `deepseek-flash`: General-purpose coding assistant (default)
+- `deepseek-v4-pro`: Frontier reasoning with extended thinking
 
 ## Development Commands
 ```bash
@@ -128,7 +128,7 @@ bun run typecheck    # TypeScript type check (no emit)
 - `/model`, `/models`: Model selection
 - `/apikey`: API key management
 - `/agent`: Agent selection
-- `/think`: Toggle thinking mode
+- `/thinking`: Toggle thinking mode
 - `/mcp`: MCP server management
 - `/shortcuts`: Show keyboard shortcuts
 

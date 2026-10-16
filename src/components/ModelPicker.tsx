@@ -30,14 +30,14 @@ export interface ModelPickerProps {
 }
 
 const MODEL_DESCRIPTIONS: Record<string, string> = {
-  "deepseek-chat": "General-purpose coding assistant — default",
-  "deepseek-reasoner": "Advanced reasoning with extended thinking",
+  "deepseek-flash": "Fast, general-purpose coding assistant — default",
+  "deepseek-v4-pro": "Frontier reasoning with extended thinking",
 };
 
 /** Default reasoning effort per model id; anything unlisted defaults to off. */
 const DEFAULT_EFFORT_FOR_MODEL: Record<string, EffortLevel> = {
-  "deepseek-chat": "off",
-  "deepseek-reasoner": "medium",
+  "deepseek-flash": "off",
+  "deepseek-v4-pro": "medium",
 };
 
 /** Mirrors StatusBar's effort chip glyphs, extended with an "off" (auto) glyph. */

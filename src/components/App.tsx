@@ -17,7 +17,6 @@ import {
   interruptStreamingTurn,
 } from "./streamingMessage.js";
 import { adoptSession } from "./adoptSession.js";
-import { persistedThinkingMode } from "./settingsRows.js";
 import { useMouseWheelScroll, isMouseSequence } from "./useMouseWheelScroll.js";
 import { useMouseSelection, type ContentSelection } from "./useMouseSelection.js";
 import {
@@ -61,6 +60,7 @@ import {
   loadProjectPermissions,
 } from "../utils/config.js";
 import { buildStatusLineCommandInput } from "../utils/statusline.js";
+import { readGitStatus, type GitStatus } from "../utils/gitStatus.js";
 import { agentManager } from "../services/agent/index.js";
 import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
@@ -87,7 +87,6 @@ import type {
   ProviderConfig,
   ProviderType,
   DeepSeekCodeConfig,
-  ThinkingMode,
   MCPServerConfig,
   MessageBlock,
   TodoItem,
@@ -152,7 +151,7 @@ import {
 import { collectFileChanges, formatFileChanges } from "../services/fileChangeNotice.js";
 import { buildFileIndex } from "../utils/fileIndex.js";
 import { fuzzyFilter, detectTrailingMention } from "../utils/fuzzy.js";
-import { getEffortLevel, isEffortLevel } from "../services/effort.js";
+import { getEffortLevel, isEffortLevel, thinkingToggle } from "../services/effort.js";
 import type { EffortLevel } from "../state/storage.js";
 import { listSkills, getSkill, renderSkillPrompt, toSkillCommand } from "../skills/skillService.js";
 import { writeToFile } from "../utils/exportConversation.js";
@@ -299,7 +298,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const [activeBaseURL, setActiveBaseURL] = useState(config.baseURL);
 
   
-  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(persistedThinkingMode);
 
   
   
@@ -332,6 +330,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   const sessionStartMs = useRef(Date.now());
   const [apiDurationMs, setApiDurationMs] = useState(0);
+  // Generated tokens across the session's model calls. Paired with
+  // apiDurationMs it is the status bar's tok/s — a rate needs both halves and
+  // neither is the last call's figure, which is what outputTokens holds.
+  const [sessionOutputTokens, setSessionOutputTokens] = useState(0);
   const [sessionLinesAdded, setSessionLinesAdded] = useState(0);
   const [sessionLinesRemoved, setSessionLinesRemoved] = useState(0);
 
@@ -573,6 +575,31 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     ]);
   }, []);
 
+  /** The level /thinking remembers across an off/on flip: the last one in force,
+   *  so turning thinking back on restores the user's choice rather than
+   *  resetting it to a default. */
+  const lastThinkingLevelRef = useRef<EffortLevel>("medium");
+
+  /** One apply path for /thinking's toggle and its argument form: persist the
+   *  level behind it, point the StatusBar at it, and say so in the transcript.
+   *  The level is reasoning effort — the knob that actually reaches the model
+   *  — so /thinking and /effort write the same setting. */
+  const applyThinkingLevel = useCallback((level: EffortLevel) => {
+    if (level !== "off") lastThinkingLevelRef.current = level;
+    try {
+      saveSettings({ effort: level });
+    } catch {}
+    setEffortLevel(level);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "system",
+        content: level === "off" ? "Thinking off." : `Thinking on — ${level}.`,
+        timestamp: Date.now(),
+      },
+    ]);
+  }, []);
+
   
   
   
@@ -641,9 +668,40 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       saveSettings({ [key]: value } as any);
       setSettingsSnapshot(loadSettings() as Record<string, unknown>);
     } catch {
-      
+
     }
   }, []);
+
+  // The status bar's branch segment: the tree's state is asked of git on a
+  // timer rather than at every render, and the answer only becomes state when
+  // it changes — a status line that re-renders on every poll is a status line
+  // that re-renders the whole app on every poll.
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      const next = readGitStatus(workingDirectory);
+      if (cancelled) return;
+      setGitStatus((prev) =>
+        prev?.branch === next?.branch && prev?.dirty === next?.dirty ? prev : next,
+      );
+    };
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [workingDirectory]);
+
+  // settings.outputStyle, when it names something other than the default: the
+  // label the status bar carries as [name]. Unset and "default" mean the same
+  // thing — no style in force — and neither earns a segment.
+  const rawOutputStyle = settingsSnapshot.outputStyle;
+  const outputStyleLabel =
+    typeof rawOutputStyle === "string" && rawOutputStyle !== "" && rawOutputStyle !== "default"
+      ? rawOutputStyle
+      : undefined;
 
   const handleThemeModeChange = useCallback((mode: ThemeSetting) => {
     const { syncLiveTheme } = require("../utils/theme.js");
@@ -662,12 +720,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     } catch {}
   }, [config]);
 
-  const handleThinkingModeChange = useCallback((mode: ThinkingMode) => {
-    setThinkingMode(mode);
-    try {
-      saveSettings({ thinkingMode: mode } as any);
-    } catch {}
-  }, []);
 
   
   const [showPluginOverlay, setShowPluginOverlay] = useState(false);
@@ -1135,7 +1187,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     defaultAgent?: string;
     themeMode?: "dark" | "light";
     dangerouslySkipPermissions?: boolean;
-    thinkingMode?: string;
   }) => {
     try {
       saveSettings(updates);
@@ -2061,7 +2112,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         return Promise.resolve({ approved: false, feedback: "Denied by a session rule." });
       }
       if (!protectedReason) {
-        if (mode === "bypassPermissions") {
+        if (mode === "bypassPermissions" || mode === "auto") {
+          // Auto mode is the wide one: the prompt is answered for every tool,
+          // commands included. What it does not lift is anything above it in
+          // this function — plan mode's read-only refusal, session and settings
+          // denials, protected paths — or the floors that never reach here at
+          // all (the dangerous-operation check and the capability gate in
+          // tools.ts, validateInput's read-before-edit guard).
           return Promise.resolve({ approved: true });
         }
         if (sessionDecision.decision === "allow") {
@@ -2069,7 +2126,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
         // Accept-edits is a grant about this project, not about the machine:
         // the target has to be inside the working directory for the mode to
-        // settle it. A path the call does not name is never auto-approved.
+        // settle it. A path the call does not name is never auto-approved —
+        // which is why commands, whose subject is not a path, still ask here.
         const target = pathWrittenBy(toolName, input as Record<string, unknown> | undefined, workingDirectory);
         if (mode === "acceptEdits" && target !== null && pathWithinDir(target, workingDirectory)) {
           return Promise.resolve({ approved: true });
@@ -2531,9 +2589,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             break;
 
           case "finish":
-            setTokenCount(event.usage.totalTokens); 
+            setTokenCount(event.usage.totalTokens);
             setInputTokens(event.usage.promptTokens);
             setOutputTokens(event.usage.completionTokens);
+            setSessionOutputTokens((prev) => prev + event.usage.completionTokens);
             setContextTokens(event.contextTokens);
 
             contextManagerRef.current.trackUsage(event.usage);
@@ -2860,6 +2919,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         const events = query({
           session,
           config: agentConfig,
+          model: activeModel,
           userMessage: activePrompt,
           workingDir: workingDirectory,
           abortController,
@@ -2920,6 +2980,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
             const retryEvents = query({
               session: fallbackSession,
               config: agentConfig,
+              model: activeModel,
               userMessage: activePrompt,
               workingDir: workingDirectory,
               abortController,
@@ -2982,7 +3043,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       activeApiKey,
       currentAgent,
       providerConfig,
-      thinkingMode,
       messages,
       // The memoized handler builds the session, and the session is where the
       // server list is used. Leaving this out left the first turn after the
@@ -3089,12 +3149,12 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
                   "Quick setup for DeepSeek Code",
                   "",
                   "Usage:",
-                  "  /setup <api-key>           Use deepseek-chat (default)",
-                  "  /setup <api-key> reasoner  Use deepseek-reasoner",
+                  "  /setup <api-key>                    Use deepseek-flash (default)",
+                  "  /setup <api-key> deepseek-v4-pro    Use DeepSeek V4 Pro",
                   "",
                   "Examples:",
                   "  /setup sk-xxxxx",
-                  "  /setup sk-xxxxx deepseek-reasoner",
+                  "  /setup sk-xxxxx deepseek-v4-pro",
                   "",
                   "Current:",
                   `  model:    ${activeModel}`,
@@ -3109,7 +3169,7 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
           
           const key = setupArgs.apiKey;
-          const resolvedModel = setupArgs.model || "deepseek-chat";
+          const resolvedModel = setupArgs.model || "deepseek-flash";
           setActiveProvider("deepseek");
           setActiveModel(resolvedModel);
           setActiveApiKey(key);
@@ -3458,49 +3518,44 @@ ${result.summary}`,
           return true;
         }
 
-        case "think": {
-          const VALID_MODES: ThinkingMode[] = ["off", "whale"];
-          if (arg && VALID_MODES.includes(arg as ThinkingMode)) {
-            const newMode = arg as ThinkingMode;
-            setThinkingMode(newMode);
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: newMode === "off"
-                  ? "Thinking disabled."
-                  : "Whalethink enabled — deep reasoning mode active.",
-                timestamp: Date.now(),
-              },
-            ]);
-          } else if (!arg) {
-            
-            const next = thinkingMode === "off" ? "whale" : "off";
-            setThinkingMode(next);
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content: next === "off"
-                  ? "Thinking disabled."
-                  : "Whalethink enabled — deep reasoning mode active.",
-                timestamp: Date.now(),
-              },
-            ]);
-          } else {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "system",
-                content:
-                  "Usage: /think [off|whale]\n" +
-                  "Shift+Tab cycles permission mode.\n\n" +
-                  "  off    disabled\n" +
-                  "  whale  deep reasoning with extended thinking",
-                timestamp: Date.now(),
-              },
-            ]);
+        case "thinking": {
+          // A plain on/off switch, and nothing else: /thinking flips it,
+          // /thinking
+          // on|off says which way. It used to toggle an off/whale display flag
+          // the engine never read. "On" restores the level last in force (a
+          // fresh session's is medium) — the level is what "on" means to the
+          // model, but the command itself only has two words. Levels live in
+          // /effort, which writes the same setting.
+          const sub = arg?.toLowerCase();
+          if (!sub || sub === "on" || sub === "off") {
+            const flip = sub ?? thinkingToggle(effortLevel);
+            if (flip === "on") {
+              applyThinkingLevel(lastThinkingLevelRef.current);
+            } else {
+              if (effortLevel && effortLevel !== "off") {
+                lastThinkingLevelRef.current = effortLevel;
+              }
+              applyThinkingLevel("off");
+            }
+            return true;
           }
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content:
+                (["help", "-h", "--help"].includes(sub)
+                  ? ""
+                  : `Unknown argument: ${arg}. Thinking is a toggle.\n\n`) +
+                "Usage: /thinking [on|off]\n\n" +
+                "  /thinking         flip it\n" +
+                "  /thinking on      turn it on\n" +
+                "  /thinking off     turn it off\n\n" +
+                "(/think still works.)\n\n" +
+                "The reasoning level behind it is /effort's to set.",
+              timestamp: Date.now(),
+            },
+          ]);
           return true;
         }
 
@@ -3510,6 +3565,7 @@ ${result.summary}`,
           
           
           const EFFORT_DESCRIPTIONS: Record<string, string> = {
+            off: "Thinking off — no reasoning tokens",
             low: "Quick, straightforward implementation",
             medium: "Balanced approach with standard testing",
             high: "Comprehensive implementation with extensive testing",
@@ -3523,14 +3579,15 @@ ${result.summary}`,
               {
                 role: "system",
                 content:
-                  "Usage: /effort [low|medium|high|xhigh|max|auto]\n\n" +
+                  "Usage: /effort [off|low|medium|high|xhigh|max|auto]\n\n" +
                   "Effort levels:\n" +
+                  "- off: Thinking off — no reasoning tokens\n" +
                   "- low: Quick, straightforward implementation\n" +
                   "- medium: Balanced approach with standard testing\n" +
                   "- high: Comprehensive implementation with extensive testing\n" +
                   "- xhigh: Extra thorough implementation\n" +
                   "- max: Maximum capability with deepest reasoning\n" +
-                  "- auto: Use the default effort level for your model",
+                  "- auto: Leave it to the provider (thinking on)",
                 timestamp: Date.now(),
               },
             ]);
@@ -3546,10 +3603,12 @@ ${result.summary}`,
           }
 
           if (arg === "current" || arg === "status") {
-            const current = effortLevel === "off" || effortLevel === undefined ? "auto" : effortLevel;
+            // "auto" is the absence of a level; "off" is a level like any
+            // other and reports itself, because it is what turns thinking off.
+            const current = effortLevel === undefined ? "auto" : effortLevel;
             const description =
               current === "auto"
-                ? "Use the default effort level for your model"
+                ? "Leave it to the provider (thinking on)"
                 : EFFORT_DESCRIPTIONS[current] ?? "";
             setMessages((prev) => [
               ...prev,
@@ -3567,13 +3626,21 @@ ${result.summary}`,
 
           const level = arg.toLowerCase();
           if (level === "auto" || level === "unset") {
+            // Auto is the setting being *absent*, not a level called "off":
+            // saving "off" here is what made /effort auto quietly disable
+            // thinking once "off" grew a meaning of its own.
             try {
-              saveSettings({ effort: "off" });
+              saveSettings({ effort: undefined });
             } catch {}
-            setEffortLevel("off");
+            setEffortLevel(undefined);
             setMessages((prev) => [
               ...prev,
-              { role: "system", content: "Effort level set to auto", timestamp: Date.now() },
+              {
+                role: "system",
+                content:
+                  "Effort level set to auto — the provider decides (thinking on; /effort off turns it off)",
+                timestamp: Date.now(),
+              },
             ]);
             return true;
           }
@@ -3583,7 +3650,7 @@ ${result.summary}`,
               ...prev,
               {
                 role: "system",
-                content: `Invalid argument: ${arg}. Valid options are: low, medium, high, xhigh, max, auto`,
+                content: `Invalid argument: ${arg}. Valid options are: off, low, medium, high, xhigh, max, auto`,
                 timestamp: Date.now(),
               },
             ]);
@@ -4582,7 +4649,6 @@ Based on the above changes:
       messages,
       tokenCount,
       exit,
-      thinkingMode,
       effortLevel,
       mcpEntries,
       mcpCount,
@@ -4596,6 +4662,7 @@ Based on the above changes:
       launchWorkflow,
       providerConfig,
       pushSystem,
+      applyThinkingLevel,
     ],
   );
 
@@ -4659,15 +4726,15 @@ Based on the above changes:
     if (!activeApiKey && trimmedInput.startsWith("sk-") && trimmedInput.length >= 20 && !trimmedInput.includes(" ")) {
       setActiveApiKey(trimmedInput);
       setActiveProvider("deepseek");
-      setActiveModel("deepseek-chat");
-      persistSettings({ apiKey: trimmedInput, model: "deepseek-chat", provider: "deepseek" });
+      setActiveModel("deepseek-flash");
+      persistSettings({ apiKey: trimmedInput, model: "deepseek-flash", provider: "deepseek" });
       setMessages((prev) => [
         ...prev,
         {
           role: "system",
           content:
             `✓ API key detected and saved (${trimmedInput.slice(0, 8)}…${trimmedInput.slice(-4)})\n` +
-            `✓ Using deepseek-chat. Change with /model <name>.\n` +
+            `✓ Using deepseek-flash. Change with /model <name>.\n` +
             `✓ Settings persisted to ~/.deepseek-code/settings.json`,
           timestamp: Date.now(),
         },
@@ -5255,7 +5322,6 @@ Based on the above changes:
           defaultTab={settingsTab}
           onClose={() => setShowSettingsUI(false)}
           onSkipPermissionsChange={handleSkipPermissionsChange}
-          onThinkingModeChange={handleThinkingModeChange}
           onThemeModeChange={handleThemeModeChange}
         />
       ) : showPluginOverlay ? (
@@ -5295,7 +5361,6 @@ Based on the above changes:
           {}
           {showShortcuts && (
             <ShortcutOverlay
-              thinkingMode={thinkingMode}
               mcpCount={mcpCount}
               mcpEnabledCount={mcpEnabledCount}
             />
@@ -5351,12 +5416,16 @@ Based on the above changes:
           <StatusBar
             model={activeModel}
             agentName={currentAgent}
+            workingDirectory={workingDirectory}
+            branch={gitStatus?.branch}
+            branchDirty={gitStatus?.dirty}
+            tokensPerSecond={apiDurationMs > 0 ? (sessionOutputTokens * 1000) / apiDurationMs : 0}
+            outputStyle={outputStyleLabel}
             isLoading={isLoading}
             tokenCount={tokenCount}
             inputTokens={inputTokens}
             outputTokens={outputTokens}
             contextTokens={contextTokens}
-            thinkingMode={thinkingMode}
             effort={effortLevel}
             mcpEnabledCount={mcpEnabledCount}
             queueCount={queuedSubmissions.length}

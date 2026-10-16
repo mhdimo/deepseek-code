@@ -7,6 +7,7 @@
 import type { Session as BindingSession, StreamEvent } from "ai-sdk-cpp";
 import type { AgentConfig, QueryEvent, TokenUsage } from "../types/index.js";
 import { TurnUsage } from "./contextUsage.js";
+import { costForTokens } from "./tokenTracker.js";
 import { EMPTY_FINISH_REASON, isEmptyTurn } from "./recovery.js";
 import { LIMIT_FINISH_REASON, reachedStepLimit } from "./stepLimit.js";
 
@@ -25,13 +26,16 @@ export function finishReasonOf(ev: StreamEvent): string {
 export interface QueryParams {
   session: BindingSession;
   config: AgentConfig;
+  /** The model this session runs on — what prices the turn's cost. Absent
+   *  (tests, minimal callers) prices at the conservative default rate. */
+  model?: string;
   userMessage: string;
   workingDir: string;
   abortController: AbortController;
 }
 
 export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
-  const { session, config, userMessage, abortController } = params;
+  const { session, config, model, userMessage, abortController } = params;
 
   // The engine's `finish` event cannot say whether the loop stopped because
   // the model was done or because it ran out of steps, so count the steps —
@@ -131,8 +135,11 @@ export async function* query(params: QueryParams): AsyncGenerator<QueryEvent> {
             completionTokens: output,
             totalTokens: input + output,
           };
-          const inputCost = (u.promptTokens / 1_000_000) * 0.27;
-          const outputCost = (u.completionTokens / 1_000_000) * 1.10;
+          const { inputCost, outputCost } = costForTokens(
+            model ?? "",
+            u.promptTokens,
+            u.completionTokens,
+          );
           // A run that used its whole budget is reported as that first: it is
           // the more specific thing to say about it.
           const finishReason = reachedStepLimit(steps, config.maxSteps)

@@ -12,8 +12,8 @@ DeepSeek Code uses Vercel AI SDK with a DeepSeek adapter in [src/provider/regist
 
 ## Supported models
 
-- `deepseek-chat` — General-purpose coding assistant
-- `deepseek-reasoner` — Advanced reasoning with extended thinking
+- `deepseek-flash` — General-purpose coding assistant (default)
+- `deepseek-v4-pro` — Frontier reasoning with extended thinking
 
 ---
 
@@ -24,7 +24,7 @@ DeepSeek Code uses Vercel AI SDK with a DeepSeek adapter in [src/provider/regist
 ```json
 {
   "provider": "deepseek",
-  "model": "deepseek-chat",
+  "model": "deepseek-flash",
   "apiKey": "env:DEEPSEEK_API_KEY"
 }
 ```
@@ -34,18 +34,18 @@ DeepSeek Code uses Vercel AI SDK with a DeepSeek adapter in [src/provider/regist
 ```json
 {
   "provider": "deepseek",
-  "model": "deepseek-chat",
+  "model": "deepseek-flash",
   "apiKey": "env:DEEPSEEK_API_KEY",
   "baseURL": "https://your-proxy.com/v1"
 }
 ```
 
-### Using DeepSeek Reasoner
+### Using deepseek-v4-pro (reasoning)
 
 ```json
 {
   "provider": "deepseek",
-  "model": "deepseek-reasoner",
+  "model": "deepseek-v4-pro",
   "apiKey": "env:DEEPSEEK_API_KEY"
 }
 ```
@@ -55,7 +55,7 @@ DeepSeek Code uses Vercel AI SDK with a DeepSeek adapter in [src/provider/regist
 ## Environment variables
 
 - `DEEPSEEK_API_KEY` — Your DeepSeek API key
-- `DEEPSEEK_MODEL` — Model to use (default: `deepseek-chat`)
+- `DEEPSEEK_MODEL` — Model to use (default: `deepseek-flash`)
 - `DEEPSEEK_BASE_URL` — Custom endpoint URL (optional)
 
 ---

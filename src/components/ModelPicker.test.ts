@@ -3,8 +3,8 @@ import { cycleEffortLevel, defaultEffortForModel } from "./ModelPicker.js";
 
 describe("defaultEffortForModel", () => {
   test("maps the two built-in models", () => {
-    expect(defaultEffortForModel("deepseek-chat")).toBe("off");
-    expect(defaultEffortForModel("deepseek-reasoner")).toBe("medium");
+    expect(defaultEffortForModel("deepseek-flash")).toBe("off");
+    expect(defaultEffortForModel("deepseek-v4-pro")).toBe("medium");
   });
 
   test("falls back to off for unknown models", () => {

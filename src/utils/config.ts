@@ -24,7 +24,7 @@ import type { ThemeSetting } from "./theme.js";
 
 const DEFAULTS: DeepSeekCodeConfig = {
   provider: "deepseek",
-  model: "deepseek-chat",
+  model: "deepseek-flash",
   apiKey: "",
   defaultAgent: "code",
   maxSteps: 25,
@@ -367,12 +367,13 @@ DeepSeek Code — Terminal-native AI coding agent
 Usage: deepseek-code [options]
 
 Options:
-  -m, --model <name>            Model name (default: deepseek-chat)
-                                Available: deepseek-chat, deepseek-reasoner
+  -m, --model <name>            Model name (default: deepseek-flash)
+                                Available: deepseek-flash, deepseek-v4-pro
   -k, --api-key <key>           API key (or set DEEPSEEK_API_KEY)
   -u, --base-url <url>          Custom API base URL (default: https://api.deepseek.com/v1)
   -a, --agent <name>            Default agent: code, plan, review (default: code)
-      --effort <level>          Reasoning effort: off, low, medium, high, max (default: off)
+      --effort <level>          Reasoning effort: off, low, medium, high, xhigh, max
+                                (default: auto — the provider's own default, thinking on)
   --max-steps <n>               Max tool-call steps per turn (default: 25)
   --dangerously-skip-permissions  Skip permission prompts for tools
   -r, --resume <hash>           Resume a saved session
@@ -387,18 +388,18 @@ Options:
 
 Environment:
   DEEPSEEK_API_KEY        API key for DeepSeek
-  DEEPSEEK_MODEL          Model name (deepseek-chat or deepseek-reasoner)
+  DEEPSEEK_MODEL          Model name (deepseek-flash or deepseek-v4-pro)
   DEEPSEEK_BASE_URL       Custom base URL (for proxies)
 
 Config file:
   .deepseek-code.json in cwd, or ~/.config/deepseek-code/config.json
 
 Examples:
-  # Use default DeepSeek Chat
+  # Use the default model
   deepseek-code
 
-  # Use DeepSeek Reasoner for complex reasoning tasks
-  deepseek-code --model deepseek-reasoner
+  # Use DeepSeek V4 Pro for complex reasoning tasks
+  deepseek-code --model deepseek-v4-pro
 
   # With API key from command line
   deepseek-code --api-key sk-xxxxx

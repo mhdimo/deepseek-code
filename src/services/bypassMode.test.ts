@@ -40,13 +40,14 @@ afterEach(() => {
 
 describe("the cycle offers bypass only when it is permitted", () => {
   test("a process with no grant never cycles into it", () => {
-    expect(permissionModeCycle(notGranted)).toEqual(["default", "acceptEdits", "plan"]);
+    expect(permissionModeCycle(notGranted)).toEqual(["default", "acceptEdits", "auto", "plan"]);
   });
 
   test("a granted process on an ordinary host can reach it", () => {
     expect(permissionModeCycle(granted)).toEqual([
       "default",
       "acceptEdits",
+      "auto",
       "plan",
       "bypassPermissions",
     ]);
@@ -57,7 +58,7 @@ describe("the cycle offers bypass only when it is permitted", () => {
     // the mode, because that is precisely the case `assertBypassSafe` exists
     // to refuse — and it never sees a keypress.
     process.env.SUDO_UID = "501";
-    expect(permissionModeCycle(granted)).toEqual(["default", "acceptEdits", "plan"]);
+    expect(permissionModeCycle(granted)).toEqual(["default", "acceptEdits", "auto", "plan"]);
   });
 
   test("root inside a container is allowed, as it is at startup", () => {
@@ -65,20 +66,31 @@ describe("the cycle offers bypass only when it is permitted", () => {
     process.env.container = "docker";
     expect(permissionModeCycle(granted)).toContain("bypassPermissions");
   });
+
+  test("auto mode is in the cycle for everyone, grant or not", () => {
+    // It is a session shortcut past the prompts, not the persisted grant
+    // bypassPermissions stands for — so the gate above does not apply to it.
+    expect(permissionModeCycle(notGranted)).toContain("auto");
+    process.env.SUDO_UID = "501";
+    expect(permissionModeCycle(notGranted)).toContain("auto");
+  });
 });
 
 describe("the mode a session starts in comes from the same question", () => {
-  test("no grant starts in default", () => {
-    expect(initialPermissionMode(notGranted)).toBe("default");
+  test("no grant starts in auto — the agent decides, not the user", () => {
+    expect(initialPermissionMode(notGranted)).toBe("auto");
   });
 
   test("a grant on an ordinary host starts in bypass", () => {
     expect(initialPermissionMode(granted)).toBe("bypassPermissions");
   });
 
-  test("a grant as root outside a sandbox still starts in default", () => {
+  test("a grant as root outside a sandbox still starts in auto", () => {
+    // Not bypass: that is the mode the startup gate refuses to hand a root
+    // process, and starting in it anyway would be the same hole the cycle's
+    // gating exists to close.
     process.env.SUDO_UID = "501";
-    expect(initialPermissionMode(granted)).toBe("default");
+    expect(initialPermissionMode(granted)).toBe("auto");
   });
 });
 

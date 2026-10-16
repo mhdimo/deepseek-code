@@ -45,7 +45,7 @@ export interface Migration {
 
 
 
-export const LATEST_SCHEMA_VERSION = 3;
+export const LATEST_SCHEMA_VERSION = 5;
 
 
 
@@ -133,6 +133,36 @@ function migrateNormalizeCleanupPeriodDays(
 }
 
 
+/** The model ids the API publishes today, under the names it published first.
+ *  The old ids still resolve — they are aliases for the current models — so
+ *  this is a rename for legibility, not a repair: nothing breaks if it is
+ *  skipped, and nothing breaks if the user edits the file by hand afterwards. */
+const LEGACY_MODEL_IDS: Record<string, string> = {
+  "deepseek-chat": "deepseek-flash",
+  "deepseek-reasoner": "deepseek-v4-pro",
+};
+
+/** Rewrite a persisted model id to its current name (V3-era ids → current). */
+function migrateModelIds(settings: PersistedSettings): PersistedSettings {
+  const current = settings.model;
+  if (current && LEGACY_MODEL_IDS[current]) settings.model = LEGACY_MODEL_IDS[current]!;
+  return settings;
+}
+
+/**
+ * Drop the retired "thinking mode" preference.
+ *
+ * It was a display flag (`off`|`whale`) that painted a StatusBar chip and
+ * nothing else — the engine never read it, which is exactly why /thinking looked
+ * like it did nothing. Thinking is reasoning effort now, and effort is its own
+ * key, so the value left behind here is a setting with no reader. Deleting it
+ * is the point: a dead key that *looks* like a control is worse than no key.
+ */
+function migrateDropRetiredThinkingMode(settings: PersistedSettings): PersistedSettings {
+  delete (settings as unknown as Record<string, unknown>).thinkingMode;
+  return settings;
+}
+
 export const MIGRATIONS: Migration[] = [
   {
     fromVersion: 0,
@@ -152,6 +182,18 @@ export const MIGRATIONS: Migration[] = [
     description:
       "Replace the over-broad Bash allow rule left by the old bypass migration with the flag it stood in for.",
     migrate: migrateRepairBypassSentinel,
+  },
+  {
+    fromVersion: 3,
+    toVersion: 4,
+    description: "Rename V3-era model ids (deepseek-chat, deepseek-reasoner) to their current names.",
+    migrate: migrateModelIds,
+  },
+  {
+    fromVersion: 4,
+    toVersion: 5,
+    description: "Drop the retired thinking-mode preference, which no longer has a reader.",
+    migrate: migrateDropRetiredThinkingMode,
   },
 ];
 

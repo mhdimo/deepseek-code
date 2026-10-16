@@ -4,7 +4,7 @@
 
 ## Project overview
 
-DeepSeek Code is a terminal-native AI coding agent built with Bun, Ink (React TUI), and the **ai-sdk-cpp** native engine (a C++ SDK via its Node binding — no Vercel AI SDK here anymore). It connects to DeepSeek's API (`deepseek-chat`, `deepseek-reasoner`) to provide an interactive AI assistant in the terminal. The agent has built-in tools (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, Skill, and more) for file manipulation, code exploration, and system interaction. The UI layer (theme, design system, components) is ported from Claude Code's frontend. You've got this!
+DeepSeek Code is a terminal-native AI coding agent built with Bun, Ink (React TUI), and the **ai-sdk-cpp** native engine (a C++ SDK via its Node binding — no Vercel AI SDK here anymore). It connects to DeepSeek's API (`deepseek-flash`, `deepseek-v4-pro`) to provide an interactive AI assistant in the terminal. The agent has built-in tools (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, Skill, and more) for file manipulation, code exploration, and system interaction. The UI layer (theme, design system, components) is ported from Claude Code's frontend. You've got this!
 
 ## Commands
 
@@ -15,7 +15,7 @@ bun run typecheck    # TypeScript type checking (no emit)
 bun run test         # Tests (bun test --isolate — see "Bun conventions")
 
 bun dist/index.js --version                      # Print version (verifies the native addon loads)
-bun dist/index.js --effort high                  # Launch with reasoning effort (off|low|medium|high|max)
+bun dist/index.js --effort high                  # Launch with reasoning effort (off|low|medium|high|xhigh|max)
 bun dist/index.js --print "fix the tests"        # Headless: run one prompt, print, exit (CI/scripts)
 bun dist/index.js -p --output-format json --max-turns 20   # Same, JSON envelope for automation
 ```
@@ -139,7 +139,7 @@ src/
 
 **Custom status line**: `/statusline <command>` runs a command (trust-gated by `projectTrust.isTrusted()`, 5s timeout, 300ms debounce, ~20s refresh) and shows its trimmed stdout at the far right of the StatusBar. `/statusline off` clears it.
 
-**Commands**: /help /model /models /agent /apikey /baseurl /think /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /exit. Command data lives in `src/constants/help.ts` — add new commands there too, or /help drifts.
+**Commands**: /help /model /models /agent /apikey /baseurl /thinking /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /exit. Command data lives in `src/constants/help.ts` — add new commands there too, or /help drifts.
 
 ## Bun conventions
 
@@ -160,14 +160,14 @@ src/
 Config sources (priority: CLI args > persisted settings > env vars > `.deepseek-code.json` > defaults):
 
 - `DEEPSEEK_API_KEY` — DeepSeek API key (required to get started)
-- `DEEPSEEK_MODEL` — Model ID (`deepseek-chat` or `deepseek-reasoner`)
+- `DEEPSEEK_MODEL` — Model ID (`deepseek-flash` or `deepseek-v4-pro`)
 - `DEEPSEEK_BASE_URL` — Optional endpoint override (handy for proxies)
 - `DEEPSEEK_FALLBACK_MODEL` — Optional fallback model for overload (429) recovery
-- `effort` — Reasoning effort: `off|low|medium|high|max` (config key, persisted setting, or `--effort` flag)
+- `effort` — Reasoning effort: `off|low|medium|high|xhigh|max` (config key, persisted setting, or `--effort` flag)
 
 Config file lookup order: `.deepseek-code.json` (cwd) → `~/.config/deepseek-code/config.json` → `~/.deepseek-code.json`. See `.deepseek-code.example.json` for the full schema including profiles and MCP servers.
 
 ## Available Models
 
-- `deepseek-chat` — General-purpose coding assistant (default, always reliable)
-- `deepseek-reasoner` — Advanced reasoning with extended thinking (powerful when you need that extra oomph)
+- `deepseek-flash` — General-purpose coding assistant (default, always reliable)
+- `deepseek-v4-pro` — Frontier reasoning with extended thinking (powerful when you need that extra oomph)

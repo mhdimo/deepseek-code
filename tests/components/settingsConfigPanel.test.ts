@@ -62,18 +62,18 @@ function renderPanel(contentHeight = 30): string {
 test("shows the rows whose values the app reads back", () => {
   writeSettings({
     schemaVersion: 3,
-    model: "deepseek-reasoner",
+    model: "deepseek-v4-pro",
     copyFullResponse: true,
     dangerouslySkipPermissions: false,
-    thinkingMode: "whale",
+    effort: "medium",
   });
   const frame = renderPanel();
 
   expect(frame).toContain("Skip permission prompts");
   expect(frame).toContain("Copy full response");
-  expect(frame).toContain("Thinking mode");
-  expect(frame).toContain("whale");
-  expect(frame).toContain("deepseek-reasoner");
+  expect(frame).toContain("Effort");
+  expect(frame).toContain("medium");
+  expect(frame).toContain("deepseek-v4-pro");
   expect(frame).toContain("true");
 });
 
@@ -89,8 +89,8 @@ test("drops the rows that reached nothing", () => {
 
 test("scrolls the list inside the pane it was given", () => {
   const frame = renderPanel(15);
-  // 15 rows against a 5-row window: the rest is announced, not silently cut.
-  expect(frame).toContain("↓ 10 more below");
+  // 14 rows against a 5-row window: the rest is announced, not silently cut.
+  expect(frame).toContain("↓ 9 more below");
   expect(frame).not.toContain("more above");
   expect(frame).not.toContain("Cleanup period");
   // A pane tall enough for the list has nothing to announce.

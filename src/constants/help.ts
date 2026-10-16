@@ -20,7 +20,7 @@ export const HELP_FOOTER = "For more help: https://api-docs.deepseek.com";
 export const KEYBOARD_SHORTCUTS: ReadonlyArray<{ keys: string; description: string }> = [
   { keys: "↑↓", description: "Navigate command picker (type / first)" },
   { keys: "Tab", description: "Confirm picker selection / autocomplete" },
-  { keys: "Shift+Tab", description: "Cycle permission mode (default → accept edits → plan → bypass)" },
+  { keys: "Shift+Tab", description: "Cycle permission mode (manual → accept edits → auto → plan → bypass)" },
   { keys: "Ctrl+O", description: "Toggle transcript mode (expand thinking/tool blocks)" },
   { keys: "Ctrl+E", description: "Toggle Inspect Mode (expand/collapse tool outputs)" },
   { keys: "Ctrl+Q", description: "Clear queued prompts" },

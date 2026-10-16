@@ -6,7 +6,7 @@ A terminal-native AI coding agent — powered by DeepSeek, with multi-agent work
 
 - Native terminal UI built with Ink (React)
 - Autonomous multi-step agent loop with 19 built-in tools
-- DeepSeek models: `deepseek-chat` and `deepseek-reasoner`
+- DeepSeek models: `deepseek-flash` and `deepseek-v4-pro`
 - Switch models, profiles, and agents on the fly
 - MCP server support — configure, toggle, and monitor in-app
 
@@ -49,7 +49,7 @@ You can configure via environment variables or `.deepseek-code.json`.
 
 ```bash
 export DEEPSEEK_API_KEY="..."
-export DEEPSEEK_MODEL="deepseek-chat"  # or deepseek-reasoner
+export DEEPSEEK_MODEL="deepseek-flash"  # or deepseek-v4-pro
 export DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"  # optional, for proxies
 ```
 
@@ -67,8 +67,11 @@ The config file supports:
 
 ## Available Models
 
-- `deepseek-chat` - General-purpose coding assistant (default)
-- `deepseek-reasoner` - Advanced reasoning for complex tasks
+- `deepseek-flash` - General-purpose coding assistant (default)
+- `deepseek-v4-pro` - Frontier reasoning for complex tasks
+
+The V3-era ids (`deepseek-chat`, `deepseek-reasoner`) still resolve as aliases; a saved setting
+naming one is migrated to its current name.
 
 ---
 
@@ -91,7 +94,7 @@ See [docs/MCP.md](docs/MCP.md) for examples and roadmap.
 - `/model`, `/models`
 - `/apikey`
 - `/agent`
-- `/think`
+- `/thinking`
 - `/mcp`
 - `/shortcuts`
 

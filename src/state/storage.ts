@@ -39,7 +39,6 @@ export interface PersistedSettings {
   baseURL?: string;
   provider?: string;
   defaultAgent?: string;
-  thinkingMode?: string;
   
   effort?: EffortLevel;
   

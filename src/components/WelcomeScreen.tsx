@@ -205,12 +205,12 @@ export default function WelcomeScreen({
           </Text>
           <Box marginLeft={2}>
             <Text color={color("claude")}>{`Models`.padEnd(LABEL_WIDTH)}</Text>
-            <Text dimColor>deepseek-chat (default) · deepseek-reasoner</Text>
+            <Text dimColor>deepseek-flash (default) · deepseek-v4-pro</Text>
           </Box>
           <Box marginLeft={2}>
             <Text color={color("claude")}>{`Thinking`.padEnd(LABEL_WIDTH)}</Text>
             <Text dimColor>
-              whalethink (<Text color={color("claude")}>/think</Text>) · <Text color={color("claude")}>/effort</Text> low|medium|high|xhigh|max
+              extended reasoning (<Text color={color("claude")}>/thinking</Text>) · <Text color={color("claude")}>/effort</Text> low|medium|high|xhigh|max
             </Text>
           </Box>
           <Box marginLeft={2}>

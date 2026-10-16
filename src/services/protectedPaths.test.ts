@@ -169,7 +169,9 @@ describe("wiring", () => {
     const src = read("../components/App.tsx");
     const guard = src.indexOf("const protectedReason = protectedWriteReason(");
     expect(guard).toBeGreaterThan(-1);
-    const bypass = src.indexOf('if (mode === "bypassPermissions")');
+    // Auto mode reaches the same wide approval without a grant, so it is the
+    // same line — and therefore the same gate — as bypass.
+    const bypass = src.indexOf('if (mode === "bypassPermissions" || mode === "auto")');
     const accept = src.indexOf('mode === "acceptEdits" && target !== null');
     expect(bypass).toBeGreaterThan(guard);
     expect(accept).toBeGreaterThan(guard);

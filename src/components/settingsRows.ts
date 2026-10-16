@@ -1,5 +1,4 @@
-import { loadSettings, type EffortLevel, type PersistedSettings } from "../state/storage.js";
-import type { ThinkingMode } from "../types/index.js";
+import { type EffortLevel, type PersistedSettings } from "../state/storage.js";
 import {
   resolveThemeSetting,
   syncLiveTheme,
@@ -16,20 +15,6 @@ import { bypassIsPermitted } from "../services/bypassMode.js";
  * app actually consumes — which needs them built somewhere other than inside a
  * component that only renders with a TTY attached.
  */
-
-/**
- * What a fresh session should start with. The row below writes this key, and a
- * hardcoded start value meant the write could never be read back: the setting
- * survived in the file and nowhere else, and the status bar chip contradicted
- * the file it had been written to.
- */
-export function persistedThinkingMode(): ThinkingMode {
-  try {
-    return loadSettings().thinkingMode === "whale" ? "whale" : "off";
-  } catch {
-    return "off";
-  }
-}
 
 export interface SettingBase {
   id: string;
@@ -80,7 +65,6 @@ export interface SettingsRowHandlers {
   /** The live grant behind the Shift+Tab permission cycle — see
    *  services/bypassMode.ts. */
   onSkipPermissionsChange?: (value: boolean) => void;
-  onThinkingModeChange?: (mode: ThinkingMode) => void;
   onThemeModeChange?: (setting: ThemeSetting) => void;
 }
 
@@ -100,20 +84,21 @@ const THEME_LABELS: Record<string, string> = {
  */
 export const MODEL_OPTIONS: ReadonlyArray<{ label: string; value: string; description?: string }> = [
   {
-    label: "deepseek-chat",
-    value: "deepseek-chat",
-    description: "General-purpose coding assistant — default",
+    label: "deepseek-flash",
+    value: "deepseek-flash",
+    description: "Fast, general-purpose coding assistant — default",
   },
   {
-    label: "deepseek-reasoner",
-    value: "deepseek-reasoner",
-    description: "Advanced reasoning with extended thinking",
+    label: "deepseek-v4-pro",
+    value: "deepseek-v4-pro",
+    description: "Frontier reasoning with extended thinking",
   },
 ];
 
-export const EFFORT_OPTIONS = ["off", "low", "medium", "high", "max"] as const;
+/** "auto" first: it is the absence of a level, and the state thinking-off is
+ *  confused with — off disables thinking, auto leaves it to the provider. */
+export const EFFORT_OPTIONS = ["auto", "off", "low", "medium", "high", "xhigh", "max"] as const;
 export const AGENT_OPTIONS = ["code", "plan", "review"] as const;
-export const THINKING_OPTIONS = ["off", "whale"] as const;
 export const THEME_OPTIONS = [
   "auto",
   "dark",
@@ -157,9 +142,9 @@ export function buildSettingsRows(ctx: SettingsRowContext): Setting[] {
       id: "model",
       label: "Model",
       description:
-        "Model used for new sessions — deepseek-chat, deepseek-reasoner, or a custom model",
+        "Model used for new sessions — deepseek-flash, deepseek-v4-pro, or a custom model",
       type: "text" as const,
-      value: s.model || "deepseek-chat",
+      value: s.model || "deepseek-flash",
       editSeed: s.model ?? "",
       onChange: (v: string) => {
         const trimmed = v.trim();
@@ -170,23 +155,14 @@ export function buildSettingsRows(ctx: SettingsRowContext): Setting[] {
       id: "effort",
       label: "Effort",
       description:
-        "Reasoning effort for deepseek-reasoner: off sends nothing — the provider default applies",
+        "Reasoning effort: off turns thinking off, auto leaves it to the provider (thinking on)",
       type: "enum" as const,
-      value: s.effort ?? "off",
+      value: s.effort ?? "auto",
       options: EFFORT_OPTIONS,
-      onChange: (v: string) => persist({ effort: v as EffortLevel }),
-    },
-    {
-      id: "thinkingMode",
-      label: "Thinking mode",
-      description: "Thinking mode preference — whale or off",
-      type: "enum" as const,
-      value: s.thinkingMode ?? "off",
-      options: THINKING_OPTIONS,
-      onChange: (v: string) => {
-        persist({ thinkingMode: v });
-        handlers.onThinkingModeChange?.(v as ThinkingMode);
-      },
+      onChange: (v: string) =>
+        // Clearing the key, not writing "off": absent means the provider
+        // decides, and "off" now means thinking disabled on purpose.
+        persist({ effort: v === "auto" ? undefined : (v as EffortLevel) }),
     },
     {
       id: "themeMode",

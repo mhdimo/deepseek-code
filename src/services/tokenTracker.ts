@@ -14,25 +14,56 @@ interface ModelPricing {
   cacheInputPerMillion: number;
 }
 
+/** Peak hours, per million tokens, from DeepSeek's pricing page — off-peak is
+ *  exactly half. The table errs high on purpose: an estimate that quietly
+ *  undershoots is worse than one that overshoots, and a clock in a status bar
+ *  is not worth the peak/off-peak split. */
+const FLASH_PRICING: ModelPricing = {
+  inputPerMillion: 0.3,
+  outputPerMillion: 1.2,
+  cacheInputPerMillion: 0.006,
+};
+
+const PRO_PRICING: ModelPricing = {
+  inputPerMillion: 1.32,
+  outputPerMillion: 3.96,
+  cacheInputPerMillion: 0.044,
+};
+
 const PRICING_TABLE: Record<string, ModelPricing> = {
-  "deepseek-chat": {
-    inputPerMillion: 0.27,
-    outputPerMillion: 1.10,
-    cacheInputPerMillion: 0.07,
-  },
-  "deepseek-reasoner": {
-    inputPerMillion: 0.55,
-    outputPerMillion: 2.19,
-    cacheInputPerMillion: 0.14,
-  },
+  "deepseek-flash": FLASH_PRICING,
+  "deepseek-v4-pro": PRO_PRICING,
+  // Names the API still answers to — requests are served, and billed, as the
+  // current models above.
+  "deepseek-chat": FLASH_PRICING,
+  "deepseek-reasoner": PRO_PRICING,
 };
 
 
-const DEFAULT_PRICING: ModelPricing = {
-  inputPerMillion: 0.69,
-  outputPerMillion: 2.19,
-  cacheInputPerMillion: 0.14,
-};
+/** A model we do not know (a proxy's own) is priced as the dearest one we do:
+ *  an over-estimate is visible and recoverable, an under-estimate is a bill. */
+const DEFAULT_PRICING: ModelPricing = PRO_PRICING;
+
+/** The input rate per million tokens — what a caller with only a token count
+ *  and no usage breakdown can render, and the one number every cost display
+ *  in the app should agree on. */
+export function inputRatePerMillion(model: string): number {
+  return (PRICING_TABLE[model] ?? DEFAULT_PRICING).inputPerMillion;
+}
+
+/** Input and output cost of one call, priced by the model that made it — the
+ *  same table the session total comes from, so a turn's cost and the session's
+ *  cannot be computed two different ways. */
+export function costForTokens(
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+): { inputCost: number; outputCost: number; totalCost: number } {
+  const pricing = PRICING_TABLE[model] ?? DEFAULT_PRICING;
+  const inputCost = (promptTokens / 1_000_000) * pricing.inputPerMillion;
+  const outputCost = (completionTokens / 1_000_000) * pricing.outputPerMillion;
+  return { inputCost, outputCost, totalCost: inputCost + outputCost };
+}
 
 
 
