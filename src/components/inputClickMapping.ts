@@ -30,7 +30,10 @@ export function visualOffsetAt(value: string, width: number, row: number, col: n
     }).split("\n");
     if (row < visualRow + segments.length) {
       const segmentIndex = row - visualRow;
-      const segment = segments[segmentIndex]!;
+      // The row grid wraps `line || " "` so a blank line still gets a row, but
+      // a blank line has no buffer characters: the synthetic space must not be
+      // walked as if it were content.
+      const segment = line.length > 0 ? segments[segmentIndex]! : "";
       // { trim: false } keeps every character, so the segments concatenate
       // back to the logical line: earlier segments of this line are exactly
       // the buffer offset where the clicked row starts.
@@ -41,7 +44,7 @@ export function visualOffsetAt(value: string, width: number, row: number, col: n
       for (const ch of segment) {
         if (cells >= col) break;
         cells += stringWidth(ch);
-        chars++;
+        chars += ch.length; // UTF-16 units, matching buffer offsets
       }
       return offset + lineOffset + chars;
     }
