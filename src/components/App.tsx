@@ -3236,12 +3236,6 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         }
 
 
-        case "models": {
-          setCommandOverlay({ view: "model" });
-          return true;
-        }
-
-
         case "apikey": {
           const key = restArgs.join("");
           if (!key) {

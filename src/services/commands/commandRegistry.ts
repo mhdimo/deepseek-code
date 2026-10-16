@@ -53,10 +53,13 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     acceptsArgs: true,
   }),
   command("model", "Select or switch the model (interactive picker)", "model", {
+    // `/models` was a second command doing the same thing — it opened this
+    // same picker and took no argument — so the picker offered two rows for
+    // one action. It stays an alias for the habit, not a row of its own.
+    aliases: ["models"],
     usage: ["/model <name>"],
     acceptsArgs: true,
   }),
-  command("models", "Select a model or profile (opens the picker)", "model"),
   command("apikey", "Set the API key for the current provider", "model", {
     aliases: ["key"],
     usage: ["/apikey <key>"],
@@ -365,7 +368,7 @@ export function mergeCommandDefinitions(
 const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] = [
   {
     title: "Setup & model",
-    names: ["setup", "model", "models", "apikey", "baseurl", "logout"],
+    names: ["setup", "model", "apikey", "baseurl", "logout"],
   },
   {
     title: "Agents & reasoning",

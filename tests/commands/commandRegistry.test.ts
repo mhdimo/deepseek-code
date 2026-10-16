@@ -25,6 +25,18 @@ describe("canonical slash command registry", () => {
     expect(resolveCommandName("/USAGE")).toBe("usage");
   });
 
+  test("/models is the model command, not a second row in the picker", () => {
+    // Both names ran the same picker, so the picker listed the same action
+    // twice; the plural survives as an alias.
+    expect(resolveCommandName("/models")).toBe("model");
+    expect(parseSlashCommand("/models deepseek-v4-pro")?.canonicalName).toBe("model");
+    // Only the singular is a row — for "/mode" that is the first hit, and no
+    // second model-ish command follows it. (setup matches on its description.)
+    const matches = filterCommandDefinitions("/mode").map((command) => command.name);
+    expect(matches[0]).toBe("model");
+    expect(matches.filter((name) => name.startsWith("model"))).toEqual(["model"]);
+  });
+
   test("tokenizes quoted arguments while preserving raw arguments", () => {
     expect(parseSlashCommand('/statusline "git branch --show-current"')).toEqual({
       canonicalName: "statusline",
@@ -84,12 +96,12 @@ describe("command activation text", () => {
   test("Enter runs the picked command by name, never a usage template", () => {
     expect(commandActivationText({ name: "effort", acceptsArgs: true }, true)).toBe("/effort");
     expect(commandActivationText({ name: "model", acceptsArgs: true }, true)).toBe("/model");
-    expect(commandActivationText({ name: "models" }, true)).toBe("/models");
+    expect(commandActivationText({ name: "clear" }, true)).toBe("/clear");
   });
 
   test("Tab completes the name, leaving a space for a command that takes args", () => {
     expect(commandActivationText({ name: "effort", acceptsArgs: true }, false)).toBe("/effort ");
-    expect(commandActivationText({ name: "models" }, false)).toBe("/models");
+    expect(commandActivationText({ name: "clear" }, false)).toBe("/clear");
   });
 
   test("no built-in can put its usage hint into the prompt", () => {

@@ -139,7 +139,7 @@ src/
 
 **Custom status line**: `/statusline <command>` runs a command (trust-gated by `projectTrust.isTrusted()`, 5s timeout, 300ms debounce, ~20s refresh) and shows its trimmed stdout at the far right of the StatusBar. `/statusline off` clears it.
 
-**Commands**: /help /model /models /agent /apikey /baseurl /thinking /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /exit. Command data lives in `src/constants/help.ts` — add new commands there too, or /help drifts.
+**Commands**: /help /model (alias /models) /agent /apikey /baseurl /thinking /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /exit. Command data lives in `src/constants/help.ts` — add new commands there too, or /help drifts.
 
 ## Bun conventions
 
