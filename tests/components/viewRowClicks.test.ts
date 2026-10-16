@@ -67,3 +67,28 @@ describe("settings rows", () => {
     expect(after).toBe(!before);
   });
 });
+
+describe("task rows", () => {
+  test("clicking a task row opens its detail", async () => {
+    const { registerTask } = await import("../../src/services/tasks/backgroundFramework.js");
+    // Two real (instantly finishing) shell tasks so the list has two rows.
+    // registerTask spawns a process, hence the sandboxed data dir above.
+    registerTask("true", { cwd: tmpdir(), type: "shell" });
+    registerTask("true", { cwd: tmpdir(), type: "shell" });
+
+    const { default: TasksView } = await import("../../src/components/TasksView.js");
+    const app = mountView(React.createElement(TasksView, { onClose: () => {} }));
+    await settle();
+    expect(app.handlers().length).toBe(2);
+    app.handlers()[1]!(click); // the second task row
+    // Two settle windows: ink throttles renders to 30fps (~33ms), so the
+    // re-render a click causes reaches stdout a hair after one 30ms settle.
+    await settle();
+    await settle();
+    // Enter's action ran: the detail dialog's output section is on screen
+    // (TaskDetailDialog.tsx's shell render). Only assert strings written
+    // after the click — the frame buffer keeps earlier frames' text, so a
+    // not.toContain on list text would fail against that leftover.
+    expect(app.frame()).toContain("output (last");
+  });
+});
