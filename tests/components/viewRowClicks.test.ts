@@ -10,8 +10,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import React from "react";
-import { mountWithMouse, settle, write, type MountedMouseApp } from "./mouseTestHarness.js";
-import type { RegionClickEvent } from "../../src/components/mouseRegions.js";
+import { mountWithMouse, report, settle, write, type MountedMouseApp } from "./mouseTestHarness.js";
+import { elementRect, type RegionClickEvent } from "../../src/components/mouseRegions.js";
 
 // Sandbox the data dir BEFORE the settings/tasks modules read it.
 process.env.DEEPSEEK_CODE_DATA_DIR = mkdtempSync(join(tmpdir(), "dsclick-"));
@@ -115,5 +115,60 @@ describe("export rows", () => {
     await settle();
     await settle();
     expect(app.frame()).toContain("Enter filename:");
+  });
+});
+
+describe("the input dialog's field", () => {
+  test("clicking the field places the caret; typing continues there", async () => {
+    const { default: InputDialog } = await import("../../src/components/InputDialog.js");
+    const submissions: string[] = [];
+    const app = mountView(
+      React.createElement(InputDialog, {
+        title: "Test",
+        initial: "abcdef",
+        onSubmit: (v: string) => submissions.push(v),
+        onCancel: () => {},
+      }),
+    );
+    await settle();
+    // col 4: two cells into the text (the "> " prefix takes the first two).
+    app.handlers()[0]!({ ...click, col: 4 });
+    await write(app, "X");
+    await write(app, "\r");
+    await settle();
+    expect(submissions).toEqual(["abXcdef"]);
+  });
+
+  test("right-click pastes at the caret", async () => {
+    const { __setClipboardReaderForTests } = await import("../../src/components/clipboard.js");
+    __setClipboardReaderForTests(() => "PASTED");
+    try {
+      const { default: InputDialog } = await import("../../src/components/InputDialog.js");
+      const submissions: string[] = [];
+      const app = mountView(
+        React.createElement(InputDialog, {
+          title: "Test",
+          initial: "abcdef",
+          onSubmit: (v: string) => submissions.push(v),
+          onCancel: () => {},
+        }),
+      );
+      await settle();
+      // The right press goes through the real SGR path — the field's region
+      // must opt into right clicks (else it is swallowed unconsumed). Aim at
+      // the region's own top-left cell, read off the yoga tree, because the
+      // Dialog chrome decides where that row lands on screen.
+      const region = [...app.registry.regions.values()][0]!;
+      const rect = elementRect(region.ref.current)!;
+      await write(app, report(2, rect.left + 1, rect.top + 1));
+      await settle();
+      // The caret starts at the end of the initial value; the right-press
+      // pastes there.
+      await write(app, "\r");
+      await settle();
+      expect(submissions).toEqual(["abcdefPASTED"]);
+    } finally {
+      __setClipboardReaderForTests(null);
+    }
   });
 });
