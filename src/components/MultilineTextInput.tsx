@@ -24,6 +24,7 @@ import { closesPaste, normalizePaste, opensPaste, pasteInFlight } from "./paste.
 import { findUltrathinkPositions, type KeywordRange } from "../utils/thinkingKeywords.js";
 import { useClickRegion, type RegionClickEvent } from "./mouseRegions.js";
 import { visualOffsetAt } from "./inputClickMapping.js";
+import { readClipboardText } from "./clipboard.js";
 
 
 interface MultilineTextInputProps {
@@ -591,11 +592,18 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   // cell; the wrap grid comes from the box's own computed width.
   const handleRegionClick = useCallback(
     (ev: RegionClickEvent): void => {
+      if (ev.button === 2) {
+        // Right-click pastes at the caret (pi parity). The clipboard text
+        // takes the same normalisation and insertion path a typed paste does.
+        const text = readClipboardText();
+        if (text !== null) insertAtCursor(normalizePaste(text));
+        return;
+      }
       const offset = visualOffsetAt(bufferRef.current, ev.width, ev.row, ev.col);
       cursorRef.current = offset;
       setCursorOffset(offset);
     },
-    [],
+    [insertAtCursor],
   );
   const regionRef = useClickRegion(handleRegionClick, focus);
 

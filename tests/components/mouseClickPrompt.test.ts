@@ -108,3 +108,36 @@ describe("clicking the prompt", () => {
     expect(p.value()).toBe("abc"); // unchanged: the report never became text
   });
 });
+
+describe("right-click paste", () => {
+  test("inserts the clipboard at the caret, normalised", async () => {
+    const { __setClipboardReaderForTests } = await import("../../src/components/clipboard.js");
+    __setClipboardReaderForTests(() => "PASTED\r\nsecond");
+    try {
+      const p = prompt("abc");
+      const app = mount(p.node);
+      await settle();
+      await write(app, report(0, 6, 1)); // caret after "abc"
+      await write(app, report(2, 6, 1)); // right-click at the same cell
+      await settle();
+      expect(p.value()).toBe("abcPASTED\nsecond");
+    } finally {
+      __setClipboardReaderForTests(null);
+    }
+  });
+
+  test("an empty clipboard pastes nothing", async () => {
+    const { __setClipboardReaderForTests } = await import("../../src/components/clipboard.js");
+    __setClipboardReaderForTests(() => "");
+    try {
+      const p = prompt("abc");
+      const app = mount(p.node);
+      await settle();
+      await write(app, report(2, 6, 1));
+      await settle();
+      expect(p.value()).toBe("abc");
+    } finally {
+      __setClipboardReaderForTests(null);
+    }
+  });
+});
