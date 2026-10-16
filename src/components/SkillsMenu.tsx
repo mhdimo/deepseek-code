@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
 import { ClickRegionBox } from "./mouseRegions.js";
+import { useHoverPin } from "./hoverPin.js";
 import {
   listSkills,
   getSkill,
@@ -99,6 +100,10 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
     groupStart.set(group.source, acc);
     acc += group.rows.length;
   }
+  const windowSize = Math.max(1, Math.min(VISIBLE_ROWS, rows.length));
+  // Hover moves the focus but must never scroll the list (see hoverPin); the
+  // arrow keys keep their centred window.
+  const hoverPin = useHoverPin(selectedIndex, rows.length, windowSize);
 
   const selectedIndexRef = useRef(selectedIndex);
   selectedIndexRef.current = selectedIndex;
@@ -224,8 +229,12 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
 
   const focusColor = resolveColor(theme.claude);
 
-  const windowSize = Math.max(1, Math.min(VISIBLE_ROWS, rows.length));
-  const start = Math.max(0, Math.min(selectedIndex - Math.floor(windowSize / 2), rows.length - windowSize));
+  const start = hoverPin.start(
+    Math.max(
+      0,
+      Math.min(selectedIndex - Math.floor(windowSize / 2), rows.length - windowSize),
+    ),
+  );
   const end = start + windowSize;
   const moreAbove = start > 0;
   const moreBelow = end < rows.length;
@@ -272,8 +281,13 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
                   setSelectedIndex(i);
                   openSkill(row.name);
                 }}
-                // Hover only moves the focus; opening is Enter/click's job.
-                onHoverRegion={() => setSelectedIndex(i)}
+                // Hover only moves the focus — opening is Enter/click's job —
+                // and pins the window so the list cannot scroll under the
+                // pointer.
+                onHoverRegion={() => {
+                  hoverPin.pin(i, start);
+                  setSelectedIndex(i);
+                }}
               >
                 <Text color={markerColor}>{marker}</Text>
                 <Text color={focused ? focusColor : undefined} bold={focused}>

@@ -8,6 +8,7 @@ import {
 import { commandColumnWidth, truncateCommandDescription, visibleCommandRange } from "./commandPickerLayout.js";
 import { getTheme, getThemeMode, resolveColor } from "../utils/theme.js";
 import { useClickRegion, type RegionClickEvent, type RegionHoverEvent } from "./mouseRegions.js";
+import { useHoverPin } from "./hoverPin.js";
 
 export type CommandDef = CommandDefinition;
 
@@ -40,11 +41,18 @@ export default React.memo(function CommandPicker({ commands, selectedIndex, onPi
   const columns = stdout.columns || process.stdout.columns || 80;
   const nameWidth = commandColumnWidth(columns);
   const descriptionWidth = Math.max(8, columns - nameWidth - 6);
-  const range = visibleCommandRange(commands.length, selectedIndex, MAX_VISIBLE);
-  const start = range.start;
-  const visible = commands.slice(start, start + MAX_VISIBLE);
-  const showTopEllipsis = range.start > 0;
-  const showBottomEllipsis = range.end < commands.length;
+  const visibleCount = Math.max(1, Math.min(commands.length, MAX_VISIBLE));
+  // A hover moves the highlight but must never scroll the list — a pointer
+  // move that recentred would slide the rows out from under the cursor. The
+  // arrow keys and typing keep the centred window. See hoverPin.
+  const hoverPin = useHoverPin(selectedIndex, commands.length, visibleCount);
+  const start = hoverPin.start(
+    visibleCommandRange(commands.length, selectedIndex, MAX_VISIBLE).start,
+  );
+  const end = Math.min(commands.length, start + visibleCount);
+  const visible = commands.slice(start, start + visibleCount);
+  const showTopEllipsis = start > 0;
+  const showBottomEllipsis = end < commands.length;
   const theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
 
   // Rows are single-line (truncate, never wrap), so the list is one region
@@ -59,6 +67,7 @@ export default React.memo(function CommandPicker({ commands, selectedIndex, onPi
     if (!onHover) return;
     const row = ev.row - (showTopEllipsis ? 1 : 0);
     if (row < 0 || row >= visible.length) return; // the "…" markers themselves
+    hoverPin.pin(start + row, start); // the window stays where the pointer found it
     onHover(start + row);
   };
   const regionRef = useClickRegion(

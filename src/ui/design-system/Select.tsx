@@ -4,6 +4,7 @@ import { Box, Text, useInput } from "ink";
 import { theme, resolveColor, type Theme } from "../../utils/theme.js";
 import { displayWidth } from "./Divider.js";
 import { ClickRegionBox } from "../../components/mouseRegions.js";
+import { useHoverPin } from "../../components/hoverPin.js";
 
 export interface SelectOption<T extends string = string> {
   label: string;
@@ -289,15 +290,23 @@ export function Select<T extends string = string>({
     }
   });
 
+  // A hover moves the focus but must never scroll the list: a pointer move
+  // that recentred would slide the rows out from under the cursor, so the
+  // row that lights up would not be the row being pointed at. A keystroke
+  // still recentres. See hoverPin.
+  const hoverPin = useHoverPin(selectedIndex, options.length, visibleOptionCount);
+
   if (options.length === 0) {
     return <Text>{emptyMessage ?? "Nothing to choose from."}</Text>;
   }
 
-  const { start, end, moreAbove, moreBelow } = visibleWindow(
-    selectedIndex,
-    options.length,
-    visibleOptionCount,
+  const size = Math.max(1, Math.min(visibleOptionCount, options.length));
+  const start = hoverPin.start(
+    visibleWindow(selectedIndex, options.length, visibleOptionCount).start,
   );
+  const end = start + size;
+  const moreAbove = start > 0;
+  const moreBelow = end < options.length;
   const windowOptions = options.slice(start, end);
   const indexWidth = enableNumberKeys ? String(options.length).length : 0;
   const dotWidth = (option: SelectOption<T>): number => (option.colorToken ? displayWidth("● ") : 0);
@@ -373,8 +382,12 @@ export function Select<T extends string = string>({
               onClickRegion={() => pick(i)}
               clickEnabled={keysActive}
               // Hover moves the highlight, never confirms the option — the
-              // mouse and the arrow keys drive one focus.
-              onHoverRegion={() => moveTo(i)}
+              // mouse and the arrow keys drive one focus — and pins the
+              // window so the list cannot scroll under the pointer.
+              onHoverRegion={() => {
+                hoverPin.pin(i, start);
+                moveTo(i);
+              }}
             >
               <Box flexDirection="row" flexShrink={0}>
                 {marker}
@@ -400,7 +413,10 @@ export function Select<T extends string = string>({
             flexDirection="row"
             onClickRegion={() => pick(i)}
             clickEnabled={keysActive}
-            onHoverRegion={() => moveTo(i)}
+            onHoverRegion={() => {
+              hoverPin.pin(i, start);
+              moveTo(i);
+            }}
           >
             {marker}
             {indexCell}

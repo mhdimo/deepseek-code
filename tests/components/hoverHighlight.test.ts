@@ -341,6 +341,78 @@ describe("the settings list", () => {
   });
 });
 
+describe("hovering never scrolls the list", () => {
+  /** Eight commands, opened at index 5: the picker's six-row window is
+   *  centred on the selection, i.e. rows cmd2…cmd7 with a "…" marker above. */
+  const manyCommands = Array.from({ length: 8 }, (_, i) => ({
+    name: `cmd${i}`,
+    description: `Command ${i}`,
+    usage: [`/cmd${i}`],
+  })) as never;
+
+  test("the command picker keeps its window under the pointer", async () => {
+    const { default: CommandPicker } = await import("../../src/components/CommandPicker.js");
+    const picked: number[] = [];
+    function Host(): React.ReactElement {
+      const [index, setIndex] = useState(5);
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(CommandPicker, {
+          commands: manyCommands,
+          selectedIndex: index,
+          onPick: (i: number) => picked.push(i),
+          onHover: setIndex,
+        } as never),
+        React.createElement(Text, null, `index=${index}`),
+      );
+    }
+    const app = mount(React.createElement(Host));
+    await settle();
+    expect(app.frame()).toContain("cmd7"); // the window really is 2…7
+    const mark = app.frame().length;
+
+    await hoverRow(app, 0, 2); // the "…" marker makes row 2 the third command
+    const after = app.frame().slice(mark);
+    expect(after).toContain("index=3"); // the pointer did move the highlight …
+    expect(after).toContain("cmd7"); // … and the window stayed where it was
+    expect(after).not.toContain("cmd0"); // recentring would have scrolled to 0…5
+    expect(picked).toEqual([]); // a hover still activates nothing
+  });
+
+  test("a select keeps its window under the pointer", async () => {
+    const { Select } = await import("../../src/ui/design-system/Select.js");
+    const focused: string[] = [];
+    const options = Array.from({ length: 10 }, (_, i) => ({
+      label: `Opt${String(i + 1).padStart(2, "0")}`,
+      value: `v${i + 1}`,
+    }));
+    const app = mount(
+      React.createElement(Select, {
+        options,
+        defaultValue: "v6", // index 5 of 10, so the five-row window is Opt04…Opt08
+        visibleOptionCount: 5,
+        onChange: () => {},
+        onCancel: () => {},
+        onFocus: (v: string) => focused.push(v),
+      }) as never,
+    );
+    await settle();
+    expect(app.frame()).toContain("Opt08");
+    const mark = app.frame().length;
+
+    await hoverRow(app, 0, 0); // the first row in the window: Opt04
+    const after = app.frame().slice(mark);
+    expect(focused.at(-1)).toBe("v4"); // the pointer moved the focus …
+    expect(after).toContain("Opt08"); // … and the window stayed where it was
+    expect(after).not.toContain("Opt02"); // recentring would have scrolled to 2…6
+  });
+
+  // The skills list's window is the same shape, but its rows come from skill
+  // discovery — long enough to scroll only with a sandboxed HOME, so that
+  // case lives in tests/components/skillsMenuScroll.test.ts.
+});
+
 describe("motion vs the transcript", () => {
   test("a pointer move never starts a text selection", async () => {
     const app = mountWithMouse(React.createElement(Text, null, "hello"), {
