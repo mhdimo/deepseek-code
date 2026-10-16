@@ -69,3 +69,21 @@ describe("CommandPicker clicks", () => {
     expect(picked).toEqual([start]);
   });
 });
+
+describe("FileMentions clicks", () => {
+  test("a click on a row reports that match's index", async () => {
+    const picked: number[] = [];
+    const app = mount(
+      React.createElement(FileMentions, {
+        matches: ["src/a.ts", "src/b.ts", "src/c.ts"],
+        selectedIndex: 0,
+        query: "src/",
+        onPick: (i: number) => picked.push(i),
+      } as never),
+    );
+    await settle();
+    await write(app, report(0, 4, 3)); // third row (paddingX={2}, but row math only)
+    await settle();
+    expect(picked).toEqual([2]);
+  });
+});

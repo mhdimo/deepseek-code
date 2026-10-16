@@ -1239,6 +1239,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     const idx = fileIndexRef.current ?? [];
     return fuzzyFilter(mention.query, idx, (s) => s, 8).map((r) => r.item);
   }, [mention, mentionSuppressed, workingDirectory]);
+  // One fill path for Tab and for a click: the same pick and the same
+  // reset of the mention state.
+  const fillMention = useCallback(
+    (index: number): void => {
+      const match =
+        mentionMatches[Math.min(index, mentionMatches.length - 1)] ?? mentionMatches[0];
+      if (!match || !mention) return;
+      setInput(input.slice(0, mention.atPos) + match + " ");
+      setMentionIndex(0);
+      setMentionSuppressed(false);
+    },
+    [input, mention, mentionMatches],
+  );
   useEffect(() => {
     setMentionIndex(0);
   }, [mention?.query]);
@@ -1801,13 +1814,8 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
     
     if (mention && mentionMatches.length > 0) {
-      const pick = () =>
-        mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)] ?? mentionMatches[0]!;
       if (key.tab) {
-        const value = input.slice(0, mention.atPos) + pick() + " ";
-        setInput(value);
-        setMentionIndex(0);
-        setMentionSuppressed(false);
+        fillMention(mentionIndex);
         return;
       }
       if (key.upArrow) {
@@ -5294,7 +5302,12 @@ Based on the above changes:
 
           {}
           {mention && !mentionSuppressed && mentionMatches.length > 0 && (
-            <FileMentions matches={mentionMatches} selectedIndex={mentionIndex} query={mention.query} />
+            <FileMentions
+              matches={mentionMatches}
+              selectedIndex={mentionIndex}
+              query={mention.query}
+              onPick={(index) => fillMention(index)}
+            />
           )}
 
           {}
