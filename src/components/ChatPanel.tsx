@@ -134,7 +134,6 @@ interface ChatPanelProps {
   model: string;
   workingDirectory: string;
   agentName: string;
-  providerType: string;
   baseURL?: string;
   hasApiKey?: boolean;
   selectedToolCallId?: string | null;
@@ -157,7 +156,6 @@ export default React.memo(
       model,
       workingDirectory,
       agentName,
-      providerType,
       baseURL,
       hasApiKey = true,
       selectedToolCallId = null,
@@ -561,7 +559,6 @@ export default React.memo(
               model={model}
               workingDirectory={workingDirectory}
               agentName={agentName}
-              providerType={providerType}
               baseURL={baseURL}
               hasApiKey={hasApiKey}
               frozen={freezeWelcome}

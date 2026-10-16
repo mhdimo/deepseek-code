@@ -74,7 +74,6 @@ function mountPanel(): { app: MountedMouseApp; handle: ChatPanelHandle } {
         model: "deepseek-chat",
         workingDirectory: "/tmp",
         agentName: "code",
-        providerType: "deepseek",
       } as never),
     ),
   );

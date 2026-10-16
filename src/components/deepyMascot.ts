@@ -1,5 +1,7 @@
 /**
- * Renderer for the Deepy whale sprite (see deepyWhale.ts for the data).
+ * Renderer for Deepy, and the two sizes of the mascot itself: the animated
+ * whale sprite (see deepyWhale.ts for the pixel data), and the three-glyph
+ * version below for the screens that give the mascot only a few rows.
  *
  * Two vertically adjacent sprite pixels pack into one half-block cell: the
  * top pixel is the cell's foreground and the bottom its background, drawn as
@@ -21,6 +23,26 @@ export interface DeepyCell {
   /** Sprite pixel in the bottom half: #rrggbb, or null when transparent. */
   bottom: string | null;
 }
+
+/**
+ * Deepy at header size: three glyph rows, small enough to sit beside a
+ * screen's title line. Drawn with a single foreground color (`░` shades
+ * itself), so unlike the sprite above it needs no palette.
+ */
+export interface DeepyMiniFrame {
+  top: string;
+  mid: string;
+  bot: string;
+}
+
+/**
+ * Only the eyes move — row 3's two `▄`/`▀`/`█` pairs.
+ */
+export const DEEPY_MINI_FRAMES: readonly DeepyMiniFrame[] = [
+  { top: "    ▄▄▄▄▄▄▄    ", mid: "  ▄▀░░░░░░░▀▄  ", bot: " █░░▄░░░░▄░░░█  " },
+  { top: "    ▄▄▄▄▄▄▄    ", mid: "  ▄▀░░░░░░░▀▄  ", bot: " █░░▀░░░░▀░░░█  " },
+  { top: "    ▄▄▄▄▄▄▄    ", mid: "  ▄▀░░░░░░░▀▄  ", bot: " █░░░░██░░░░░█  " },
+];
 
 /** The whale's body blue — the solid rendering's one color. */
 export const DEEPY_BLUE = "#4E6FFF";
@@ -104,8 +126,11 @@ export function deepyTruecolor(): boolean {
   return truecolor;
 }
 
-/** Cycle a sprite animation on its own per-frame durations. */
-export function useDeepyFrame(enabled: boolean, frames: readonly DeepyFrame[] = DEEPY_IDLE): number {
+/** Cycle an animation on its own per-frame durations. */
+export function useDeepyFrame(
+  enabled: boolean,
+  frames: readonly DeepyFrame[] = DEEPY_IDLE,
+): number {
   const [index, setIndex] = useState(0);
   useEffect(() => {
     if (!enabled || frames.length < 2) return;

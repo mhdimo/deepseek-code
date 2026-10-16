@@ -5112,7 +5112,6 @@ Based on the above changes:
           model={activeModel}
           workingDirectory={workingDirectory}
           agentName={currentAgent}
-          providerType={activeProvider}
           baseURL={activeBaseURL}
           hasApiKey={!!activeApiKey}
           selectedToolCallId={selectedToolCallId}

@@ -340,7 +340,6 @@ async function renderPanel(
         model: "deepseek-chat",
         workingDirectory: "/tmp",
         agentName: "code",
-        providerType: "deepseek",
       }),
     ),
     async (snapshot) => {

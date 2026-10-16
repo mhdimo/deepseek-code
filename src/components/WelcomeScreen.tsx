@@ -1,95 +1,89 @@
-
-
-
-
-
-
-
-
-
-
-
-
-import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text } from "ink";
+/**
+ * The transcript's empty state — Deepy beside the reference's three dim lines
+ * (LogoV2/CondensedLogo.tsx, which the reference draws in its own full logo
+ * too): product + version, the model and where it posts, and where you are,
+ * with the prompt below as the only thing asking. The boxed welcome this
+ * replaces carried a READY chip, a quick-start list and a feature list; the
+ * header is those three lines and nothing else.
+ *
+ * The mascot is the animated whale rather than the three-glyph header sprite:
+ * the sprite was a stand-in for a header three rows tall, and Deepy is the
+ * one thing at startup worth the rows.
+ */
+import React, { useMemo } from "react";
+import { Box, Text, useStdout } from "ink";
 import { basename } from "path";
 import { getTheme, getThemeMode, resolveColor, type Theme } from "../utils/theme.js";
+import {
+  DEEPY_BLUE,
+  deepyTruecolor,
+  deepyWhaleFrame,
+  deepyWhaleSolid,
+  packDeepyFrame,
+  useDeepyFrame,
+} from "./deepyMascot.js";
 import { DEEPY_IDLE } from "./deepyWhale.js";
-import { DEEPY_BLUE, deepyTruecolor, deepyWhaleFrame, deepyWhaleSolid, useDeepyFrame } from "./deepyMascot.js";
 
+/** Column gap between the mascot and the text block (the reference's `gap={2}`). */
+const GAP = 2;
 
+/** Slack kept clear at the right edge so a full-width line never touches it. */
+const RIGHT_PADDING = 1;
 
+/** Breathing room off the left edge — the whale's outline starts at column 0
+ *  in the sprite, and flush against the terminal wall it reads as clipped. */
+const LEFT_MARGIN = 2;
 
-export const MASCOT_FRAMES = [
-  {
-    top: "    ▄▄▄▄▄▄▄    ",
-    mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░▄░░░░▄░░░█  ",
-  },
-  {
-    top: "    ▄▄▄▄▄▄▄    ",
-    mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░▀░░░░▀░░░█  ",
-  },
-  {
-    top: "    ▄▄▄▄▄▄▄    ",
-    mid: "  ▄▀░░░░░░░▀▄  ",
-    bot: " █░░░░██░░░░░█  ",
-  },
-] as const;
+/** The sprite's column count — its widest row, measured once off the pixel
+ *  data (the truecolor rows carry SGR, so their string length is not width). */
+const SPRITE_WIDTH = Math.max(
+  ...DEEPY_IDLE.flatMap((frame) =>
+    packDeepyFrame(frame.rows).map((cells) => cells.length),
+  ),
+);
 
 interface WelcomeScreenProps {
   version: string;
   model: string;
   workingDirectory: string;
   agentName: string;
-  providerType: string;
   baseURL?: string;
   hasApiKey?: boolean;
-  
+  /** Pin the mascot's first frame — for a welcome parked behind an overlay. */
   frozen?: boolean;
 }
 
-
-const FEATURE_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Bash",
-  "Glob",
-  "Grep",
-  "LS",
-  "WebFetch",
-  "WebSearch",
-  "NotebookEdit",
-  "TodoWrite",
-  "Agent",
-];
-
-
-const LABEL_WIDTH = 12;
+/**
+ * The one part of the base URL worth a header row: `https://host/v1` -> `host`.
+ * Absent a custom endpoint this is the provider's own host (registry.ts).
+ */
+function endpointHost(baseURL: string | undefined): string {
+  const host = (baseURL ?? "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/.*$/, "");
+  return host || "api.deepseek.com";
+}
 
 export default function WelcomeScreen({
   version,
   model,
   workingDirectory,
   agentName,
-  providerType,
   baseURL,
   hasApiKey = true,
   frozen = false,
 }: WelcomeScreenProps) {
-  
-  
-  // The Deepy whale (deepyWhale.ts). `frozen` pins frame 0 — used when the
-  // welcome is parked somewhere a timer has no business repainting.
-  const whaleFrame = useDeepyFrame(!frozen);
-  const whaleTruecolor = deepyTruecolor();
-  const whaleRows = whaleTruecolor
-    ? deepyWhaleFrame(DEEPY_IDLE[whaleFrame]!)
-    : deepyWhaleSolid(DEEPY_IDLE[whaleFrame]!);
   const theme: Theme = getTheme(getThemeMode() === "light" ? "light" : "dark");
   const color = (token: keyof Theme): string => resolveColor(theme[token]!);
+
+  const { stdout } = useStdout();
+  const columns = stdout?.columns ?? 80;
+
+  const frame = DEEPY_IDLE[useDeepyFrame(!frozen)]!;
+  // The sprite carries its own 24-bit palette where the terminal can render
+  // it; otherwise it is a silhouette in the body blue.
+  const whaleRows = deepyTruecolor() ? deepyWhaleFrame(frame) : deepyWhaleSolid(frame);
+  // The text block gets what the mascot, the gap and the right edge leave.
+  // 20 columns is the reference's floor, below which it stops truncating.
+  const textWidth = Math.max(columns - LEFT_MARGIN - SPRITE_WIDTH - GAP - RIGHT_PADDING, 20);
 
   const cwdDisplay = useMemo(() => {
     if (!workingDirectory) return "~";
@@ -102,140 +96,45 @@ export default function WelcomeScreen({
   }, [workingDirectory]);
 
   return (
-    <Box flexDirection="column" marginLeft={1} marginBottom={1}>
-      <Box borderStyle="round" borderColor={color("claude")} paddingX={1} paddingBottom={1} flexDirection="column">
-        {}
-        <Box>
-          <Box flexDirection="column">
-            {whaleRows.map((row, i) => (
-              // Truecolor rows carry their own SGR; the solid fallback is a
-              // plain silhouette the Text colors.
-              <Text key={i} color={whaleTruecolor ? undefined : DEEPY_BLUE}>
-                {row}
-              </Text>
-            ))}
-          </Box>
-          <Box
-            flexDirection="column"
-            marginLeft={2}
-            justifyContent="center"
-            height={whaleRows.length}
-          >
-            <Text>
-              <Text color={color("claude")} bold>
-                DeepSeek
-              </Text>
-              <Text color={color("claudeShimmer")} bold>
-                {" "}Code
-              </Text>
-              <Text dimColor> v{version}</Text>
+    <Box flexDirection="column" marginLeft={LEFT_MARGIN} marginBottom={1}>
+      <Box flexDirection="row" gap={GAP} alignItems="center">
+        <Box flexDirection="column">
+          {whaleRows.map((row, i) => (
+            // Truecolor rows carry their own SGR; the solid fallback is a
+            // plain silhouette the Text colors.
+            <Text key={i} color={deepyTruecolor() ? undefined : DEEPY_BLUE}>
+              {row}
             </Text>
-            <Text dimColor>{model}</Text>
-            <Text dimColor>{cwdDisplay}</Text>
-          </Box>
+          ))}
         </Box>
+        <Box flexDirection="column" width={textWidth}>
+          <Text wrap="truncate-end">
+            <Text bold color={color("claude")}>
+              DeepSeek Code
+            </Text>
+            <Text dimColor> v{version}</Text>
+          </Text>
+          <Text dimColor wrap="truncate-end">
+            {model} · {endpointHost(baseURL)}
+          </Text>
+          <Text dimColor wrap="truncate-end">
+            @{agentName} · {cwdDisplay}
+          </Text>
+        </Box>
+      </Box>
 
-        {}
+      {/* The reference has no key-less state — auth is built into it. Ours is
+          one dim line, not the banner the boxed welcome used, and only when
+          there is nothing to talk to yet. */}
+      {!hasApiKey && (
         <Box marginTop={1}>
-          {!hasApiKey ? (
-            <Box flexDirection="column">
-              <Box>
-                <Text backgroundColor={color("error")} color={color("inverseText")} bold>
-                  {" "}NO API KEY{" "}
-                </Text>
-                <Text> </Text>
-                <Text dimColor>Paste your key below or use /setup</Text>
-              </Box>
-              <Box marginLeft={1} marginTop={1}>
-                <Text dimColor>Get a key: </Text>
-                <Text color={color("claude")}>https://platform.deepseek.com/api_keys</Text>
-              </Box>
-            </Box>
-          ) : (
-            <Box>
-              <Text backgroundColor={color("success")} color={color("inverseText")} bold>
-                {" "}✓ READY{" "}
-              </Text>
-              <Text> </Text>
-              <Text dimColor>
-                agent: {agentName} · provider: {providerType}
-                {baseURL ? ` · base: ${baseURL}` : ""}
-              </Text>
-            </Box>
-          )}
-        </Box>
-
-        {}
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color={color("claude")}>
-            Quick start
+          <Text wrap="truncate-end">
+            <Text color={color("error")}>No API key</Text>
+            <Text dimColor> — paste one below, or grab one at </Text>
+            <Text color={color("claude")}>platform.deepseek.com/api_keys</Text>
           </Text>
-          <Box marginLeft={2}>
-            <Text color={color("claude")} bold>
-              /{" ".padEnd(2)}
-            </Text>
-            <Text dimColor>Open the command picker</Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")} bold>
-              ?{" ".padEnd(3)}
-            </Text>
-            <Text dimColor>Show keyboard shortcuts</Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")} bold>
-              ↑↓{" ".padEnd(1)}
-            </Text>
-            <Text dimColor>Input history</Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")} bold>
-              -p{" ".padEnd(1)}
-            </Text>
-            <Text dimColor>
-              Headless mode: <Text color={color("claude")}>deepseek-code -p "fix the failing tests"</Text>
-            </Text>
-          </Box>
         </Box>
-
-        {}
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color={color("claude")}>
-            Features
-          </Text>
-          <Box marginLeft={2}>
-            <Text color={color("claude")}>{`Models`.padEnd(LABEL_WIDTH)}</Text>
-            <Text dimColor>deepseek-flash (default) · deepseek-v4-pro</Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")}>{`Thinking`.padEnd(LABEL_WIDTH)}</Text>
-            <Text dimColor>
-              extended reasoning (<Text color={color("claude")}>/thinking</Text>) · <Text color={color("claude")}>/effort</Text> low|medium|high|xhigh|max
-            </Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")}>{`Skills`.padEnd(LABEL_WIDTH)}</Text>
-            <Text dimColor>
-              <Text color={color("claude")}>/skills</Text> — discover and run project skills
-            </Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text color={color("claude")}>{`Tools`.padEnd(LABEL_WIDTH)}</Text>
-            <Text dimColor>{FEATURE_TOOLS.join(" · ")}</Text>
-          </Box>
-        </Box>
-      </Box>
-
-      {}
-      <Box>
-        <Text dimColor>Type </Text>
-        <Text color={color("claude")} bold>/</Text>
-        <Text dimColor> to open command picker · </Text>
-        <Text color={color("claude")} bold>?</Text>
-        <Text dimColor> for shortcuts · </Text>
-        <Text color={color("claude")} bold>/help</Text>
-        <Text dimColor> for the full command list</Text>
-      </Box>
+      )}
     </Box>
   );
 }

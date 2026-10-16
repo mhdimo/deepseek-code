@@ -15,7 +15,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme, resolveColor, type ThemeSetting } from "../utils/theme.js";
 import { usePreviewTheme } from "../ui/design-system/ThemeProvider.js";
-import { MASCOT_FRAMES } from "./WelcomeScreen.js";
+import { DEEPY_MINI_FRAMES } from "./deepyMascot.js";
 import { OrderedList } from "./ui/OrderedList.js";
 import { PressEnterToContinue } from "./PressEnterToContinue.js";
 import ThemePicker from "./ThemePicker.js";
@@ -137,7 +137,7 @@ export default function Onboarding({ hasApiKey, initialTheme, version, onDone }:
 
   
   
-  const whale = MASCOT_FRAMES[0];
+  const whale = DEEPY_MINI_FRAMES[0]!;
   return (
     <Box flexDirection="column">
       <Box>

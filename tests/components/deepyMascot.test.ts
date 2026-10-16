@@ -10,6 +10,7 @@ import { expect, test } from "bun:test";
 import { DEEPY_IDLE, DEEPY_PALETTE } from "../../src/components/deepyWhale.js";
 import {
   DEEPY_BLUE,
+  DEEPY_MINI_FRAMES,
   deepyWhaleFrame,
   deepyWhaleSolid,
   packDeepyFrame,
@@ -94,19 +95,29 @@ test("the whale silhouette is present and drawn in the body blue", () => {
   expect(DEEPY_BLUE).toMatch(/^#[0-9A-F]{6}$/i);
 });
 
-test("the welcome screen draws the whale", async () => {
+test("the welcome screen draws the whale, at full sprite size", async () => {
   const React = (await import("react")).default;
   const { renderToString } = await import("ink");
   const { default: WelcomeScreen } = await import("../../src/components/WelcomeScreen.js");
   const out = renderToString(
     React.createElement(WelcomeScreen, {
       version: "9.9.9",
-      model: "deepseek-chat",
+      model: "deepseek-flash",
       workingDirectory: "/tmp/proj",
       agentName: "code",
-      providerType: "deepseek",
     }),
-  );
-  // Half-blocks from the sprite, in whichever rendering the "terminal" allows.
-  expect(out).toMatch(/[▀▄█]/);
+  )
+    .replace(SGR, "")
+    // The test process has no TTY, so the welcome draws the solid rendering;
+    // normalizing the full block to the truecolor glyph compares either way.
+    .replaceAll("█", "▀");
+  const sprite = deepyWhaleSolid(IDLE0).map((row) => row.replaceAll("█", "▀"));
+  expect(sprite.length).toBeGreaterThan(5); // a whale, not the 3-glyph sprite
+  for (const row of sprite) {
+    expect(out).toContain(row);
+  }
+  // …and the header sprite is nowhere on screen.
+  for (const row of [DEEPY_MINI_FRAMES[0]!.mid, DEEPY_MINI_FRAMES[0]!.bot]) {
+    expect(out).not.toContain(row.trimEnd());
+  }
 });
