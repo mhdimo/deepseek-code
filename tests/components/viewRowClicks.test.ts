@@ -116,6 +116,57 @@ describe("export rows", () => {
     await settle();
     expect(app.frame()).toContain("Enter filename:");
   });
+
+  test("rows are inert while an export is running and on the result screen", async () => {
+    const { default: ExportView } = await import("../../src/components/ExportView.js");
+    let calls = 0;
+    let held: ((r: { success: boolean; message: string }) => void) | null = null;
+    const app = mountView(
+      React.createElement(ExportView, {
+        onCancel: () => {},
+        // A promise held open stands in for the host's real async file write
+        // (App.tsx passes no onDone, so the result phase is reachable too).
+        onExport: () => {
+          calls += 1;
+          return new Promise<{ success: boolean; message: string }>((resolve) => {
+            held = resolve;
+          });
+        },
+      }),
+    );
+    await settle();
+    expect(app.handlers().length).toBe(2);
+
+    // A real SGR left-press on the row's top-left cell: the phase gate lives
+    // in the hit tester reading the region's enabled flag, so dispatching the
+    // handler directly would bypass exactly what this test is about.
+    const clickRow = async (index: number) => {
+      const region = [...app.registry.regions.values()][index]!;
+      const rect = elementRect(region.ref.current)!;
+      await write(app, report(0, rect.left + 1, rect.top + 1));
+      // Two settle windows (30fps render throttle), as in the test above.
+      await settle();
+      await settle();
+    };
+
+    await clickRow(1); // "Save to file" with no onSaveToFile → exports directly
+    expect(calls).toBe(1);
+    expect(app.frame()).toContain("Exporting…");
+
+    // Mid-export a stray click must not start a second concurrent write.
+    await clickRow(1);
+    expect(calls).toBe(1);
+
+    held!({ success: true, message: "exported" });
+    await settle();
+    await settle();
+    expect(app.frame()).toContain("✓ exported");
+
+    // The result screen keeps the rows on screen, but a click must not
+    // re-export (the keyboard's Enter closes the dialog instead).
+    await clickRow(1);
+    expect(calls).toBe(1);
+  });
 });
 
 describe("the input dialog's field", () => {

@@ -281,6 +281,12 @@ export default function ExportView({
               <ClickRegionBox
                 key={opt.id}
                 flexDirection="column"
+                // Keyboard's Enter is phase-aware (working returns early,
+                // result closes); the click path must match it. Inert while
+                // the export is running (a second write must never start)
+                // and on the result screen (a stray click must not re-export
+                // where Enter closes the dialog).
+                clickEnabled={phase === "choose"}
                 onClickRegion={() => activateRow(i)}
               >
                 <Text color={active ? token("suggestion") : undefined} bold={active}>
