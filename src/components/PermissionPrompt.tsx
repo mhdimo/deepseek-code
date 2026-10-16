@@ -39,6 +39,7 @@ import {
 import { getPatchForDisplay, type FileEditSpec } from "../utils/diff.js";
 import { languageFromPath } from "./codeHighlight.js";
 import MultilineTextInput from "./MultilineTextInput.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 import { isMouseSequence } from "./useMouseWheelScroll.js";
 import {
   bashOptionRows,
@@ -116,6 +117,8 @@ type SelectOption =
       description?: string;
       dimDescription?: boolean;
     };
+
+export type PermissionSelectOption = SelectOption;
 
 const DEFAULT_PLACEHOLDERS: Record<FeedbackType, string> = {
   accept: "and tell me what to do next",
@@ -367,7 +370,7 @@ function OptionSegments({ segments }: { segments: PermissionSegment[] }) {
   );
 }
 
-function PermissionSelect({
+export function PermissionSelect({
   options,
   initialFocus,
   onSelect,
@@ -414,6 +417,15 @@ function PermissionSelect({
   const focusPrevious = () => {
     const previous = options[(safeFocusedIndex - 1 + options.length) % options.length];
     if (previous) focusOption(previous.value);
+  };
+
+  // A click on a row is that row's Enter; an input row is its Tab — clicking
+  // the field is how you say "I want to type here", not "submit what's
+  // there". Clicks INSIDE the input's text never reach this (the text
+  // input's own region is nested deeper and takes the caret instead).
+  const handleRowClick = (option: SelectOption): void => {
+    focusOption(option.value);
+    if (option.type !== "input") onSelect(option.value);
   };
 
   useInput((input, key) => {
@@ -518,7 +530,12 @@ function PermissionSelect({
         if (option.type === "input") {
           const showsLabel = option.showLabel === true;
           return (
-            <Box key={option.value} flexDirection="column" flexShrink={0}>
+            <ClickRegionBox
+              key={option.value}
+              flexDirection="column"
+              flexShrink={0}
+              onClickRegion={() => handleRowClick(option)}
+            >
               <Box flexDirection="row" flexShrink={0}>
                 <OptionSegments segments={[...row.prefix, ...row.label]} />
                 {isFocused ? (
@@ -558,12 +575,17 @@ function PermissionSelect({
                   <Text dimColor={option.dimDescription !== false}>{option.description}</Text>
                 </Box>
               )}
-            </Box>
+            </ClickRegionBox>
           );
         }
 
         return (
-          <Box key={option.value} flexDirection="column" flexShrink={0}>
+          <ClickRegionBox
+            key={option.value}
+            flexDirection="column"
+            flexShrink={0}
+            onClickRegion={() => handleRowClick(option)}
+          >
             <Box flexDirection="row">
               {/* Reference parity: EVERY option is numbered (dimmed) behind the
                   shared marker gutter so the 1..N shortcut keys are visible in
@@ -580,7 +602,7 @@ function PermissionSelect({
                 <Text dimColor={option.dimDescription !== false}>{option.description}</Text>
               </Box>
             )}
-          </Box>
+          </ClickRegionBox>
         );
       })}
     </Box>
