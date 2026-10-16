@@ -5382,6 +5382,16 @@ Based on the above changes:
           )}
 
           {}
+          {showCommandPicker && (
+            <CommandPicker
+              commands={filteredCommands}
+              selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
+              onPick={(index) => activateCommand(index, true)}
+              onHover={(index) => setCommandPickerIndex(index)}
+            />
+          )}
+
+          {}
           <TextInput
             value={input}
             onChange={handleInputChange}
@@ -5394,16 +5404,6 @@ Based on the above changes:
             queueCount={queuedSubmissions.length}
             isPickerActive={showCommandPicker}
           />
-
-          {}
-          {showCommandPicker && (
-            <CommandPicker
-              commands={filteredCommands}
-              selectedIndex={Math.min(commandPickerIndex, Math.max(0, filteredCommands.length - 1))}
-              onPick={(index) => activateCommand(index, true)}
-              onHover={(index) => setCommandPickerIndex(index)}
-            />
-          )}
 
           {}
           <StatusBar
