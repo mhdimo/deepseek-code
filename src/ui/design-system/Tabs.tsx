@@ -22,6 +22,7 @@ import React, {
 import { Box, Text, useInput, useStdout } from "ink";
 import stringWidth from "string-width";
 import { getTheme, resolveColor, type Theme } from "../../utils/theme.js";
+import { ClickRegionBox } from "../../components/mouseRegions.js";
 import { useTheme } from "./ThemeProvider.js";
 
 export type TabsProps = {
@@ -135,9 +136,10 @@ export function Tabs({
   }, []);
   const optedIn = optInCount > 0;
 
-  const handleTabChange = (offset: number) => {
-    const newIndex =
-      (selectedTabIndex + tabs.length + offset) % tabs.length;
+  /** Switch to a tab — the one path both the arrow keys and a click run, so
+   *  the mouse cannot drift from the keyboard. */
+  const selectTab = (index: number) => {
+    const newIndex = Math.max(0, Math.min(tabs.length - 1, index));
     const newTabId = tabs[newIndex]?.[0];
 
     if (isControlled && onTabChange && newTabId) {
@@ -145,9 +147,13 @@ export function Tabs({
     } else {
       setInternalSelectedTab(newIndex);
     }
-    
-    
+
+
     setHeaderFocused(true);
+  };
+
+  const handleTabChange = (offset: number) => {
+    selectTab((selectedTabIndex + tabs.length + offset) % tabs.length);
   };
 
   
@@ -231,17 +237,25 @@ export function Tabs({
               const isCurrent = selectedTabIndex === i;
               const hasColorCursor = color && isCurrent && headerFocused;
               return (
-                <Text
+                // Each tab is its own click target — a click switches tabs the
+                // same way the arrow keys do. No hover handler: see the note
+                // in tests/components/tabClicks.test.ts.
+                <ClickRegionBox
                   key={id}
-                  backgroundColor={hasColorCursor ? resolvedColor : undefined}
-                  color={hasColorCursor ? resolvedInverseText : undefined}
-                  inverse={isCurrent && !hasColorCursor}
-                  bold={isCurrent}
+                  clickEnabled={!disableNavigation}
+                  onClickRegion={() => selectTab(i)}
                 >
-                  {" "}
-                  {tabTitle}
-                  {" "}
-                </Text>
+                  <Text
+                    backgroundColor={hasColorCursor ? resolvedColor : undefined}
+                    color={hasColorCursor ? resolvedInverseText : undefined}
+                    inverse={isCurrent && !hasColorCursor}
+                    bold={isCurrent}
+                  >
+                    {" "}
+                    {tabTitle}
+                    {" "}
+                  </Text>
+                </ClickRegionBox>
               );
             })}
             {spacerWidth > 0 && <Text>{" ".repeat(spacerWidth)}</Text>}
