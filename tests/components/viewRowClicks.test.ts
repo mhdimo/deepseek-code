@@ -66,6 +66,48 @@ describe("settings rows", () => {
       .value;
     expect(after).toBe(!before);
   });
+
+  test("a real mouse click never leaks its SGR report into the search box", async () => {
+    const { buildSettingsRows } = await import("../../src/components/settingsRows.js");
+    const { loadSettings } = await import("../../src/state/storage.js");
+    const rows = buildSettingsRows({ settings: loadSettings(), persist: () => {} });
+    const targetIndex = rows.findIndex((r) => r.id === "copyFullResponse");
+    expect(targetIndex).toBeGreaterThanOrEqual(0);
+    const before = rows[targetIndex]!.value;
+
+    const { default: Config } = await import("../../src/components/Settings/Config.js");
+    const app = mountView(
+      React.createElement(Config, {
+        onClose: () => {},
+        setTabsHidden: () => {},
+        contentHeight: 30,
+      }),
+    );
+    await settle();
+    // The repro's first step: ↓ moves focus off the header — while the header
+    // is focused Config's useInput returns early, which is why the leak hides
+    // until the list itself has the keyboard.
+    await write(app, "\x1b[B");
+    await settle();
+    // A real left press on the row's own rect: the report goes through ink's
+    // parser and reaches Config's list-mode useInput as a text chunk — the
+    // path that used to seed the search query with the report text. Synthetic
+    // dispatch would bypass exactly the leak this test is about.
+    const region = [...app.registry.regions.values()][targetIndex]!;
+    const rect = elementRect(region.ref.current)!;
+    await write(app, report(0, rect.left + 1, rect.top + 1));
+    await settle();
+    await settle();
+
+    // The click still did its real work…
+    const after = buildSettingsRows({ settings: loadSettings(), persist: () => {} })[targetIndex]!
+      .value;
+    expect(after).toBe(!before);
+    // …and none of the report rendered: the search box would show it
+    // verbatim and the list would read `No settings match "…"`.
+    expect(app.frame()).not.toContain("[<");
+    expect(app.frame()).not.toContain("No settings match");
+  });
 });
 
 describe("task rows", () => {
@@ -169,6 +211,23 @@ describe("export rows", () => {
   });
 });
 
+describe("skills menu rows", () => {
+  test("clicking a skill row opens its detail pane (Enter's action)", async () => {
+    const { listSkills } = await import("../../src/skills/skillService.js");
+    const { default: SkillsMenu, groupSkills } = await import("../../src/components/SkillsMenu.js");
+    const rows = groupSkills(listSkills()).flatMap((group) => group.rows);
+    expect(rows.length).toBeGreaterThan(0); // bundled skills ship with the repo
+
+    const app = mountView(React.createElement(SkillsMenu, { onClose: () => {} }));
+    await settle();
+    expect(app.handlers().length).toBe(rows.length); // one region per row
+    app.handlers()[0]!(click);
+    await settle();
+    await settle();
+    expect(app.frame()).toContain(`Skill: ${rows[0]!.name}`);
+  });
+});
+
 describe("the input dialog's field", () => {
   test("clicking the field places the caret; typing continues there", async () => {
     const { default: InputDialog } = await import("../../src/components/InputDialog.js");
@@ -182,12 +241,51 @@ describe("the input dialog's field", () => {
       }),
     );
     await settle();
+    // A click alone must repaint: the caret lives in a ref, so without a
+    // state tick the new position stays invisible until something else
+    // triggers a render.
+    const before = app.frame().length;
     // col 4: two cells into the text (the "> " prefix takes the first two).
     app.handlers()[0]!({ ...click, col: 4 });
+    await settle();
+    await settle();
+    expect(app.frame().length).toBeGreaterThan(before);
     await write(app, "X");
     await write(app, "\r");
     await settle();
     expect(submissions).toEqual(["abXcdef"]);
+  });
+
+  test("a click on a wrapped value lands on the character under it", async () => {
+    const { default: InputDialog } = await import("../../src/components/InputDialog.js");
+    // Longer than the field can show on one row, so ink wraps the value —
+    // and with an overflowing value yoga pulls the value node left, over the
+    // "> " prefix's space. The value node's own geometry, not arithmetic on
+    // the region width, decides where a clicked cell maps.
+    const value = Array.from({ length: 260 }, (_, i) => "0123456789"[i % 10]).join("");
+    const submissions: string[] = [];
+    const app = mountView(
+      React.createElement(InputDialog, {
+        title: "Test",
+        initial: value,
+        onSubmit: (v: string) => submissions.push(v),
+        onCancel: () => {},
+      }),
+    );
+    await settle();
+    const box = [...app.registry.regions.values()][0]!.ref.current as unknown as {
+      childNodes: Array<{ yogaNode: { getComputedWidth(): number; getComputedLeft(): number } }>;
+    };
+    // Render order: the "> " prefix, the value text, the "▏" decoration.
+    const node = box.childNodes[1]!.yogaNode;
+    const wrapWidth = node.getComputedWidth(); // what ink actually wrapped at
+    const left = node.getComputedLeft(); // where the value's glyphs begin
+    const target = wrapWidth + 3; // row 1, three cells into the value
+    app.handlers()[0]!({ ...click, row: 1, col: left + 3 });
+    await write(app, "X");
+    await write(app, "\r");
+    await settle();
+    expect(submissions).toEqual([value.slice(0, target) + "X" + value.slice(target)]);
   });
 
   test("right-click pastes at the caret", async () => {

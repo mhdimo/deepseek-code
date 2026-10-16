@@ -4,6 +4,7 @@ import { Box, Text, useInput } from "ink";
 import { homedir } from "node:os";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 import {
   listSkills,
   getSkill,
@@ -264,7 +265,14 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
                   <Text dimColor>{` (${group.subtitle})`}</Text>
                 </Box>
               )}
-              <Box>
+              <ClickRegionBox
+                onClickRegion={() => {
+                  // Same as the digit keys: move the focus, then open — Enter
+                  // opens whatever row the focus already points at.
+                  setSelectedIndex(i);
+                  openSkill(row.name);
+                }}
+              >
                 <Text color={markerColor}>{marker}</Text>
                 <Text color={focused ? focusColor : undefined} bold={focused}>
                   {row.name}
@@ -272,7 +280,7 @@ export default function SkillsMenu({ onClose }: SkillsMenuProps): React.ReactEle
                 <Text dimColor wrap="truncate-end">
                   {suffix}
                 </Text>
-              </Box>
+              </ClickRegionBox>
             </Box>
           );
         })}

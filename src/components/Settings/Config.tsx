@@ -346,10 +346,14 @@ export default function Config({
       return;
     }
     if (key.ctrl || key.meta) return;
-    if (input.length > 0) {
+    // A click lands here as an SGR mouse report (the row's region handler has
+    // already done the real work) — strip it so the report never becomes a
+    // search query. The sibling branches above strip for the same reason.
+    const typed = stripMouseSequences(input);
+    if (typed.length > 0) {
       setIsSearchMode(true);
-      setSearchQuery(input);
-      setCursorOffset(input.length);
+      setSearchQuery(typed);
+      setCursorOffset(typed.length);
     }
   });
 

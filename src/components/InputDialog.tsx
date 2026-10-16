@@ -1,6 +1,6 @@
 
 import React, { useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, type DOMElement } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
 import { stripMouseSequences } from "./useMouseWheelScroll.js";
@@ -40,6 +40,8 @@ export default function InputDialog({
 }: InputDialogProps): React.ReactElement {
   const [value, setValue] = useState(initial);
   const cursorRef = useRef(initial.length);
+  // The caret lives in a ref, so a click must tick state to repaint it.
+  const [, setCursorTick] = useState(0);
 
   const setCursor = (index: number) => {
     cursorRef.current = Math.max(0, Math.min(value.length, index));
@@ -59,22 +61,31 @@ export default function InputDialog({
     onSubmit(value.trim());
   };
 
+  // Right clicks paste here, so this region opts into them (everywhere else
+  // activation is left-click-only).
+  const regionRef = useClickRegion(handleRegionClick, true, true);
+
   // The field as a click region: left-click places the caret (same
   // wrap-aware mapping the prompt uses), right-click pastes.
-  const handleRegionClick = (ev: RegionClickEvent): void => {
+  function handleRegionClick(ev: RegionClickEvent): void {
     if (ev.button === 2) {
       const text = readClipboardText();
       if (text !== null) insert(normalizePaste(text));
       return;
     }
-    // The region spans the whole Box, so col 0 is the ">" glyph; subtract
-    // the 2-cell "> " prefix before mapping to a text offset.
-    const offset = visualOffsetAt(value, Math.max(1, ev.width - 2), ev.row, Math.max(0, ev.col - 2));
+    // The value's text node is the region's second child (after the "> "
+    // prefix). Its yoga node knows where the glyphs start and what width ink
+    // wrapped at — and with an overflowing value ink pulls the node left,
+    // over the prefix's space, so region-width arithmetic is wrong exactly
+    // when the value wraps. Fall back to the prefix arithmetic if unlaid.
+    const node = (regionRef.current as unknown as { childNodes?: DOMElement[] } | null)
+      ?.childNodes?.[1]?.yogaNode;
+    const wrapWidth = Math.max(1, node ? node.getComputedWidth() : ev.width - 2);
+    const left = node ? node.getComputedLeft() : 2;
+    const offset = visualOffsetAt(value, wrapWidth, ev.row, Math.max(0, ev.col - left));
     cursorRef.current = Math.max(0, Math.min(value.length, offset));
-  };
-  // Right clicks paste here, so this region opts into them (everywhere else
-  // activation is left-click-only).
-  const regionRef = useClickRegion(handleRegionClick, true, true);
+    setCursorTick((t) => t + 1);
+  }
 
   useInput((input, key) => {
     if (key.escape) {
