@@ -55,6 +55,7 @@ function register(
   enabled = true,
   acceptRightClick = false,
   onHover: ((ev: RegionHoverEvent) => void) | null = null,
+  onHoverLeave: (() => void) | null = null,
 ): void {
   const id = registry.nextId++;
   registry.regions.set(id, {
@@ -63,6 +64,7 @@ function register(
     enabledRef: { current: enabled },
     acceptRightClickRef: { current: acceptRightClick },
     hoverHandlerRef: { current: onHover },
+    hoverLeaveRef: { current: onHoverLeave },
   } as RegisteredMouseRegion);
 }
 
@@ -241,6 +243,52 @@ describe("createHoverDispatcher", () => {
         throw new Error("boom");
       });
     expect(() => createHoverDispatcher(registry)(1, 1)).not.toThrow();
+  });
+
+  test("leaving a region notifies it, once, and only the region left", () => {
+    const registry = createMouseRegistry();
+    const calls: string[] = [];
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 2 }), () => {}, true, false,
+      (ev) => calls.push(`hoverA:${ev.row}`), () => calls.push("leaveA"));
+    register(registry, fakeNode({ top: 3, left: 0, width: 10, height: 2 }), () => {}, true, false,
+      (ev) => calls.push(`hoverB:${ev.row}`), () => calls.push("leaveB"));
+    const hover = createHoverDispatcher(registry);
+
+    hover(0, 0);
+    hover(0, 5); // same region, same row: neither hover nor leave
+    expect(calls).toEqual(["hoverA:0"]);
+    hover(1, 0); // a new row is still the same region — no leave
+    expect(calls).toEqual(["hoverA:0", "hoverA:1"]);
+
+    hover(3, 0); // across regions: the one left is cleared first …
+    expect(calls).toEqual(["hoverA:0", "hoverA:1", "leaveA", "hoverB:0"]);
+    hover(3, 9); // … and within the new region nothing is cleared
+    expect(calls.length).toBe(4);
+
+    hover(9, 9); // off every region: the last one is cleared
+    expect(calls.at(-1)).toBe("leaveB");
+    hover(9, 9); // off-region repeats stay silent
+    expect(calls.at(-1)).toBe("leaveB");
+    expect(calls.length).toBe(5);
+
+    hover(3, 0); // coming back lights it again
+    expect(calls.at(-1)).toBe("hoverB:0");
+  });
+
+  test("a region with no leave handler leaves silently", () => {
+    const registry = createMouseRegistry();
+    const calls: string[] = [];
+    register(registry, fakeNode({ top: 0, left: 0, width: 10, height: 2 }), () => {}, true, false,
+      () => calls.push("hoverA"));
+    register(registry, fakeNode({ top: 3, left: 0, width: 10, height: 2 }), () => {}, true, false,
+      () => calls.push("hoverB"), () => calls.push("leaveB"));
+    const hover = createHoverDispatcher(registry);
+
+    hover(0, 0);
+    hover(3, 0);
+    expect(calls).toEqual(["hoverA", "hoverB"]); // A had nothing to clear
+    hover(9, 9);
+    expect(calls.at(-1)).toBe("leaveB");
   });
 });
 

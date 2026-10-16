@@ -64,6 +64,11 @@ export interface RegisteredMouseRegion {
   acceptRightClickRef: React.RefObject<boolean>;
   /** Optional: null regions are transparent to the pointer (no highlight). */
   hoverHandlerRef: React.RefObject<((ev: RegionHoverEvent) => void) | null>;
+  /** Optional: called when the pointer leaves this region — moved to another
+   *  region or off every one — so a decoration can be cleared. Fires only
+   *  for the region that was hovered, and only when the hover target
+   *  actually changes. */
+  hoverLeaveRef: React.RefObject<(() => void) | null>;
 }
 
 export interface MouseRegistry {
@@ -165,11 +170,17 @@ export function createHitTester(
  * dispatch is change-guarded on `region:row` — one call per row transition,
  * so moving within a row (or across inert chrome) re-renders nothing. Leaving
  * every region resets the guard, so coming back to the same row re-fires.
+ *
+ * A transition away from a region (to another region, or off every one)
+ * notifies the region left via `hoverLeaveRef`: a decoration that lives only
+ * while the pointer is inside — the arrival pill's and the sticky row's
+ * background — has no other way to learn the pointer is gone.
  */
 export function createHoverDispatcher(
   registry: MouseRegistry,
 ): (row: number, col: number) => void {
   let lastKey: string | null = null;
+  let lastId = -1;
   return (row, col) => {
     let hit: RegisteredMouseRegion | null = null;
     let hitId = -1;
@@ -189,7 +200,18 @@ export function createHoverDispatcher(
     }
     const key = hit ? `${hitId}:${row}` : null;
     if (key === lastKey) return;
+    const leftId = lastId;
     lastKey = key;
+    lastId = hitId;
+    // The pointer left the region it was in — tell it before the new one is
+    // told the pointer arrived, so exactly one region is ever "hovered".
+    if (leftId !== -1 && leftId !== hitId) {
+      try {
+        registry.regions.get(leftId)?.hoverLeaveRef.current?.();
+      } catch {
+        // Same contract as the handlers: never kill the input loop.
+      }
+    }
     if (!hit || !hitRect) return;
     try {
       hit.hoverHandlerRef.current?.({
@@ -216,6 +238,7 @@ export function useClickRegion(
   enabled = true,
   acceptRightClick = false,
   onHover?: (ev: RegionHoverEvent) => void,
+  onHoverLeave?: () => void,
 ): React.RefObject<DOMElement | null> {
   const registry = useContext(MouseRegionContext);
   const ref = useRef<DOMElement | null>(null);
@@ -227,11 +250,20 @@ export function useClickRegion(
   acceptRightClickRef.current = acceptRightClick;
   const hoverHandlerRef = useRef<((ev: RegionHoverEvent) => void) | null>(onHover ?? null);
   hoverHandlerRef.current = onHover ?? null;
+  const hoverLeaveRef = useRef<(() => void) | null>(onHoverLeave ?? null);
+  hoverLeaveRef.current = onHoverLeave ?? null;
 
   useEffect(() => {
     if (!registry) return;
     const id = registry.nextId++;
-    registry.regions.set(id, { ref, handlerRef, enabledRef, acceptRightClickRef, hoverHandlerRef });
+    registry.regions.set(id, {
+      ref,
+      handlerRef,
+      enabledRef,
+      acceptRightClickRef,
+      hoverHandlerRef,
+      hoverLeaveRef,
+    });
     return () => {
       registry.regions.delete(id);
     };
@@ -247,6 +279,8 @@ export interface ClickRegionBoxProps extends Omit<React.ComponentProps<typeof Bo
   acceptRightClick?: boolean;
   /** Highlight-only pointer handler; never activates the row. */
   onHoverRegion?: (ev: RegionHoverEvent) => void;
+  /** The pointer left this region; clears a hover-only decoration. */
+  onHoverLeaveRegion?: () => void;
 }
 
 /**
@@ -258,10 +292,17 @@ export function ClickRegionBox({
   clickEnabled = true,
   acceptRightClick = false,
   onHoverRegion,
+  onHoverLeaveRegion,
   children,
   ...boxProps
 }: ClickRegionBoxProps): React.ReactElement {
-  const ref = useClickRegion(onClickRegion, clickEnabled, acceptRightClick, onHoverRegion);
+  const ref = useClickRegion(
+    onClickRegion,
+    clickEnabled,
+    acceptRightClick,
+    onHoverRegion,
+    onHoverLeaveRegion,
+  );
   return (
     <Box {...boxProps} ref={ref}>
       {children}

@@ -8,6 +8,7 @@ import type { ContentSelection } from "./useMouseSelection.js";
 import { rowText, sliceTextByCols } from "../services/selection/lineModel.js";
 import { resolveColor, getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 
 /** Figures.pointer — the prompt-glyph the sticky header and the user prompt
  *  both lead with. */
@@ -53,20 +54,35 @@ export function stickyPromptText(m: Message): string | null {
   return text === "" ? null : text;
 }
 
+/** One prompt the sticky header can show: its text plus the content row its
+ *  box starts on. */
+export interface StickyPromptEntry {
+  text: string;
+  startRow: number;
+}
+
 /** The most recent prompt whose "❯" row has scrolled above the viewport top.
  *  The prompt's own box starts at startRow and its "❯" sits one row below it
  *  (the marginTop row), so a prompt whose pointer is still on screen would just
  *  repeat a line the user can already see (VirtualMessageList.tsx:948). */
-export function stickyPromptFor(
-  entries: readonly { text: string; startRow: number }[],
+export function stickyEntryFor(
+  entries: readonly StickyPromptEntry[],
   scrollTop: number,
-): string | null {
+): StickyPromptEntry | null {
   if (scrollTop <= 0) return null;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (entry.startRow + 1 < scrollTop) return entry.text;
+    if (entry.startRow + 1 < scrollTop) return entry;
   }
   return null;
+}
+
+/** The sticky header's text, or null when it shows nothing. */
+export function stickyPromptFor(
+  entries: readonly StickyPromptEntry[],
+  scrollTop: number,
+): string | null {
+  return stickyEntryFor(entries, scrollTop)?.text ?? null;
 }
 
 export interface ViewportInfo {
@@ -164,6 +180,11 @@ export default React.memo(
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(0);
     const [viewportWidth, setViewportWidth] = useState(0);
+    /** Which scrolled-up affordance the pointer is over. They swap their
+     *  background for the hover token, exactly as FullscreenLayout's do — the
+     *  only hover decoration in this panel, and one the dispatcher's leave
+     *  event is what clears (nothing else can move it). */
+    const [hoveredAffordance, setHoveredAffordance] = useState<"pill" | "prompt" | null>(null);
     const [themeName] = useTheme();
     const colorTheme = useMemo(() => getTheme(themeName), [themeName]);
 
@@ -332,7 +353,7 @@ export default React.memo(
      *  "Jump to bottom" until something new actually arrives
      *  (FullscreenLayout.tsx:466). */
     const pillVisible = dividerIndex !== null && scrolledUp;
-    const promptEntries: { text: string; startRow: number }[] = [];
+    const promptEntries: StickyPromptEntry[] = [];
     for (let i = 0; i < visibleMessages.length; i++) {
       const text = stickyPromptText(visibleMessages[i]!);
       if (text !== null) {
@@ -342,7 +363,31 @@ export default React.memo(
     // The tracker only pins a prompt once sticky scroll has broken
     // (VirtualMessageList.tsx:948) — at the bottom the header would just sit
     // above the transcript you are already following.
-    const stickyPrompt = scrolledUp ? stickyPromptFor(promptEntries, scrollTop) : null;
+    const stickyEntry = scrolledUp ? stickyEntryFor(promptEntries, scrollTop) : null;
+    const stickyPrompt = stickyEntry?.text ?? null;
+
+    /** The arrival pill's click: go back to the bottom. The handle's
+     *  scrollToBottom body, re-derived here — the handle is created once and
+     *  its closures would read the first render's empty message list. */
+    const jumpToBottom = (): void => {
+      stickyRef.current = true;
+      markRepinned();
+      applyScroll(measure().max);
+    };
+
+    /** The sticky header's click: bring the prompt it is showing back to the
+     *  top of the viewport. Its own box start row, so its "❯" row lands just
+     *  below the viewport top — the position where the header stops showing
+     *  it (stickyEntryFor). The sticky bookkeeping mirrors scrollBy's. */
+    const jumpToPrompt = (): void => {
+      if (!stickyEntry) return;
+      const { max } = measure();
+      const next = Math.max(0, Math.min(stickyEntry.startRow, max));
+      stickyRef.current = next >= max;
+      if (stickyRef.current) markRepinned();
+      else markScrollAway(visibleMessages.length);
+      applyScroll(next);
+    };
 
     useImperativeHandle(
       ref,
@@ -530,17 +575,29 @@ export default React.memo(
             (FullscreenLayout.tsx:551-580). Normal flow, exactly like the
             reference's header — the transcript gives up the row. */}
         {stickyPrompt && (
-          <Box
+          // The whole row is the click target: it is pure chrome (the
+          // transcript gave up the row for it), so a click anywhere on it
+          // means the one thing it can mean — go to the prompt it names.
+          <ClickRegionBox
             flexShrink={0}
             width="100%"
             height={1}
             paddingRight={1}
-            backgroundColor={resolveColor(colorTheme.userMessageBackground)}
+            backgroundColor={resolveColor(
+              colorTheme[
+                hoveredAffordance === "prompt"
+                  ? "userMessageBackgroundHover"
+                  : "userMessageBackground"
+              ],
+            )}
+            onClickRegion={jumpToPrompt}
+            onHoverRegion={() => setHoveredAffordance("prompt")}
+            onHoverLeaveRegion={() => setHoveredAffordance(null)}
           >
             <Text color={resolveColor(colorTheme.subtle)} wrap="truncate-end">
               {PROMPT_POINTER} {stickyPrompt}
             </Text>
-          </Box>
+          </ClickRegionBox>
         )}
 
         {/* The transcript's own clip region, so the header above keeps its row:
@@ -584,11 +641,29 @@ export default React.memo(
             marginTop={Math.max(0, viewportHeight - 1)}
             justifyContent="center"
           >
-            <Text backgroundColor={resolveColor(colorTheme.userMessageBackground)} dimColor>
-              {" "}
-              {newMessagesPillLabel(unseenCount)}
-              {" ↓ "}
-            </Text>
+            {/* Only the label is a click target, not the band it is centred
+                in: the band spans the transcript's last visible row, and a
+                press there is a user pointing at the text underneath. */}
+            <ClickRegionBox
+              onClickRegion={jumpToBottom}
+              onHoverRegion={() => setHoveredAffordance("pill")}
+              onHoverLeaveRegion={() => setHoveredAffordance(null)}
+            >
+              <Text
+                backgroundColor={resolveColor(
+                  colorTheme[
+                    hoveredAffordance === "pill"
+                      ? "userMessageBackgroundHover"
+                      : "userMessageBackground"
+                  ],
+                )}
+                dimColor
+              >
+                {" "}
+                {newMessagesPillLabel(unseenCount)}
+                {" ↓ "}
+              </Text>
+            </ClickRegionBox>
           </Box>
         )}
       </Box>
