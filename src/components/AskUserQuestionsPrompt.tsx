@@ -4,6 +4,7 @@ import type { AskUserQuestion } from "../types/index.js";
 import type { AskUserQuestionsResult } from "../Tool.js";
 import { getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 import { FOCUS_MARKER, OPTION_GUTTER_WIDTH, optionIndexWidth } from "./permissionLayout.js";
 import {
   answersForQuestionSelections,
@@ -104,6 +105,24 @@ export default function AskUserQuestionsPrompt({
       return;
     }
     advanceFromQuestion(nextSelections, freeText);
+  };
+
+  // A click mirrors the row's own keyboard action: Space for a toggleable
+  // option in a multi-select, Enter for a single choice, focus-only for the
+  // Other field (a click says "let me type", not "submit blank"/"cancel"),
+  // and Enter for the Chat footer.
+  const clickRow = (rowIndex: number): void => {
+    setFocusedRowIndex(rowIndex);
+    const row = rows[rowIndex];
+    if (!row) return;
+    if (row.kind === "option") {
+      if (question.multiSelect) toggleRow(rowIndex);
+      else answerRow(rowIndex);
+      return;
+    }
+    if (row.kind === "chat") {
+      onResult({ kind: "clarify", feedback: clarifyFeedback(questions, selections, freeText) });
+    }
   };
 
   const setOtherText = (nextText: string) => {
@@ -261,7 +280,11 @@ export default function AskUserQuestionsPrompt({
               }
 
               return (
-                <Box key={`${questionIndex}-${rowIndex}`} flexDirection="column">
+                <ClickRegionBox
+                  key={`${questionIndex}-${rowIndex}`}
+                  flexDirection="column"
+                  onClickRegion={() => clickRow(rowIndex)}
+                >
                   <Text>
                     <Text color={focused ? theme.claude : undefined}>
                       {focused ? `${FOCUS_MARKER} ` : " ".repeat(OPTION_GUTTER_WIDTH)}
@@ -285,7 +308,7 @@ export default function AskUserQuestionsPrompt({
                       <Text dimColor wrap="wrap">{row.description}</Text>
                     </Box>
                   )}
-                </Box>
+                </ClickRegionBox>
               );
             })}
           </Box>
