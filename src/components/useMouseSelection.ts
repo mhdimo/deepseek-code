@@ -103,10 +103,15 @@ export function wordBoundsAt(text: string, col: number): [number, number] | null
 export function useMouseSelection(
   chatRef: React.RefObject<ChatPanelHandle | null>,
   onChange: (sel: ContentSelection | null) => void,
+  /** First refusal on every left/right press, in 0-based SCREEN coordinates.
+   *  Return true to claim the press (it is then swallowed whole). */
+  intercept?: (row: number, col: number, clickCount: number, button: number) => boolean,
 ): void {
   const { stdin, setRawMode, internal_eventEmitter } = useStdin();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const interceptRef = useRef(intercept);
+  interceptRef.current = intercept;
   const stateRef = useRef<DragState>({
     anchorRow: 0,
     anchorCol: 0,
@@ -124,6 +129,12 @@ export function useMouseSelection(
     // Button-event tracking (?1002h) is required for drag sequences.
     process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 
+    // Screen-space multi-click tracking for click regions. Deliberately NOT
+    // the DragState's `lastPress`: that one only ticks for presses inside the
+    // transcript, and reusing it would change the transcript's own
+    // double/triple-click behavior. This one clocks every left/right press.
+    let lastScreenPress = { row: -1, col: -1, button: -1, count: 0, time: 0 };
+
     const onInput = (data: string) => {
       const s = stateRef.current;
       SGR_MOUSE_RE.lastIndex = 0;
@@ -132,6 +143,43 @@ export function useMouseSelection(
         const btn = Number(m[1]);
         const col = Number(m[2]);
         const row = Number(m[3]);
+
+        // Click regions get first refusal on a left/right press, before any
+        // transcript math. A claimed press never anchors a selection, and
+        // drag/release from it are ignored because dragging is never set.
+        // Only press reports qualify ("M"): a release ("m") must not
+        // re-trigger, and drags/wheels carry their own button encodings.
+        //
+        // The coordinates offered are raw frame-relative cells — (row - 1,
+        // col - 1) on the freshly parsed SGR values — NOT the content
+        // coordinates computed below. elementRect measures yoga frame space,
+        // so passing it contentRow/contentCol would offset every hit by
+        // topOffset - scrollTop rows.
+        const regionButton = btn & ~28; // strip shift/meta/ctrl modifiers
+        // Press only: exclude drags (a right-drag encodes as 34, whose masked
+        // button is 2 — without the 32-bit check it would read as a right
+        // press and paste a second time) and releases ("m"), which would
+        // re-trigger the press they follow.
+        if ((regionButton === 0 || regionButton === 2) && (btn & 32) === 0 && m[4] === "M") {
+          const now = Date.now();
+          const last = lastScreenPress;
+          const clickCount =
+            last.button === regionButton &&
+            last.row === row &&
+            last.col === col &&
+            now - last.time < MULTI_CLICK_MS
+              ? Math.min(MAX_MULTI, last.count + 1)
+              : 1;
+          lastScreenPress = { row, col, button: regionButton, count: clickCount, time: now };
+          let claimed = false;
+          try {
+            claimed = interceptRef.current?.(row - 1, col - 1, clickCount, regionButton) ?? false;
+          } catch {
+            claimed = false; // a throwing region must not kill the input loop
+          }
+          if (claimed) continue;
+        }
+
         const vp = chatRef.current?.getViewport();
         if (!vp) continue;
         const contentRow = row - 1 - vp.topOffset + vp.scrollTop;
