@@ -4,6 +4,7 @@ import { getTheme, resolveColor, type Theme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import type { ExportFormat } from "../utils/exportConversation.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 import { stripMouseSequences } from "./useMouseWheelScroll.js";
 
 export interface ExportResult {
@@ -163,6 +164,24 @@ export default function ExportView({
     [onSaveToFile, onExport, format, includeThinking, run],
   );
 
+  // Enter's action, shared with row clicks: focus the row and do its thing.
+  const activateRow = (index: number): void => {
+    setSelected(index);
+    if (index === TOGGLE_ROW) {
+      setIncludeThinking((t) => !t);
+      return;
+    }
+    if (EXPORT_OPTIONS[index]?.id === "clipboard") {
+      runCopy();
+      return;
+    }
+    if (onSaveToFile) {
+      setScreen("filename");
+    } else {
+      runFile();
+    }
+  };
+
   useInput((input, key) => {
     if (phase === "working") return;
 
@@ -210,17 +229,7 @@ export default function ExportView({
     }
 
     if (key.return) {
-      if (selected === TOGGLE_ROW) {
-        setIncludeThinking((t) => !t);
-      } else if (EXPORT_OPTIONS[selected]?.id === "clipboard") {
-        runCopy();
-      } else {
-        if (onSaveToFile) {
-          setScreen("filename");
-        } else {
-          runFile();
-        }
-      }
+      activateRow(selected);
       return;
     }
     if (key.upArrow) {
@@ -269,13 +278,23 @@ export default function ExportView({
           {EXPORT_OPTIONS.map((opt, i) => {
             const active = i === selected;
             return (
-              <Box key={opt.id} flexDirection="column">
+              <ClickRegionBox
+                key={opt.id}
+                flexDirection="column"
+                // Keyboard's Enter is phase-aware (working returns early,
+                // result closes); the click path must match it. Inert while
+                // the export is running (a second write must never start)
+                // and on the result screen (a stray click must not re-export
+                // where Enter closes the dialog).
+                clickEnabled={phase === "choose"}
+                onClickRegion={() => activateRow(i)}
+              >
                 <Text color={active ? token("suggestion") : undefined} bold={active}>
                   {active ? "❯ " : "  "}
                   {opt.label}
                 </Text>
                 <Text dimColor>{"  "}{opt.description}</Text>
-              </Box>
+              </ClickRegionBox>
             );
           })}
           {}

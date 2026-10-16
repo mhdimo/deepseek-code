@@ -4,6 +4,10 @@ import { Box, Text, useInput } from "ink";
 import { Dialog } from "../ui/design-system/Dialog.js";
 import { theme, resolveColor } from "../utils/theme.js";
 import { stripMouseSequences } from "./useMouseWheelScroll.js";
+import { useClickRegion, type RegionClickEvent } from "./mouseRegions.js";
+import { visualOffsetAt } from "./inputClickMapping.js";
+import { readClipboardText } from "./clipboard.js";
+import { normalizePaste } from "./paste.js";
 
 export interface InputDialogProps {
   title: string;
@@ -54,6 +58,23 @@ export default function InputDialog({
     if (!allowEmpty && value.trim().length === 0) return;
     onSubmit(value.trim());
   };
+
+  // The field as a click region: left-click places the caret (same
+  // wrap-aware mapping the prompt uses), right-click pastes.
+  const handleRegionClick = (ev: RegionClickEvent): void => {
+    if (ev.button === 2) {
+      const text = readClipboardText();
+      if (text !== null) insert(normalizePaste(text));
+      return;
+    }
+    // The region spans the whole Box, so col 0 is the ">" glyph; subtract
+    // the 2-cell "> " prefix before mapping to a text offset.
+    const offset = visualOffsetAt(value, Math.max(1, ev.width - 2), ev.row, Math.max(0, ev.col - 2));
+    cursorRef.current = Math.max(0, Math.min(value.length, offset));
+  };
+  // Right clicks paste here, so this region opts into them (everywhere else
+  // activation is left-click-only).
+  const regionRef = useClickRegion(handleRegionClick, true, true);
 
   useInput((input, key) => {
     if (key.escape) {
@@ -148,7 +169,7 @@ export default function InputDialog({
         </Text>
       }
     >
-      <Box>
+      <Box ref={regionRef}>
         <Text color={resolveColor(theme.claude)}>{"> "}</Text>
         {shown.length === 0 && placeholder ? (
           <Text dimColor>{placeholder}</Text>

@@ -9,6 +9,7 @@ import {
 } from "../services/tasks/backgroundFramework.js";
 import { taskDescriptionOf } from "../utils/taskLabels.js";
 import TaskDetailDialog from "./tasks/TaskDetailDialog.js";
+import { ClickRegionBox } from "./mouseRegions.js";
 import type { TaskState, TaskType } from "../Task.js";
 
 export interface TasksViewProps {
@@ -110,6 +111,15 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
 
   const closeDetail = useCallback(() => setDetailId(null), []);
 
+  // Enter's action, shared with row clicks: focus the row, open its detail.
+  const openTask = (index: number): void => {
+    const task = rows[index];
+    if (!task) return;
+    setSelectedIndex(index);
+    setDetailId(task.id);
+    setNote(null);
+  };
+
   useInput((input, key) => {
     if (key.escape || key.leftArrow || input === "q") {
       onClose();
@@ -124,10 +134,7 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
       return;
     }
     if (key.return) {
-      const task = rows[selectedIndex];
-      if (!task) return;
-      setDetailId(task.id);
-      setNote(null);
+      openTask(selectedIndex);
       return;
     }
     if (input === "x" || input === "k") {
@@ -210,10 +217,15 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
               </Text>
             )}
             {section.tasks.map((task) => {
+              const index = rowIndex;
               const focused = rowIndex === selectedIndex;
               rowIndex++;
               return (
-                <Box key={task.id} flexDirection="column">
+                <ClickRegionBox
+                  key={task.id}
+                  flexDirection="column"
+                  onClickRegion={() => openTask(index)}
+                >
                   <Box>
                     <Text color={focused ? resolveColor(theme.claude) : undefined} bold={focused}>
                       {focused ? "❯ " : "  "}
@@ -225,7 +237,7 @@ export default function TasksView({ onClose }: TasksViewProps): React.ReactEleme
                       {` (${taskStatusLabel(task.status)})`}
                     </Text>
                   </Box>
-                </Box>
+                </ClickRegionBox>
               );
             })}
           </Box>
