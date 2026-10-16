@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme, resolveColor, type Theme } from "../../utils/theme.js";
 import { displayWidth } from "./Divider.js";
+import { ClickRegionBox } from "../../components/mouseRegions.js";
 
 export interface SelectOption<T extends string = string> {
   label: string;
@@ -241,6 +242,20 @@ export function Select<T extends string = string>({
     [options, onFocus],
   );
 
+  // Accept an option the way Enter does: focus it, tick it, fire onChange.
+  // Digit keys and row clicks both go through here so mouse and keyboard
+  // cannot drift.
+  const pick = useCallback(
+    (index: number) => {
+      const option = options[index];
+      if (!option || option.disabled) return;
+      setSelectedIndex(index);
+      setConfirmedValue(option.value);
+      onChange(option.value);
+    },
+    [options, onChange],
+  );
+
   // Keep the focused index valid when the option list changes underneath us.
   useEffect(() => {
     if (selectedIndex >= options.length) moveTo(Math.max(0, options.length - 1));
@@ -270,13 +285,7 @@ export function Select<T extends string = string>({
     } else if (enableNumberKeys && !key.ctrl && /^[0-9]+$/.test(normalizeFullWidthDigits(input))) {
       // Absolute index into the full options array (reference semantics):
       // "3" selects the third option regardless of the visible window.
-      const index = parseInt(normalizeFullWidthDigits(input), 10) - 1;
-      const option = options[index];
-      if (option && !option.disabled) {
-        setSelectedIndex(index);
-        setConfirmedValue(option.value);
-        onChange(option.value);
-      }
+      pick(parseInt(normalizeFullWidthDigits(input), 10) - 1);
     }
   });
 
@@ -358,7 +367,12 @@ export function Select<T extends string = string>({
 
         if (twoColumn) {
           return (
-            <Box key={option.value} flexDirection="row">
+            <ClickRegionBox
+              key={option.value}
+              flexDirection="row"
+              onClickRegion={() => pick(i)}
+              clickEnabled={keysActive}
+            >
               <Box flexDirection="row" flexShrink={0}>
                 {marker}
                 <Text color={labelColor} dimColor={option.disabled}>
@@ -373,19 +387,24 @@ export function Select<T extends string = string>({
                   {row.description}
                 </Text>
               </Box>
-            </Box>
+            </ClickRegionBox>
           );
         }
 
         return (
-          <Box key={option.value} flexDirection="row">
+          <ClickRegionBox
+            key={option.value}
+            flexDirection="row"
+            onClickRegion={() => pick(i)}
+            clickEnabled={keysActive}
+          >
             {marker}
             {indexCell}
             <Text color={labelColor} dimColor={option.disabled}>
               {labelContent}
             </Text>
             {tick}
-          </Box>
+          </ClickRegionBox>
         );
       })}
       {hiddenCount > 0 && (
