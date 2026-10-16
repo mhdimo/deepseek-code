@@ -14,6 +14,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import React from "react";
 import { PermissionSelect } from "../../src/components/PermissionPrompt.js";
+import AskUserQuestionsPrompt from "../../src/components/AskUserQuestionsPrompt.js";
+import type { AskUserQuestion } from "../../src/types/index.js";
 import type { RegionClickEvent } from "../../src/components/mouseRegions.js";
 import { mountWithMouse } from "./mouseTestHarness.js";
 
@@ -94,5 +96,70 @@ describe("permission select rows", () => {
     );
     handlers[0]!(click);
     expect(selected).toEqual(["yes"]);
+  });
+});
+
+const multiQuestion: AskUserQuestion = {
+  question: "Which fruit?",
+  header: "fruit",
+  multiSelect: true,
+  options: [
+    { label: "Apple", description: "a" },
+    { label: "Banana", description: "b" },
+  ],
+};
+
+describe("ask-user-question rows", () => {
+  test("a multi-select option row toggles (Space semantics)", async () => {
+    const results: unknown[] = [];
+    const handlers = await rowHandlers(
+      React.createElement(AskUserQuestionsPrompt, {
+        questions: [multiQuestion],
+        onResult: (r: unknown) => results.push(r),
+      } as never),
+    );
+    // Rows: 0 Apple, 1 Banana, 2 Other, 3 Chat.
+    expect(handlers.length).toBe(4);
+    handlers[1]!(click);
+    await Bun.sleep(5);
+    expect(results).toEqual([]); // multi-select does not submit
+  });
+
+  test("a single-select option row answers and submits", async () => {
+    const results: Array<{ kind: string }> = [];
+    const handlers = await rowHandlers(
+      React.createElement(AskUserQuestionsPrompt, {
+        questions: [
+          {
+            question: "Which fruit?",
+            header: "fruit",
+            options: [
+              { label: "Apple", description: "a" },
+              { label: "Banana", description: "b" },
+            ],
+          } satisfies AskUserQuestion,
+        ],
+        onResult: (r: { kind: string }) => results.push(r),
+      } as never),
+    );
+    handlers[1]!(click);
+    await Bun.sleep(5);
+    expect(results[0]?.kind).toBe("answered");
+  });
+
+  test("the Other row focuses without answering; the Chat row clarifies", async () => {
+    const results: Array<{ kind: string }> = [];
+    const handlers = await rowHandlers(
+      React.createElement(AskUserQuestionsPrompt, {
+        questions: [multiQuestion],
+        onResult: (r: { kind: string }) => results.push(r),
+      } as never),
+    );
+    handlers[2]!(click); // Other
+    await Bun.sleep(5);
+    expect(results).toEqual([]);
+    handlers[3]!(click); // Chat about this
+    await Bun.sleep(5);
+    expect(results[0]?.kind).toBe("clarify");
   });
 });
