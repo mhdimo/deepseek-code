@@ -92,3 +92,28 @@ describe("task rows", () => {
     expect(app.frame()).toContain("output (last");
   });
 });
+
+describe("export rows", () => {
+  test("clicking Save to file opens the filename step", async () => {
+    const { default: ExportView } = await import("../../src/components/ExportView.js");
+    const app = mountView(
+      React.createElement(ExportView, {
+        onCancel: () => {},
+        onExport: () => ({ success: true, message: "exported" }),
+        onCopy: () => ({ success: true, message: "copied" }),
+        onSaveToFile: () => ({ success: true, message: "saved" }),
+        onDone: () => {},
+      }),
+    );
+    await settle();
+    // Exactly the two option rows — the thinking toggle (its own Box below a
+    // marginTop spacer) stays keyboard-only in v1.
+    expect(app.handlers().length).toBe(2);
+    app.handlers()[1]!(click); // "Save to file"
+    // Two settle windows: ink's 30fps render throttle defers the re-render
+    // past one 30ms settle (same reason as the task-rows test above).
+    await settle();
+    await settle();
+    expect(app.frame()).toContain("Enter filename:");
+  });
+});
