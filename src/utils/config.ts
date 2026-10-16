@@ -352,6 +352,11 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
       case "--stream":
         (config as any).printStreamText = true;
         break;
+      // Agent Client Protocol over stdio — the mode the DeepSeek Harness's
+      // `subagent-acp` backend spawns. See src/cli/acp.ts.
+      case "--acp":
+        (config as any).acp = true;
+        break;
     }
   }
 
@@ -383,6 +388,8 @@ Options:
       --system-prompt-file <f>  Replace the system prompt with the file's contents
       --stream                  Stream --print text deltas live to stdout
       --verbose                 Stream tool progress to stderr in --print
+      --acp                     Serve the Agent Client Protocol over stdio
+                                (spawned by the DeepSeek Harness; not for humans)
   -h, --help                    Show this help
   -v, --version                 Show version
 

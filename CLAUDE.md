@@ -32,7 +32,8 @@ src/
 ├── types/
 │   └── index.ts        # All shared types (Message, MessageBlock, QueryEvent, TokenUsage, etc.)
 ├── cli/
-│   └── print.ts        # Headless --print mode — drives the SAME Agent/Session as the TUI
+│   ├── print.ts        # Headless --print mode — drives the SAME Agent/Session as the TUI
+│   └── acp.ts          # `--acp` — Agent Client Protocol over stdio (DeepSeek Harness subagent; docs/DEEPSEEK-HARNESS.md)
 ├── constants/
 │   ├── help.ts         # /help command data (HelpView renders this)
 │   ├── prompts.ts      # assembleSystemPromptSync() — dynamic system prompt per agent

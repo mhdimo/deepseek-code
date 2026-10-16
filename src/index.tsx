@@ -56,7 +56,40 @@ async function main() {
 
   assertBypassSafe(config, (config as any).print !== undefined);
 
-  
+  // `acp` — serve the Agent Client Protocol on stdio: the mode the DeepSeek
+  // Harness's `subagent-acp` backend spawns (see docs/DEEPSEEK-HARNESS.md).
+  // Deliberately NOT passed to assertBypassSafe as headless: this mode
+  // auto-approves nothing. Every tool call is the *client's* decision, and
+  // dsh's default policy refuses them all.
+  if ((config as any).acp) {
+    const { runAcp } = await import("./cli/acp.js");
+    try {
+      const code = await runAcp({
+        version: VERSION,
+        providerConfig: {
+          type: config.provider,
+          apiKey: config.apiKey,
+          baseURL: config.baseURL,
+          model: config.model,
+        },
+        workingDir: process.cwd(),
+        mcpServers: config.mcpServers,
+        // Same reason as the --print branch below: without this the engine
+        // falls back to its own 128K window while everything else believes
+        // the model's real one.
+        maxContextTokens: contextWindowFor(config.model),
+        agent: config.defaultAgent,
+      });
+      process.exit(code);
+    } catch (err) {
+      process.stderr.write(
+        `\ndeepseek-code acp: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exit(1);
+    }
+  }
+
+
   
   if ((config as any).print !== undefined) {
     const { runPrint } = await import("./cli/print.js");
