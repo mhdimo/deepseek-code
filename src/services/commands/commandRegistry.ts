@@ -286,6 +286,24 @@ export function parseSetupArguments(
   return model ? { apiKey, model } : { apiKey };
 }
 
+/** The text an activation on the command picker produces.
+ *
+ *  Enter submits it, so the app runs the command — "/eff" then Enter opens
+ *  /effort's menu rather than typing anything. Tab drops it into the prompt to
+ *  keep editing. It is only ever the command NAME: a usage template like
+ *  "[off|low|medium|high|max]" is a hint the input renders dim (the reference's
+ *  argumentHint, BaseTextInput.tsx:92-111), never text the user must delete.
+ *  A command that takes arguments gets a trailing space on Tab, so the cursor
+ *  lands where the argument goes. */
+export function commandActivationText(
+  definition: Pick<CommandDefinition, "name" | "acceptsArgs">,
+  viaReturn: boolean,
+): string {
+  return !viaReturn && definition.acceptsArgs
+    ? `/${definition.name} `
+    : `/${definition.name}`;
+}
+
 function definitionAliases(definition: CommandDefinition): string[] {
   return [definition.name, ...(definition.aliases ?? [])].map(normalizeName);
 }

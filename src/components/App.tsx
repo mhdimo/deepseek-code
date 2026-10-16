@@ -177,7 +177,11 @@ import {
 import { notify, preventSleep, allowSleep } from "../utils/notify.js";
 import { classifyError, resolveFallbackProvider, promptTooLongMessage, overloadMessage, EMPTY_FINISH_REASON, emptyTurnMessage } from "../services/recovery.js";
 import { matchDecision, parsePermissionSettings, escapeRuleContent } from "../services/permissions.js";
-import { parseSetupArguments, parseSlashCommand } from "../services/commands/commandRegistry.js";
+import {
+  commandActivationText,
+  parseSetupArguments,
+  parseSlashCommand,
+} from "../services/commands/commandRegistry.js";
 import { safeTerminalRows } from "./terminalLayout.js";
 import { formatDirectoryTree } from "../tools/LS/LSTool.js";
 import { hasUltrathinkKeyword, ULTRATHINK_EFFORT } from "../utils/thinkingKeywords.js";
@@ -1187,16 +1191,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   pickerActiveRef.current = showCommandPicker;
 
   // One activation path for Enter/Tab on the command picker and for a click
-  // on a picker row: fill the usage (or run a no-arg command on Enter).
+  // on a picker row. Enter runs the command by name; Tab completes the name
+  // so the user keeps editing. A usage template is a hint, never text —
+  // see commandActivationText.
   const activateCommand = (index: number, viaReturn: boolean): void => {
     const safeIdx = Math.min(index, filteredCommands.length - 1);
     const cmd = filteredCommands[safeIdx];
     if (!cmd) return;
-    const usage = cmd.usage?.[0] ?? `/${cmd.name} `;
-    if (viaReturn && !cmd.acceptsArgs) {
-      handleSubmitRef.current(`/${cmd.name}`);
+    const text = commandActivationText(cmd, viaReturn);
+    if (viaReturn) {
+      handleSubmitRef.current(text);
     } else {
-      setInput(usage);
+      setInput(text);
     }
     setCommandPickerIndex(0);
   };
