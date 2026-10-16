@@ -1,11 +1,14 @@
 {
-  "name": "deepseek-code",
+  "name": "@mihaldmo/deepseek-code",
   "version": "0.1.0",
   "description": "Terminal-native AI coding agent powered by DeepSeek",
   "module": "src/index.tsx",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mhdimo/deepseek-code.git"
+  },
   "scripts": {
     "dev": "bun run src/index.tsx",
     "build": "rm -rf ./dist && bun build src/index.tsx --outdir ./dist --target bun --external ai-sdk-cpp && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js && cp -R ./src/skills/bundled ./dist/bundled && cp -R ./src/workflows/bundled ./dist/workflows",
@@ -18,6 +21,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/diff": "^8.0.0",
@@ -31,7 +37,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.9.0",
-    "ai-sdk-cpp": "file:../ai-sdk-cpp/bindings/node",
+    "ai-sdk-cpp": "1.0.0",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "diff": "^9.0.0",
