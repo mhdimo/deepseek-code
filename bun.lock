@@ -6,7 +6,7 @@
       "name": "z-code",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.9.0",
-        "ai-sdk-cpp": "1.0.0",
+        "ai-sdk-cpp": "1.0.1",
         "chalk": "^5.6.2",
         "chokidar": "^5.0.0",
         "diff": "^9.0.0",
@@ -46,7 +46,7 @@
 
     "@types/react-dom": ["@types/react-dom@19.2.3", "", { "peerDependencies": { "@types/react": "^19.2.0" } }, "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ=="],
 
-    "ai-sdk-cpp": ["ai-sdk-cpp@1.0.0", "", { "dependencies": { "node-addon-api": "^7.0.0", "node-gyp-build": "^4.8.0" } }, "sha512-1vCYHqjIuRoR1F++6cTKaivKeN/FN5F1Rve+h1nXoNQrHfcbMmzh/THW6uCOmocipmg1frOGfIMyJVf6e5y4Fg=="],
+    "ai-sdk-cpp": ["ai-sdk-cpp@1.0.1", "", { "dependencies": { "node-addon-api": "^7.0.0", "node-gyp-build": "^4.8.0" } }, "sha512-QgbHMrMNC9UH0ArsZ752E+uZEgyBR+OZps8FtcWFiOmCdoTHuLF+bEI1NE10to0K+edOPlz8LM2w8FTbBQiMWg=="],
 
     "ansi-escapes": ["ansi-escapes@7.3.0", "", { "dependencies": { "environment": "^1.0.0" } }, "sha512-BvU8nYgGQBxcmMuEeUEmNTvrMVjJNSH7RgW24vXexN4Ven6qCvy4TntnvlnwnMLTVlcRQQdbRY8NKnaIoeWDNg=="],
 
