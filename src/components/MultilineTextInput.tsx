@@ -34,6 +34,14 @@ interface MultilineTextInputProps {
   focus: boolean;
   placeholder?: string;
   isPickerActive?: boolean;
+  /** Esc/backspace/delete/ctrl+u at offset 0 — where the reference leaves a
+   *  special prompt mode (PromptInput's key handler). */
+  onExitMode?: () => void;
+  /** A leading `!` typed into an empty prompt: the owner may consume it as a
+   *  mode switch. Return true when consumed — the character is then not
+   *  inserted, which is exactly Claude Code's `onModeChange` path (`!` is the
+   *  mode, never a buffer character). */
+  onModeCharacter?: () => boolean;
   /** Colour for the typed text. Unset (the default) leaves the terminal's own
    *  foreground; the permission dialog's focused input row passes the
    *  `suggestion` token so the label, its separator and the value read as one
@@ -263,6 +271,8 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   focus,
   placeholder = "",
   isPickerActive = false,
+  onExitMode,
+  onModeCharacter,
   color,
 }: MultilineTextInputProps) {
   
@@ -317,6 +327,10 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
   isPickerActiveRef.current = isPickerActive;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onExitModeRef = useRef(onExitMode);
+  onExitModeRef.current = onExitMode;
+  const onModeCharacterRef = useRef(onModeCharacter);
+  onModeCharacterRef.current = onModeCharacter;
 
   // One insertion path for every producer — typed chunks and right-click
   // paste cannot drift apart. Writes the same four things every keyboard
@@ -348,6 +362,12 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
       const typed = stripMouseSequences(input);
       if (typed !== input) input = typed;
       const pos = cursorRef.current;
+
+      // The reference exits special modes on Esc/backspace/delete/ctrl+u at
+      // offset 0; the owner decides whether a mode is actually active.
+      if (pos === 0 && (key.escape || key.backspace || key.delete || (key.ctrl && input === "u"))) {
+        onExitModeRef.current?.();
+      }
 
       // The two halves of a split line break are adjacent reads, so a CR is
       // only half of one if the very next event carries the LF. Anything in
@@ -566,7 +586,7 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         // bracketed-paste markers, no escape sequences — and insert whatever
         // text is underneath. See paste.ts for the shapes ink actually
         // delivers, and for what it cost to insert them raw.
-        const text = normalizePaste(input);
+        let text = normalizePaste(input);
         if (opensPaste(input)) {
           pasteOpenRef.current = true;
           pasteOpenAtRef.current = Date.now();
@@ -575,6 +595,18 @@ const MultilineTextInput = React.memo(function MultilineTextInput({
         } else if (pasteOpenRef.current) {
           // A chunk inside an open paste: keep its claim on Enter fresh.
           pasteOpenAtRef.current = Date.now();
+        }
+        // A leading `!` on an empty prompt is the owner's mode switch, not
+        // text. Consuming it here keeps the buffer and the controlled value
+        // in agreement — the desync that made the old prefix-stripping
+        // implementation run `!ls` for the `!`, `ls` sequence.
+        if (
+          text.startsWith("!") &&
+          cursorRef.current === 0 &&
+          bufferRef.current === "" &&
+          onModeCharacterRef.current?.()
+        ) {
+          text = text.slice(1);
         }
         if (text.length > 0) {
           pendingCRRef.current = rejoined.pendingCR;

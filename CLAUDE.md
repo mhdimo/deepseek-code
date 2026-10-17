@@ -115,6 +115,8 @@ src/
 
 **Thinking blocks**: Reasoning streams as chronological, collapsed blocks — `∴ Thinking…` with a dim preview while streaming, `∴ Thought (ctrl+o to expand)` once finalized. Ctrl+O toggles transcript mode (full text, all blocks expanded). `MessageBlock` has `type: "thinking"`; App tracks the open block via `thinkingOpenRef` (reasoning_start → delta → end). Legacy transcripts still render via `message.thinking`.
 
+**Shell mode (`!`)**: a `!` typed into an empty prompt is a mode switch, not a buffer character — `TextInput` renders `!` in `bashBorder` and `StatusBar` steps aside for a `shell mode` line. Enter runs the line with `sh -c` (`services/shellMode.ts`, process-group kill on Esc); the run draws as a `BashRun` row with a foldable output gutter. When it finishes, the model answers the output automatically (Claude Code's `respondToBashCommands`, on by default); `"respondToBashCommands": false` in settings.json queues the output for the next prompt instead. The model-facing context is the `<bash-input>`/`<bash-stdout>`/`<bash-stderr>` block, delivered as a transient turn or through `pendingShellContextRef` — bash rows are never replayed as history.
+
 **Headless / --print mode**: `src/cli/print.ts` runs one prompt against the same Agent/Session and prints text (or a JSON envelope) to stdout without rendering Ink. Flags: `--print [prompt]` (stdin if no arg), `--output-format text|json`, `--max-turns`, `--system-prompt-file`, `--stream`, `--verbose`. Permissions auto-approve (headless); index.tsx refuses `--dangerously-skip-permissions` as root outside a sandbox.
 
 **Tool system**: Each tool lives in its own directory under `src/tools/<ToolName>/` using `buildTool()` from `Tool.ts` with Zod schemas. The registry (`src/tools.ts`) adapts them for the binding and wires the permission pipeline. Registered tools include: FileRead (with PDF/notebook/image support), FileWrite, FileEdit, Bash (with `run_in_background` → background-task registry), Glob, Grep (rich rg-based with output_mode/context/multiline), LS, WebFetch, WebSearch, NotebookEdit, TodoWrite, TaskCreate/Get/Update/List, Agent, AskUserQuestion, Enter/ExitPlanMode, Config, Sleep, ScheduleCron, Enter/ExitWorktree, PowerShell, Brief, REPL, ToolSearch, TaskOutput, TaskStop, and Skill. Keep each tool in its own folder — organization makes everyone happy!
@@ -165,6 +167,7 @@ Config sources (priority: CLI args > persisted settings > env vars > `.deepseek-
 - `DEEPSEEK_BASE_URL` — Optional endpoint override (handy for proxies)
 - `DEEPSEEK_FALLBACK_MODEL` — Optional fallback model for overload (429) recovery
 - `effort` — Reasoning effort: `off|low|medium|high|xhigh|max` (config key, persisted setting, or `--effort` flag)
+- `respondToBashCommands` — `false` in settings.json stops the model answering `!` command output automatically (default on — Claude Code parity)
 
 Config file lookup order: `.deepseek-code.json` (cwd) → `~/.config/deepseek-code/config.json` → `~/.deepseek-code.json`. See `.deepseek-code.example.json` for the full schema including profiles and MCP servers.
 

@@ -4,7 +4,14 @@ import type { Message, MessageBlock, ToolUseBlock } from "../types/index.js";
 import { theme, resolveColor, getTheme } from "../utils/theme.js";
 import { useTheme } from "../ui/design-system/ThemeProvider.js";
 import Markdown, { RowText, rowSelection, markdownRows, flattenMarkdown, updateMarkdownModel, type MarkdownModelState, type MarkdownBlockRows } from "./Markdown.js";
-import ToolBlock, { buildToolBlockSpans, BLACK_CIRCLE, type ToolBlockSpan } from "./ToolBlock.js";
+import ToolBlock, {
+  buildToolBlockSpans,
+  foldedRows,
+  MAX_PROGRESS_LINES,
+  BLACK_CIRCLE,
+  type ToolBlockSpan,
+} from "./ToolBlock.js";
+import { redactSecrets } from "../utils/redact.js";
 import { AgentFanout, buildAgentFanoutLines } from "./AgentFanout.js";
 import MessageResponse from "./MessageResponse.js";
 import ThinkingBlock from "./ThinkingBlock.js";
@@ -323,6 +330,128 @@ function MessageView({
                       row={r}
                       selCols={rowSelection(selection, bodyStart + i, GUTTER_WIDTH + (r.origin ?? 0), contentWidth)}
                       rowWidth={bodyWidth}
+                    />
+                  </Box>
+                ))}
+              </Box>
+            </MessageResponse>
+          )}
+        </Box>
+      );
+    }
+
+    // Shell mode (`!command`): the command is the user's own line, and its
+    // output hangs beneath it exactly like a Bash tool result — the same
+    // `  ⎿  ` gutter, the same 3-line fold and ctrl+o expansion.
+    if (message.bash) {
+      const bash = message.bash;
+      const outputWidth = Math.max(1, contentWidth - GUTTER_WIDTH);
+      const bodyText = bash.output || (bash.error ? `Error: ${bash.error}` : "");
+      const commandRows = useMemo(
+        () => wrapTextRuns([{ text: bash.command }], userWidth),
+        [bash.command, userWidth],
+      );
+      const outputRows = useMemo(() => {
+        const redacted = redactSecrets(bodyText);
+        if (bash.status === "running") {
+          const lines = redacted.split("\n").filter((line) => line !== "");
+          if (lines.length === 0) {
+            return wrapTextRuns(
+              [{ text: "Running… (Esc to cancel)", style: { dim: true } }],
+              outputWidth,
+            );
+          }
+          const shown = isTranscriptMode ? lines : lines.slice(-MAX_PROGRESS_LINES);
+          const hidden = lines.length - shown.length;
+          const rows = wrapTextRuns([{ text: shown.join("\n"), style: { dim: true } }], outputWidth);
+          rows.push(
+            ...wrapTextRuns(
+              [
+                {
+                  text: `${hidden > 0 ? `+${hidden} lines · ` : ""}Running… (Esc to cancel)`,
+                  style: { dim: true },
+                },
+              ],
+              outputWidth,
+            ),
+          );
+          return rows;
+        }
+
+        const rows: TextRow[] = [];
+        if (!redacted.trim()) {
+          rows.push(...wrapTextRuns([{ text: "(No output)", style: { dim: true } }], outputWidth));
+        } else if (isTranscriptMode) {
+          rows.push(...wrapTextRuns([{ text: redacted }], outputWidth));
+        } else {
+          rows.push(...foldedRows(redacted, outputWidth));
+        }
+        const notes: string[] = [];
+        if (bash.status === "cancelled") notes.push("(cancelled)");
+        else if (bash.status === "error" && bash.exitCode !== null) notes.push(`(exit ${bash.exitCode})`);
+        if (bash.truncated) notes.push("Output truncated at 50KB");
+        if (notes.length > 0) {
+          rows.push(...wrapTextRuns([{ text: notes.join(" · "), style: { dim: true } }], outputWidth));
+        }
+        return rows;
+      }, [bodyText, bash.status, bash.exitCode, bash.truncated, outputWidth, isTranscriptMode]);
+
+      const spacerKey = `${blockKeyBase}:sp`;
+      report({ key: spacerKey, rowCount: 1, rows: [], width: userWidth, leftOffset: 0, kind: "opaque" });
+      report({
+        key: `${blockKeyBase}:bash-cmd`,
+        rowCount: commandRows.length,
+        rows: commandRows,
+        width: userWidth,
+        leftOffset: 2,
+        kind: "plain",
+      });
+      report({
+        key: `${blockKeyBase}:bash-out`,
+        rowCount: outputRows.length,
+        rows: outputRows,
+        width: outputWidth,
+        leftOffset: GUTTER_WIDTH,
+        kind: "plain",
+      });
+      const commandStart = messageStartRow + 1;
+      const outputStart = commandStart + commandRows.length;
+      return (
+        <Box flexDirection="column" flexShrink={0} minWidth={0}>
+          <Box key={spacerKey} height={1} flexShrink={0} />
+          <Box
+            flexDirection="row"
+            minWidth={0}
+            backgroundColor={resolveColor(theme.bashMessageBackgroundColor)}
+            paddingRight={1}
+          >
+            <Text color={resolveColor(theme.bashBorder)}>{"! "}</Text>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              {commandRows.map((r, i) => (
+                <Box key={i} height={1} flexShrink={0} minWidth={0}>
+                  <RowText
+                    row={r}
+                    selCols={rowSelection(selection, commandStart + i, 2 + (r.origin ?? 0), contentWidth)}
+                    rowWidth={userWidth}
+                  />
+                </Box>
+              ))}
+            </Box>
+          </Box>
+          {outputRows.length > 0 && (
+            <MessageResponse>
+              <Box flexDirection="column" flexShrink={0} minWidth={0}>
+                {outputRows.map((r, i) => (
+                  <Box key={i} height={1} flexShrink={0} minWidth={0}>
+                    <RowText
+                      row={r}
+                      selCols={rowSelection(
+                        selection,
+                        outputStart + i,
+                        GUTTER_WIDTH + (r.origin ?? 0),
+                        contentWidth,
+                      )}
+                      rowWidth={outputWidth}
                     />
                   </Box>
                 ))}

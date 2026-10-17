@@ -391,6 +391,10 @@ export async function getOrCreateMemorySession(opts: {
   if (opts.history && opts.history.length > 0) {
     for (const msg of opts.history) {
       if (msg.role === "user") {
+        // Bash rows are replayed through the pending-context channel instead
+        // (App delivers a finished run before the next prompt); their display
+        // row must not double as history when the session is (re)built.
+        if (msg.bash) continue;
         session.addUser(msg.content);
       } else if (msg.role === "assistant") {
         session.addAssistant(msg.content);

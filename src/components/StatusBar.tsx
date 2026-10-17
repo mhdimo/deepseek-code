@@ -60,6 +60,10 @@ interface StatusBarProps {
   statusLinePadding?: number;
 
   tasks?: { done: number; total: number; inProgress: number; expanded: boolean };
+
+  /** The prompt is in shell mode: the bar steps aside for a moment and says
+   *  so — the one thing that matters while Enter is about to run a command. */
+  bashMode?: boolean;
 }
 
 // Token NAMES, resolved against the LIVE legacy theme at render time —
@@ -186,7 +190,18 @@ export default React.memo(function StatusBar({
   statusLineOutput,
   statusLinePadding,
   tasks,
+  bashMode = false,
 }: StatusBarProps) {
+  // Shell mode draws over the status line for as long as it is active: the
+  // mode is momentary, and the regular bar's model/context/telemetry has
+  // nothing to say until the command has run.
+  if (bashMode) {
+    return (
+      <Box paddingX={statusLinePadding ?? 2}>
+        <Text color={resolveColor(theme.bashBorder)}>shell mode</Text>
+      </Box>
+    );
+  }
   const agentColor =
     agentName === "review"
       ? "magenta"

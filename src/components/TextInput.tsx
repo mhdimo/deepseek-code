@@ -24,6 +24,11 @@ interface InputProps {
   waitingPermission?: boolean;
   queueCount?: number;
   isPickerActive?: boolean;
+  /** `bash` is Claude Code's shell mode: the prompt character is `!`, Enter
+   *  runs the line in the user's shell, and the value is the command alone
+   *  (the `!` is the mode switch, never a buffer character). */
+  mode?: "prompt" | "bash";
+  onModeChange?: (mode: "prompt" | "bash") => void;
 }
 
 /**
@@ -69,6 +74,8 @@ export default function Input({
   waitingPermission = false,
   queueCount = 0,
   isPickerActive = false,
+  mode = "prompt",
+  onModeChange,
 }: InputProps) {
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
@@ -85,6 +92,13 @@ export default function Input({
   // the same text and only swaps in the queue hint once something is queued.
   const placeholder =
     queueCount > 0 ? "Press up to edit queued messages" : suggestion;
+
+  // Shell mode: `!` at the start of an empty prompt switches modes and is
+  // consumed there and then, exactly as the reference's PromptInput does in
+  // onChange — the buffer holds the command alone. The prompt turns the
+  // reference's bash colours and the pointer becomes `!` so the mode is
+  // unmistakable before Enter is pressed.
+  const bashMode = mode === "bash";
 
   return (
     <Box flexDirection="column" width="100%">
@@ -109,20 +123,33 @@ export default function Input({
         borderLeft={false}
         borderRight={false}
         borderBottom
-        borderColor={resolveColor(theme.promptBorder)}
+        borderColor={resolveColor(bashMode ? theme.bashBorder : theme.promptBorder)}
         width="100%"
       >
         {/* Plain default foreground, never bold — the glyph dims while a
             query runs. The trailing space is a non-breaking one (U+00A0),
             as in the reference. */}
-        <Text dimColor={isLoading}>{"❯\u00a0"}</Text>
+        <Text
+          dimColor={isLoading}
+          color={bashMode ? resolveColor(theme.bashBorder) : undefined}
+        >
+          {`${bashMode ? "!" : "❯"}\u00a0`}
+        </Text>
         <MultilineTextInput
           value={value}
           onChange={onChange}
           onSubmit={stableOnSubmit}
           focus={!isBlocked}
-          placeholder={placeholder}
+          placeholder={bashMode ? "Run a shell command…" : placeholder}
           isPickerActive={isPickerActive}
+          onModeCharacter={() => {
+            if (bashMode) return false;
+            onModeChange?.("bash");
+            return true;
+          }}
+          onExitMode={() => {
+            if (bashMode) onModeChange?.("prompt");
+          }}
         />
       </Box>
     </Box>

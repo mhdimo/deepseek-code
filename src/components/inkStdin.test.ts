@@ -15,7 +15,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MAX_PENDING, StdinSanitizer, isInputSequence } from "./inkStdin.js";
+import { PassThrough } from "node:stream";
+import {
+  LONE_ESC_HOLD_MS,
+  MAX_PENDING,
+  StdinSanitizer,
+  createSanitizedStdin,
+  isInputSequence,
+} from "./inkStdin.js";
 
 describe("the stdin filter", () => {
   const sanitize = (chunk: string) => new StdinSanitizer().push(chunk);
@@ -91,6 +98,22 @@ describe("the stdin filter", () => {
     const filter = new StdinSanitizer();
     expect(filter.push("\x1b")).toBe("");
     expect(filter.push("a")).toBe("\x1ba");
+  });
+
+  test("a lone Esc is flushed once the ambiguity window passes", async () => {
+    // Without the flush, a pressed Esc produced no key at all — one byte
+    // looked like the first half of a CSI — until the next keystroke, which
+    // then arrived as that key's meta chord.
+    const real = new PassThrough();
+    const filtered = createSanitizedStdin(real as unknown as NodeJS.ReadStream);
+    const chunks: string[] = [];
+    filtered.on("data", (chunk: Buffer | string) => chunks.push(String(chunk)));
+
+    real.write("\x1b");
+    await Bun.sleep(5);
+    expect(chunks.join("")).toBe("");
+    await Bun.sleep(LONE_ESC_HOLD_MS + 20);
+    expect(chunks.join("")).toBe("\x1b");
   });
 
   test("an unterminated escape sequence cannot swallow the session", () => {

@@ -74,6 +74,10 @@ export interface PersistedSettings {
    */
   dangerouslySkipPermissions?: boolean;
 
+  /** After a `!command` finishes, answer its output automatically. Claude
+   *  Code parity — `respondToBashCommands`, on when absent. */
+  respondToBashCommands?: boolean;
+
   /** Lifecycle hook configuration (see services/hooks.ts). */
   hooks?: import("../services/hooks.js").HooksConfig;  
   statusLine?: { type: "command"; command: string; padding?: number };

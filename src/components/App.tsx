@@ -66,6 +66,12 @@ import { createModel } from "../services/provider/registry.js";
 import { query } from "../services/query.js";
 import { getOrCreateMemorySession, resetMemorySession } from "../services/agent/agentSession.js";
 import {
+  buildBashResponsePrompt,
+  formatShellContext,
+  runShellCommand,
+  shouldRespondToBashCommand,
+} from "../services/shellMode.js";
+import {
   initialPermissionMode,
   permissionModeCycle,
   type PermissionMode,
@@ -91,6 +97,7 @@ import type {
   MessageBlock,
   TodoItem,
   AskUserQuestion,
+  BashRun,
 } from "../types/index.js";
 import {
   saveSettings,
@@ -234,6 +241,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  // Claude Code's prompt modes: `!` at the start of an empty prompt switches
+  // to shell mode *without* becoming part of the buffer, so the command the
+  // user types (and what runs) is exactly the command. Submitting returns to
+  // prompt mode; Esc leaves the mode and keeps the text as a prompt.
+  const [inputMode, setInputMode] = useState<"prompt" | "bash">("prompt");
   const [isLoading, setIsLoading] = useState(false);
   // Which MCP server the session builder is blocked on, if any. Building a
   // session contacts each configured server synchronously — no timeout, no
@@ -430,6 +442,13 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const abortRef = useRef<AbortController | null>(null);
+  /** The shell-mode run in flight (`!command`), if any — Esc cancels it. */
+  const shellAbortRef = useRef<AbortController | null>(null);
+  const shellRunSeqRef = useRef(0);
+  /** Completed `!` exchanges the model has not been told about yet. The
+   *  display keeps them, but the engine owns history, so they are added as a
+   *  user turn on the next prompt (see submitUserPrompt). */
+  const pendingShellContextRef = useRef<{ runId: number; context: string }[]>([]);
   /** The step budget of the turn in flight — named in the notice when the
    *  engine stops because it ran out, since the finish event cannot say it. */
   const maxStepsRef = useRef(0);
@@ -1175,8 +1194,10 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   const inputHistory = useRef<string[]>([]);
   const historyIndex = useRef(-1);
   // Draft captured when history recall starts, so ↓ past the newest entry
-  // restores what the user was writing instead of wiping the input.
+  // restores what the user was writing instead of wiping the input — and the
+  // mode it was being written in.
   const historyDraftRef = useRef("");
+  const historyDraftModeRef = useRef<"prompt" | "bash">("prompt");
 
   
   const persistSettings = useCallback((updates: {
@@ -1218,7 +1239,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
     () => [...pluginCommands, ...workflowCommands, ...skillCommands, ...toCommandDefs(customCommands)],
     [pluginCommands, workflowCommands, skillCommands, customCommands],
   );
-  const slashInputActive = input.trimStart().startsWith("/");
+  // In shell mode a leading `/` is part of a command path (`/bin/ls`), not a
+  // slash command.
+  const slashInputActive = inputMode !== "bash" && input.trimStart().startsWith("/");
   const filteredCommands: CommandDef[] = !isLoading && slashInputActive ? filterCommands(input, extraCommands) : [];
   const parsedInput = parseSlashCommand(input);
   const isExactCommandMatch =
@@ -1259,8 +1282,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   };
 
   const mention = useMemo(
-    () => (isLoading || showCommandPicker ? null : detectTrailingMention(input)),
-    [input, isLoading, showCommandPicker],
+    () =>
+      isLoading || showCommandPicker || inputMode === "bash"
+        ? null
+        : detectTrailingMention(input),
+    [input, isLoading, showCommandPicker, inputMode],
   );
   const mentionMatches = useMemo(() => {
     if (!mention || mentionSuppressed) return [];
@@ -1955,11 +1981,19 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         if (lastSubmittedPromptRef.current) {
           setInput(lastSubmittedPromptRef.current);
         }
+      } else if (shellAbortRef.current) {
+        // A `!command` is running: kill its process group; the row settles as
+        // "(cancelled)" when the runner reports back.
+        shellAbortRef.current.abort();
+        shellAbortRef.current = null;
       } else if (showCommandPicker) {
         setInput("");
         setCommandPickerIndex(0);
       } else if (showShortcuts) {
         setShowShortcuts(false);
+      } else if (inputMode === "bash") {
+        // Claude Code: Esc leaves shell mode and the text becomes a prompt.
+        setInputMode("prompt");
       } else {
         
         const now = Date.now();
@@ -2039,13 +2073,21 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
         if (input.includes("\n")) return;
         if (historyIndex.current === -1) {
           historyDraftRef.current = input;
+          historyDraftModeRef.current = inputMode;
           historyIndex.current = inputHistory.current.length - 1;
         } else if (historyIndex.current > 0) {
           historyIndex.current -= 1;
         }
         const historical = inputHistory.current[historyIndex.current];
         if (historical !== undefined) {
-          setInput(historical);
+          // `!cmd` restores shell mode with the command alone in the buffer.
+          if (historical.startsWith("!")) {
+            setInputMode("bash");
+            setInput(historical.slice(1));
+          } else {
+            setInputMode("prompt");
+            setInput(historical);
+          }
         }
         return;
       }
@@ -2056,11 +2098,18 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           historyIndex.current += 1;
           const historical = inputHistory.current[historyIndex.current];
           if (historical !== undefined) {
-            setInput(historical);
+            if (historical.startsWith("!")) {
+              setInputMode("bash");
+              setInput(historical.slice(1));
+            } else {
+              setInputMode("prompt");
+              setInput(historical);
+            }
           }
         } else {
           historyIndex.current = -1;
           setInput(historyDraftRef.current);
+          setInputMode(historyDraftModeRef.current);
         }
         return;
       }
@@ -2777,23 +2826,29 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   );
 
   const submitUserPrompt = useCallback(
-    async (trimmedInput: string, promptOverride?: string) => {
-      
-      runHooksFireAndForget("UserPromptSubmit", { prompt: trimmedInput, cwd: workingDirectory });
+    async (
+      trimmedInput: string,
+      promptOverride?: string,
+      options?: { transient?: boolean },
+    ) => {
+      // A transient turn is one the app issues on its own behalf — the
+      // automatic response to a finished `!command` (`respondToBashCommands`).
+      // The model still receives a user turn, but the user did not type one:
+      // no transcript row, no UserPromptSubmit hook, no prompt history, and
+      // no ultrathink scan of text they never wrote.
+      const transient = options?.transient === true;
 
-      
-      
-      
-      
-      
-      
+      if (!transient) {
+        runHooksFireAndForget("UserPromptSubmit", { prompt: trimmedInput, cwd: workingDirectory });
+      }
+
       try {
         const files = [...touchedFilesRef.current];
-        if (files.length > 0) {
+        if (!transient && files.length > 0) {
           void snapshotFiles(messagesLenRef.current + 1, files, workingDirectory).catch(() => {});
         }
       } catch {
-        
+
       }
 
       
@@ -2807,14 +2862,14 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
       // ultrathink (Claude Code parity): the keyword in a non-command prompt
       // bumps this single turn's reasoning effort to high; the next turn
       // reverts to the configured level.
-      const ultrathink = !trimmedInput.startsWith("/") && hasUltrathinkKeyword(trimmedInput);
+      const ultrathink = !transient && !trimmedInput.startsWith("/") && hasUltrathinkKeyword(trimmedInput);
 
       const userMessage: Message = {
         role: "user",
         content: trimmedInput,
         timestamp: Date.now(),
       };
-      setMessages((prev) => [...prev, userMessage]);
+      if (!transient) setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
 
       if (ultrathink) {
@@ -2830,20 +2885,25 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
       
       if (!activeApiKey) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "system",
-            content:
-              "Warning: no API key configured.\n\n" +
-              "Set one of:\n" +
-              "  /setup <your-key>              (quick setup)\n" +
-              "  /apikey <your-key>             (in-app)\n" +
-              "  export DEEPSEEK_API_KEY=your-key    (env)\n\n" +
-              "Get your key at: https://platform.deepseek.com/api_keys",
-            timestamp: Date.now(),
-          },
-        ]);
+        // A transient turn only exists because a response was expected to be
+        // possible; the caller checks the key first, so a warning here would
+        // be noise after a command rather than something the user asked for.
+        if (!transient) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content:
+                "Warning: no API key configured.\n\n" +
+                "Set one of:\n" +
+                "  /setup <your-key>              (quick setup)\n" +
+                "  /apikey <your-key>             (in-app)\n" +
+                "  export DEEPSEEK_API_KEY=your-key    (env)\n\n" +
+                "Get your key at: https://platform.deepseek.com/api_keys",
+              timestamp: Date.now(),
+            },
+          ]);
+        }
         setIsLoading(false);
         return;
       }
@@ -2881,7 +2941,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           onTodosChange: handleTodosChange,
           onSystemMessage: pushSystem,
           onMcpConnect: announceMcpConnect,
-          history: messages,
+          // Shell rows are terminal history, not conversation history: they
+          // are delivered as their own user turn below, once per exchange.
+          history: messages.filter((m) => !m.bash),
           effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
         });
         setMcpConnecting(null);
@@ -2912,6 +2974,23 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
           for (const change of changedFiles) {
             pushSystem(`↩ Told the model: ${change.path} changed on disk`);
           }
+        }
+
+        // Shell-mode exchanges (`!command`) completed since the last turn.
+        // The transcript shows them; the model has not seen them, and the
+        // engine's history is the only channel — same as the two notices
+        // above. `!!` runs never entered this queue. An entry whose row is
+        // not in the transcript yet (its run settled during this call) stays
+        // queued for the next prompt rather than being silently dropped.
+        if (pendingShellContextRef.current.length > 0) {
+          const delivered: string[] = [];
+          const stillPending: typeof pendingShellContextRef.current = [];
+          for (const entry of pendingShellContextRef.current) {
+            if (messages.some((m) => m.bash?.runId === entry.runId)) delivered.push(entry.context);
+            else stillPending.push(entry);
+          }
+          pendingShellContextRef.current = stillPending;
+          if (delivered.length > 0) session.addUser(delivered.join("\n\n"));
         }
 
         const startTime = Date.now();
@@ -2962,7 +3041,9 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
               onTodosChange: handleTodosChange,
               onSystemMessage: pushSystem,
               onMcpConnect: announceMcpConnect,
-              history: messages,
+              // Shell rows are terminal history, not conversation history: they
+          // are delivered as their own user turn below, once per exchange.
+          history: messages.filter((m) => !m.bash),
               effortOverride: ultrathink ? ULTRATHINK_EFFORT : undefined,
             });
             // The fallback build has its own cache key, so it contacts the MCP
@@ -3312,6 +3393,11 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
 
         case "clear":
           setMessages([]);
+          // A shell row and its pending model context belong to the
+          // conversation being discarded.
+          shellAbortRef.current?.abort();
+          shellAbortRef.current = null;
+          pendingShellContextRef.current = [];
           resetMemorySession();
           setSessionRules({ allow: [], deny: [] });
           setTokenCount(0);
@@ -3755,6 +3841,11 @@ ${result.summary}`,
         case "sessions": {
           if (arg === "clear" || arg === "new") {
             setMessages([]);
+            // A shell row and its pending model context belong to the
+            // conversation being discarded.
+            shellAbortRef.current?.abort();
+            shellAbortRef.current = null;
+            pendingShellContextRef.current = [];
             resetMemorySession();
             // A new conversation gets its own rewind scope; without this its
             // snapshots restart at index 1 and overwrite the previous
@@ -3804,6 +3895,11 @@ ${result.summary}`,
           }
           if (arg === "clear" || arg === "new") {
             setMessages([]);
+            // A shell row and its pending model context belong to the
+            // conversation being discarded.
+            shellAbortRef.current?.abort();
+            shellAbortRef.current = null;
+            pendingShellContextRef.current = [];
             resetMemorySession();
             // A new conversation gets its own rewind scope; without this its
             // snapshots restart at index 1 and overwrite the previous
@@ -4661,6 +4757,114 @@ Based on the above changes:
   );
 
   
+  /**
+   * Shell mode (`!command`): run it here, not as a model turn. The transcript
+   * row is appended immediately and updated in place — live output is flushed
+   * at the same ~80ms cadence as model streaming — and the finished exchange
+   * is queued for the next prompt's context.
+   */
+  const executeShellSubmission = useCallback(
+    async (command: string) => {
+      const runId = ++shellRunSeqRef.current;
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      shellAbortRef.current = controller;
+
+      const initial: BashRun = {
+        runId,
+        command,
+        output: "",
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        status: "running",
+        startedAt,
+      };
+      setMessages((prev) => [...prev, { role: "user", content: "", bash: initial, timestamp: startedAt }]);
+      chatRef.current?.scrollToBottom();
+
+      let pending = "";
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const flush = () => {
+        timer = null;
+        if (!pending) return;
+        const chunk = pending;
+        pending = "";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.bash?.runId === runId
+              ? { ...m, bash: { ...m.bash, output: m.bash.output + chunk } }
+              : m,
+          ),
+        );
+      };
+
+      const result = await runShellCommand(command, {
+        cwd: workingDirectory,
+        signal: controller.signal,
+        onOutput: (chunk) => {
+          pending += chunk;
+          if (timer === null) timer = setTimeout(flush, 80);
+        },
+      });
+      if (timer !== null) clearTimeout(timer);
+
+      const status: BashRun["status"] = result.cancelled
+        ? "cancelled"
+        : result.error || result.exitCode !== 0
+          ? "error"
+          : "done";
+      const context = formatShellContext(command, result);
+      // The final update carries the authoritative buffers (including any
+      // output the 80ms flush had not yet delivered).
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.bash?.runId === runId
+            ? {
+                ...m,
+                content: context,
+                bash: {
+                  ...m.bash,
+                  output: result.output,
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                  exitCode: result.exitCode,
+                  status,
+                  truncated: result.truncated,
+                  error: result.error,
+                  duration: result.durationMs,
+                },
+              }
+            : m,
+        ),
+      );
+
+      pendingShellContextRef.current.push({ runId, context });
+      if (shellAbortRef.current === controller) shellAbortRef.current = null;
+
+      // Claude Code's `respondToBashCommands`: answer the output now instead
+      // of waiting for the next prompt. Skipped when the user cancelled the
+      // run, when no key can answer it, or when a turn started while the
+      // command was running — in the latter two the entry stays queued, so
+      // the next prompt still carries it.
+      if (
+        shouldRespondToBashCommand(config.respondToBashCommands !== false, result) &&
+        activeApiKey &&
+        abortRef.current === null
+      ) {
+        // This turn carries the output itself; leaving the entry queued would
+        // send the same text again on the next prompt.
+        pendingShellContextRef.current = pendingShellContextRef.current.filter(
+          (entry) => entry.runId !== runId,
+        );
+        void submitUserPrompt("shell output", buildBashResponsePrompt(command, result), {
+          transient: true,
+        });
+      }
+    },
+    [workingDirectory, activeApiKey, config.respondToBashCommands, submitUserPrompt],
+  );
+
   const handleSubmit = useCallback(async (overrideInput?: string) => {
     const rawInput = overrideInput !== undefined ? overrideInput : input;
     if (!rawInput.trim()) return;
@@ -4668,7 +4872,12 @@ Based on the above changes:
     if (pickerActiveRef.current && overrideInput === undefined) return;
 
     const trimmedInput = rawInput.trim();
-    if (!trimmedInput.startsWith("/")) {
+    // Shell mode lives in the prompt's state, not in its text: the `!` was
+    // consumed when it switched the mode, so the buffer is the command alone.
+    const isShell = inputMode === "bash";
+    // Shell mode is not a model prompt: it must not become what Esc restores
+    // if the next generation is interrupted.
+    if (!trimmedInput.startsWith("/") && !isShell) {
       lastSubmittedPromptRef.current = trimmedInput;
     }
     setInput("");
@@ -4679,17 +4888,20 @@ Based on the above changes:
     chatRef.current?.scrollToBottom();
 
 
-    if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== trimmedInput) {
+    // History keeps the mode (`!cmd`, as Claude Code does), so recalling the
+    // entry restores shell mode instead of sending the line as a prompt.
+    const historyEntry = isShell ? `!${trimmedInput}` : trimmedInput;
+    if (trimmedInput && inputHistory.current[inputHistory.current.length - 1] !== historyEntry) {
       try {
-        inputHistory.current = appendHistory(trimmedInput);
+        inputHistory.current = appendHistory(historyEntry);
       } catch {
-        
+
       }
     }
     historyIndex.current = -1;
 
     
-    if (isLoading && trimmedInput.startsWith("/")) {
+    if (!isShell && isLoading && trimmedInput.startsWith("/")) {
       setMessages((prev) => [
         ...prev,
         {
@@ -4702,7 +4914,7 @@ Based on the above changes:
     }
 
     
-    if (!isLoading && trimmedInput.startsWith("/")) {
+    if (!isShell && !isLoading && trimmedInput.startsWith("/")) {
       if (handleCommand(trimmedInput)) return;
       
       setMessages((prev) => [
@@ -4716,7 +4928,22 @@ Based on the above changes:
       return;
     }
 
-    
+    // Shell mode: the user's shell line, run directly. Enter on an empty
+    // command runs nothing. While a model turn is running it waits in the
+    // same queue as typed prompts (the drain below knows the difference) so
+    // the transcript's turn stays contiguous.
+    if (isShell) {
+      if (!trimmedInput) return;
+      setInputMode("prompt");
+      if (isLoading) {
+        setQueuedSubmissions((prev) => [...prev, `!${trimmedInput}`]);
+        return;
+      }
+      await executeShellSubmission(trimmedInput);
+      return;
+    }
+
+
     if (!activeApiKey && trimmedInput.startsWith("sk-") && trimmedInput.length >= 20 && !trimmedInput.includes(" ")) {
       setActiveApiKey(trimmedInput);
       setActiveProvider("deepseek");
@@ -4743,7 +4970,7 @@ Based on the above changes:
     }
 
     await submitUserPrompt(trimmedInput);
-  }, [input, isLoading, handleCommand, submitUserPrompt]);
+  }, [input, inputMode, isLoading, handleCommand, submitUserPrompt, executeShellSubmission]);
 
   
   useEffect(() => {
@@ -4757,8 +4984,14 @@ Based on the above changes:
 
     const [next, ...rest] = queuedSubmissions;
     setQueuedSubmissions(rest);
-    void submitUserPrompt(next!);
-  }, [isLoading, queuedSubmissions, submitUserPrompt]);
+    // Queued shell commands carry their mode the way history does (`!cmd`).
+    if (next!.startsWith("!")) {
+      const command = next!.slice(1);
+      if (command) void executeShellSubmission(command);
+    } else {
+      void submitUserPrompt(next!);
+    }
+  }, [isLoading, queuedSubmissions, submitUserPrompt, executeShellSubmission]);
 
 
 
@@ -5403,6 +5636,8 @@ Based on the above changes:
             waitingPermission={!!pendingPermission}
             queueCount={queuedSubmissions.length}
             isPickerActive={showCommandPicker}
+            mode={inputMode}
+            onModeChange={setInputMode}
           />
 
           {}
@@ -5432,6 +5667,7 @@ Based on the above changes:
             statusLineOutput={statusLineText}
             statusLinePadding={statusLineSetting?.padding}
             tasks={tasksMemo}
+            bashMode={inputMode === "bash"}
           />
         </>
       )}

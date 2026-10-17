@@ -289,7 +289,9 @@ describe("the app asks for bracketed paste", () => {
   });
 
   test("the input handler normalises rather than trusting the chunk", () => {
-    expect(input).toContain("const text = normalizePaste(input);");
+    // `let`, because a leading `!` is consumed as the shell-mode switch after
+    // normalisation; the chunk is still normalised before anything reads it.
+    expect(input).toMatch(/\b(?:const|let) text = normalizePaste\(input\);/);
     // The old gate — insert only if every character is printable — is gone;
     // it is what dropped a paste containing a colour code.
     expect(input).not.toContain("isPrintable");

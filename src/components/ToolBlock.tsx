@@ -82,7 +82,7 @@ const MAX_LINES_TO_SHOW = 3;
 /** FallbackToolUseErrorMessage's MAX_RENDERED_LINES. */
 const MAX_ERROR_RENDERED_LINES = 10;
 /** ShellProgressMessage renders a running command's last 5 output lines. */
-const MAX_PROGRESS_LINES = 5;
+export const MAX_PROGRESS_LINES = 5;
 /** BashTool/UI.tsx's command display budget (MAX_COMMAND_DISPLAY_*). */
 const MAX_COMMAND_DISPLAY_LINES = 2;
 const MAX_COMMAND_DISPLAY_CHARS = 160;
@@ -354,7 +354,7 @@ export function rejectionRuns(block: ToolUseBlock, theme: Theme): StyledRun[] {
 /** renderTruncatedContent (utils/terminal.ts): keep the first 3 rendered
  *  lines (4 when exactly one line would be left over), then a dim
  *  "… +N lines (ctrl+o to expand)" marker. */
-function foldedRows(text: string, width: number): TextRow[] {
+export function foldedRows(text: string, width: number): TextRow[] {
   const trimmed = text.trimEnd();
   if (!trimmed) return [];
   const source = trimmed.split("\n").map((l) => l.trimEnd()).join("\n");

@@ -452,6 +452,11 @@ function loadPersistedSettings(): Partial<DeepSeekCodeConfig> & { themeMode?: Th
   if (settings.defaultAgent) config.defaultAgent = settings.defaultAgent as AgentName;
   if (settings.themeMode) config.themeMode = settings.themeMode;
   if (settings.effort) config.effort = settings.effort;
+  // Unlike the bypass toggle below, both values are meaningful: `false` is
+  // how the automatic bash response is turned off, so copy it through.
+  if (settings.respondToBashCommands !== undefined) {
+    config.respondToBashCommands = settings.respondToBashCommands;
+  }
   // Only ever set from here, never cleared. `false` is already the default and
   // an absent key means the same thing, so copying a stored `false` across
   // would achieve nothing except letting an empty settings file cancel a

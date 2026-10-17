@@ -130,8 +130,27 @@ export function isInputSequence(sequence: string): boolean {
  * Stateful across chunks, because a sequence can be split anywhere: the
  * terminal writes a paste in pieces and Node reads them in pieces.
  */
+/** How long a lone trailing ESC is held before it is handed on as the escape
+ *  key. It exists because a split CSI and a pressed Esc look identical at a
+ *  read boundary: the next bytes resolve it, and 30ms is far longer than the
+ *  gap between two reads of one sequence and far shorter than a human notices. */
+export const LONE_ESC_HOLD_MS = 30;
+
 export class StdinSanitizer {
   private pending = "";
+
+  /** The bytes held back for a sequence that has not finished arriving. */
+  pendingText(): string {
+    return this.pending;
+  }
+
+  /** Release the held bytes for immediate emission. The stream wrapper uses
+   *  this for a lone ESC once the ambiguity window has passed. */
+  takePending(): string {
+    const held = this.pending;
+    this.pending = "";
+    return held;
+  }
 
   push(chunk: string): string {
     const text = this.pending + chunk;
@@ -172,11 +191,31 @@ export class StdinSanitizer {
  */
 export function createSanitizedStdin(real: NodeJS.ReadStream): NodeJS.ReadStream {
   const sanitizer = new StdinSanitizer();
+  let escTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // A pressed Esc is one byte with nothing after it, which is indistinguishable
+  // from the first byte of a split sequence. Hold it for the ambiguity window,
+  // then hand it on: without this, Esc produced no key event at all until the
+  // user pressed something else — and then arrived as that key's meta chord.
+  const scheduleEscFlush = () => {
+    if (escTimer !== null) {
+      clearTimeout(escTimer);
+      escTimer = null;
+    }
+    if (sanitizer.pendingText() !== ESC) return;
+    escTimer = setTimeout(() => {
+      escTimer = null;
+      const held = sanitizer.takePending();
+      if (held) stream.push(held);
+    }, LONE_ESC_HOLD_MS);
+  };
+
   const stream = new Transform({
     transform(chunk, _encoding, callback) {
       const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
       const clean = sanitizer.push(text);
       if (clean.length > 0) stream.push(clean);
+      scheduleEscFlush();
       callback();
     },
   }) as unknown as NodeJS.ReadStream;

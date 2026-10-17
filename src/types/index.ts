@@ -31,6 +31,24 @@ export interface ToolUseBlock {
   duration?: number;
 }
 
+/** A user-authored shell command (the `!` prompt mode). */
+export interface BashRun {
+  /** Monotonic id, used to update this run's transcript row in place. */
+  runId: number;
+  command: string;
+  /** Display output: stdout and stderr in arrival order. */
+  output: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  status: "running" | "done" | "error" | "cancelled";
+  truncated?: boolean;
+  /** Set when the spawn itself failed; `output` then carries the message. */
+  error?: string;
+  startedAt: number;
+  duration?: number;
+}
+
 export interface MessageBlock {
   type: "text" | "tool" | "thinking";
   content?: string;
@@ -51,6 +69,13 @@ export interface Message {
   thinking?: string;
 
   blocks?: MessageBlock[];
+  /**
+   * A shell-mode exchange. The message is role "user" and its `content` is
+   * the model-facing bash context; this field is what the transcript draws,
+   * and a fresh native session skips the row — the finished run reaches the
+   * model through the pending-context channel instead.
+   */
+  bash?: BashRun;
   /**
    * Set on the message that replaced a transcript at a /compact boundary.
    * It replays into the native session as a user turn (the model must read it
@@ -243,6 +268,9 @@ export interface DeepSeekCodeConfig {
   maxSteps?: number;
   defaultAgent?: AgentName;
   dangerouslySkipPermissions?: boolean;
+  /** Claude Code's `respondToBashCommands`: after a `!command` finishes, the
+   *  model responds to its output automatically. Absent means on. */
+  respondToBashCommands?: boolean;
 
   profiles?: Record<string, ModelProfile>;
 

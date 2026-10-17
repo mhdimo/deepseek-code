@@ -4,6 +4,7 @@
   "apiKey": "env:DEEPSEEK_API_KEY",
   "defaultAgent": "code",
   "maxSteps": 25,
+  "respondToBashCommands": true,
   "profiles": {
     "chat": {
       "provider": "deepseek",
