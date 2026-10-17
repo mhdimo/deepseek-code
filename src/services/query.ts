@@ -13,14 +13,13 @@ import { LIMIT_FINISH_REASON, reachedStepLimit } from "./stepLimit.js";
 
 /** The model's reason for a finish, as the binding passes it through.
  *
- *  `StreamEvent['usage']` declares the token counts only, but `finishReason`
- *  rides alongside them — the node addon sets it on the same object, and the
- *  binding's own stream loop keys the end of a turn off it. Reading it is the
- *  only way to tell a step from a turn, and the only per-call signal the
+ *  `finishReason` rides on `usage` — the node addon sets it on the same object,
+ *  and the binding's own stream loop keys the end of a turn off it. Reading it
+ *  is the only way to tell a step from a turn, and the only per-call signal the
  *  session path sends at all (`step_finish` never arrives here, so `--print`
- *  counts with this too). */
+ *  counts with this too). Empty on a synthetic finish. */
 export function finishReasonOf(ev: StreamEvent): string {
-  return (ev.usage as { finishReason?: string } | undefined)?.finishReason ?? "";
+  return ev.usage?.finishReason ?? "";
 }
 
 export interface QueryParams {

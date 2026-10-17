@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildStatusLineCommandInput, parseAnsi } from "./statusline.js";
 import { DEFAULT_CONTEXT_WINDOW } from "../services/contextManager.js";
+import { APP_VERSION } from "./version.js";
 
 describe("parseAnsi", () => {
   test("passes plain text through", () => {
@@ -87,7 +88,7 @@ describe("buildStatusLineCommandInput", () => {
     expect(input).toEqual({
       model: { id: "deepseek-chat", display_name: "deepseek-chat" },
       workspace: { current_dir: "/work", project_dir: "/work", added_dirs: [] },
-      version: "0.1.0",
+      version: APP_VERSION,
       output_style: { name: "default" },
       cost: {
         total_cost_usd: 0,

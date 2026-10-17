@@ -195,7 +195,7 @@ describe("acp turn streaming", () => {
         scripted([
           { type: "text_delta", text: "Hel" },
           { type: "text_delta", text: "lo" },
-          { type: "finish", usage: { inputTokens: 10, outputTokens: 2 } },
+          { type: "finish", usage: { inputTokens: 10, outputTokens: 2, finishReason: "stop" } },
         ]),
     });
     const turn = await runTurn(fake, "say hi");

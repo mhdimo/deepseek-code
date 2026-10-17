@@ -41,6 +41,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The native engine is now `ai-sdk-cpp` 1.0.1, which reports structured error
+  codes on failed calls and declares `finishReason` in its stream types.
 - The test suite pins its colour and width, so results no longer depend on the
   terminal that runs it.
 

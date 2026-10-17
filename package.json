@@ -1,6 +1,6 @@
 {
   "name": "@mihaldmo/deepseek-code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Terminal-native AI coding agent powered by DeepSeek",
   "module": "src/index.tsx",
   "type": "module",
@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.9.0",
-    "ai-sdk-cpp": "1.0.0",
+    "ai-sdk-cpp": "1.0.1",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "diff": "^9.0.0",
