@@ -5,6 +5,12 @@
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
+import {
+  DeepSeekWebError,
+  formatSearchResults,
+  hasDeepSeekKey,
+  searchWeb,
+} from "../../services/deepseekWeb.js";
 import { DESCRIPTION } from "./prompt.js";
 
 const inputSchema = z.object({
@@ -79,10 +85,43 @@ export const WebSearchTool = buildTool({
 
   async call(
     args: z.infer<typeof inputSchema>,
-    _context: ToolUseContext,
+    context: ToolUseContext,
   ): Promise<ToolResult<string>> {
-    const results = await searchDuckDuckGo(args.query, args.max_results ?? 5);
-    return { data: results };
+    const maxResults = args.max_results ?? 5;
+    const provider = context.providerConfig;
+
+    // DeepSeek's first-party Search API is the primary source: structured
+    // results, summaries written for a model, and no HTML scraping that breaks
+    // whenever the page markup moves. A configured key also means the call is
+    // billed to the same account as the conversation ($0.75/1,000 requests).
+    if (hasDeepSeekKey(provider)) {
+      try {
+        const results = await searchWeb(args.query, {
+          apiKey: provider.apiKey,
+          baseURL: provider.baseURL,
+          count: maxResults,
+          signal: context.abortController?.signal,
+        });
+        return { data: formatSearchResults(results) };
+      } catch (error) {
+        if (context.abortController?.signal.aborted) return { data: "Search cancelled." };
+        // A key that is out of balance, or a proxy that does not implement the
+        // endpoint, should not remove search entirely — say why and use the
+        // keyless path.
+        const reason =
+          error instanceof DeepSeekWebError
+            ? `${error.message} (HTTP ${error.status})`
+            : error instanceof Error
+              ? error.message
+              : String(error);
+        const fallback = await searchDuckDuckGo(args.query, maxResults);
+        return {
+          data: `(DeepSeek Search failed: ${reason} — showing DuckDuckGo results)\n\n${fallback}`,
+        };
+      }
+    }
+
+    return { data: await searchDuckDuckGo(args.query, maxResults) };
   },
 
   isReadOnly: () => true,

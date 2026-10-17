@@ -5,6 +5,12 @@
 
 import { z } from "zod";
 import { buildTool, type ToolUseContext, type ToolResult } from "../../Tool.js";
+import {
+  DeepSeekWebError,
+  fetchPage,
+  hasDeepSeekKey,
+  isPrivateUrl,
+} from "../../services/deepseekWeb.js";
 import { DESCRIPTION } from "./prompt.js";
 
 const MAX_SIZE_CHARS = 50_000;
@@ -50,6 +56,39 @@ export const WebFetchTool = buildTool({
     args: z.infer<typeof inputSchema>,
     _context: ToolUseContext,
   ): Promise<ToolResult<string>> {
+    // DeepSeek's Fetch API returns the page as Markdown, which is exactly the
+    // shape the model wants. `raw` explicitly asks for the original bytes, and
+    // private/internal URLs cannot be reached from a remote service — both go
+    // straight to the direct download below.
+    let apiError: string | null = null;
+    if (!args.raw && hasDeepSeekKey(_context.providerConfig) && !isPrivateUrl(args.url)) {
+      try {
+        const page = await fetchPage(args.url, {
+          apiKey: _context.providerConfig.apiKey,
+          baseURL: _context.providerConfig.baseURL,
+          signal: _context.abortController?.signal,
+        });
+        const content =
+          page.content.length > MAX_SIZE_CHARS
+            ? page.content.slice(0, MAX_SIZE_CHARS) + "\n\n... (truncated at 50KB)"
+            : page.content;
+        const heading = page.title
+          ? `Content from ${args.url} (${page.title}):`
+          : `Content from ${args.url}:`;
+        return { data: `${heading}\n\n${content}` };
+      } catch (error) {
+        if (_context.abortController?.signal.aborted) return { data: "Fetch cancelled." };
+        // Fall through to the direct download: the API refuses pages it cannot
+        // extract, and a site that blocks DeepSeek may still serve us.
+        apiError =
+          error instanceof DeepSeekWebError
+            ? `${error.message} (HTTP ${error.status})`
+            : error instanceof Error
+              ? error.message
+              : String(error);
+      }
+    }
+
     try {
       // Wire the user abort in (fetch() alone would ignore the cancel and
       // keep downloading in the background).
@@ -75,7 +114,9 @@ export const WebFetchTool = buildTool({
 
       if (!response.ok) {
         return {
-          data: `HTTP ${response.status} ${response.statusText} for ${args.url}`,
+          data:
+            `HTTP ${response.status} ${response.statusText} for ${args.url}` +
+            (apiError ? `\n(DeepSeek Fetch API: ${apiError})` : ""),
         };
       }
 
@@ -116,7 +157,9 @@ export const WebFetchTool = buildTool({
       };
     } catch (error) {
       return {
-        data: `Error fetching ${args.url}: ${(error as Error).message}`,
+        data:
+          `Error fetching ${args.url}: ${(error as Error).message}` +
+          (apiError ? `\n(DeepSeek Fetch API: ${apiError})` : ""),
       };
     }
   },
