@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `deepseek-code update` recognises a bun global install even when bun's
+  configured global directory is somewhere other than `~/.bun/install/global`.
+  Previously it read such a copy as npm and updated a different, shadowed
+  install, leaving the running version unchanged.
+
 ## [0.1.1] - 2026-10-17
 
 ### Added

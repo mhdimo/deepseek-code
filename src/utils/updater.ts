@@ -263,22 +263,32 @@ export type InstallMethod = "npm" | "bun" | "unknown";
  * Which package manager owns this copy, inferred from where it was loaded.
  *
  * The module directory is `<prefix>/node_modules/@mihaldmo/deepseek-code/dist`.
- * bun's global prefix lives under `~/.bun/install/global`, which is the only
- * reliable marker; everything else under `node_modules` is assumed to be npm.
- * pnpm and yarn get "unknown" — running an npm install over their tree would
- * leave two copies and no clean way to pick one.
+ * bun's default global prefix lives under `~/.bun/install/global`, which
+ * identifies it directly — but bun also honors a custom global directory, and
+ * then the package sits somewhere like `~/node_modules` with no `.bun` in its
+ * path at all. The bin symlink still lives under `~/.bun/bin`, so the script
+ * path is consulted as well. That distinction matters: this machine runs the
+ * `~/.bun/bin` copy while a stale npm global sits in the nvm prefix, and
+ * misreading the first as npm "updates" the copy nobody runs.
+ *
+ * Everything else under `node_modules` is assumed to be npm. pnpm and yarn get
+ * "unknown" — running an npm install over their tree would leave two copies
+ * and no clean way to pick one.
  */
 export function detectInstallMethod(
   moduleDir: string = import.meta.dir,
   env: NodeJS.ProcessEnv = process.env,
+  scriptPath: string = "",
 ): InstallMethod {
   if (env.npm_config_user_agent?.startsWith("bun/")) return "bun";
 
   const normalized = moduleDir.replace(/\\/g, "/");
+  const script = scriptPath.replace(/\\/g, "/");
   if (!normalized.split("/").includes("node_modules")) return "unknown";
   if (/\/\.?pnpm\//.test(normalized)) return "unknown";
   if (/\/\.?yarn\//.test(normalized)) return "unknown";
   if (normalized.includes("/.bun/") || normalized.includes("/bun/install/")) return "bun";
+  if (/(^|\/)\.bun\//.test(script)) return "bun";
   return "npm";
 }
 
@@ -292,6 +302,9 @@ export function installCommand(method: InstallMethod, version = "latest"): strin
 export interface UpdateRunOptions {
   version?: string;
   moduleDir?: string;
+  /** Where the running script was invoked from (normally `process.argv[1]`);
+   *  its `.bun/bin` prefix identifies a bun install with a custom global dir. */
+  scriptPath?: string;
   method?: InstallMethod;
   timeoutMs?: number;
 }
@@ -315,7 +328,9 @@ export interface UpdateRunResult {
  */
 export async function runUpdate(options: UpdateRunOptions = {}): Promise<UpdateRunResult> {
   const version = options.version ?? "latest";
-  const method = options.method ?? detectInstallMethod(options.moduleDir);
+  const method =
+    options.method ??
+    detectInstallMethod(options.moduleDir, process.env, options.scriptPath ?? process.argv[1] ?? "");
   const argv = installCommand(method, version);
   const command = argv.map((part) => (part.includes(" ") ? JSON.stringify(part) : part)).join(" ");
 

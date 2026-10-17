@@ -249,6 +249,29 @@ describe("detectInstallMethod", () => {
     ).toBe("bun");
   });
 
+  test("a bun bin symlink identifies bun even when the global dir is custom", () => {
+    // bun's bin symlink can point into any configured globalDir (this machine:
+    // ~/node_modules), so the module path alone reads as npm. The symlink is
+    // the reliable marker — and reading it as npm updates the wrong copy.
+    expect(
+      detectInstallMethod(
+        "/Users/ada/node_modules/@mihaldmo/deepseek-code/dist",
+        emptyEnv,
+        "/Users/ada/.bun/bin/deepseek-code",
+      ),
+    ).toBe("bun");
+  });
+
+  test("an nvm bin symlink does not turn npm into bun", () => {
+    expect(
+      detectInstallMethod(
+        "/Users/ada/.nvm/versions/node/v22/lib/node_modules/@mihaldmo/deepseek-code/dist",
+        emptyEnv,
+        "/Users/ada/.nvm/versions/node/v22/bin/deepseek-code",
+      ),
+    ).toBe("npm");
+  });
+
   test("an npm prefix under node_modules is npm", () => {
     expect(
       detectInstallMethod("/usr/local/lib/node_modules/@mihaldmo/deepseek-code/dist", emptyEnv),
