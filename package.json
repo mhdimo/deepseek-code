@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "bun run src/index.tsx",
-    "build": "rm -rf ./dist && bun build src/index.tsx --outdir ./dist --target bun --external ai-sdk-cpp && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js && cp -R ./src/skills/bundled ./dist/bundled && cp -R ./src/workflows/bundled ./dist/workflows",
+    "build": "rm -rf ./dist && bun build src/index.tsx --outdir ./dist --target bun --external ai-sdk-cpp && printf '#!/usr/bin/env bun\\n' | cat - ./dist/index.js > ./dist/tmp && mv ./dist/tmp ./dist/index.js && chmod +x ./dist/index.js && cp -R ./src/skills/bundled ./dist/bundled && cp -R ./src/workflows/bundled ./dist/workflows && cp ./CHANGELOG.md ./dist/CHANGELOG.md",
     "typecheck": "tsc --noEmit",
     "test": "bun test --isolate"
   },

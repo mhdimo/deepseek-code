@@ -14,6 +14,7 @@ import { loadConfig, printHelp } from "./utils/config.js";
 import { loadSettings as loadPersistedSettings, hardenDataDir } from "./state/storage.js";
 import { resolveThemeSetting, syncLiveTheme } from "./utils/theme.js";
 import { APP_VERSION } from "./utils/version.js";
+import { PACKAGE_NAME, readChangelog, runUpdate } from "./utils/updater.js";
 import { existsSync, readFileSync } from "fs";
 import { INK_RENDER_OPTIONS } from "./components/terminalLayout.js";
 import { createSanitizedStdin } from "./components/inkStdin.js";
@@ -50,6 +51,30 @@ async function main() {
   
   if (config.version) {
     console.log(`DeepSeek Code v${VERSION}`);
+    process.exit(0);
+  }
+
+  // Terminal commands, not sessions: they print and exit before the safety
+  // gates below, and neither one can reach the agent's tools.
+  if (config.update) {
+    process.stderr.write(`Updating ${PACKAGE_NAME}…\n`);
+    const result = await runUpdate();
+    if (result.output) console.log(result.output);
+    if (result.success) {
+      console.log(`\n✓ Updated with \`${result.command}\`. Restart DeepSeek Code to use it.`);
+      process.exit(0);
+    }
+    console.error(`\nUpdate failed. Run it yourself:\n  ${result.command}`);
+    process.exit(1);
+  }
+
+  if (config.changelog) {
+    const changelog = readChangelog();
+    if (!changelog) {
+      console.error("No CHANGELOG.md found — this copy does not bundle release notes.");
+      process.exit(1);
+    }
+    console.log(changelog.trim());
     process.exit(0);
   }
 

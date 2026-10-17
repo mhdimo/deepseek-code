@@ -142,7 +142,11 @@ src/
 
 **Custom status line**: `/statusline <command>` runs a command (trust-gated by `projectTrust.isTrusted()`, 5s timeout, 300ms debounce, ~20s refresh) and shows its trimmed stdout at the far right of the StatusBar. `/statusline off` clears it.
 
-**Commands**: /help /model (alias /models) /agent /apikey /baseurl /thinking /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /exit. Command data lives in `src/constants/help.ts` — add new commands there too, or /help drifts.
+**Commands**: /help /model (alias /models) /agent /apikey /baseurl /thinking /effort /skills /export /search /rewind /history /sessions /resume /clear /compact /mcp /hooks /tools /shortcuts /statusline /setup /queue /cost /usage /settings /status /config /stats /copy /diff /pr /commit /plugin(s) /doctor /messages /update /changelog /exit. Command data lives in `src/services/commands/commandRegistry.ts` (re-exported by `src/constants/help.ts`) — add new commands there too, or /help drifts.
+
+**Updater**: `src/utils/updater.ts` — semver compare, npm-registry latest check (cached 24h in `~/.deepseek-code/update-check.json`), install-method detection (npm vs bun vs unknown), and the changelog reader. `deepseek-code update|changelog` are CLI subcommands handled in `src/index.tsx` before the safety gates; `/update` and `/changelog` are the TUI commands. The startup notice is one line, off in tests/CI and with `DEEPSEEK_CODE_NO_UPDATE_CHECK=1`.
+
+**Web tools**: `WebSearch` and `WebFetch` prefer DeepSeek's first-party Search/Fetch APIs (`src/services/deepseekWeb.ts`, `POST /v1/tools/search|fetch`, bearer auth from the active provider config, billed per successful request). DuckDuckGo search and a direct download remain as fallbacks when there is no key or the API declines the page.
 
 ## Bun conventions
 

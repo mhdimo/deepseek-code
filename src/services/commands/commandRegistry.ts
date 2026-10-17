@@ -190,6 +190,8 @@ export const BUILTIN_COMMANDS: readonly CommandDefinition[] = [
     acceptsArgs: true,
   }),
   command("terminal-setup", "Show terminal setup and rendering guidance", "general"),
+  command("update", "Check for and install the latest published version", "general"),
+  command("changelog", "Show the release notes", "general"),
   command("version", "Show DeepSeek Code and runtime versions", "general"),
   command("plugin", "Manage installed plugins", "plugin", {
     aliases: ["plugins"],
@@ -404,6 +406,8 @@ const HELP_GROUP_SPECS: readonly { title: string; names: readonly string[] }[] =
       "bashes",
       "test",
       "terminal-setup",
+      "update",
+      "changelog",
       "version",
       "plugin",
       "exit",

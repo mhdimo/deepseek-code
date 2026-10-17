@@ -47,6 +47,13 @@ import type { SearchMatch } from "../utils/transcriptSearch.js";
 import { ThemeProvider } from "../ui/design-system/ThemeProvider.js";
 import { resolveThemeSetting, type ThemeSetting } from "../utils/theme.js";
 import { APP_VERSION } from "../utils/version.js";
+import {
+  checkForUpdate,
+  formatChangelogForDisplay,
+  readChangelog,
+  runUpdate,
+  updateCheckEnabledOnStartup,
+} from "../utils/updater.js";
 import Onboarding, { type ThemeChoice } from "./Onboarding.js";
 import EffortCallout from "./EffortCallout.js";
 import ThemePicker from "./ThemePicker.js";
@@ -794,6 +801,24 @@ export default function App({ config, workingDirectory, resumeSessionHash: cliRe
   useEffect(() => {
     const notes = takeHardeningNotes();
     if (notes.length > 0) pushSystem(`🔒 ${notes.join("\n")}`);
+  }, [pushSystem]);
+
+  // One line, once a day, when a newer published version exists. The answer is
+  // cached on disk and the check is off in tests/CI — see utils/updater.ts.
+  useEffect(() => {
+    if (!updateCheckEnabledOnStartup()) return;
+    let cancelled = false;
+    void (async () => {
+      const status = await checkForUpdate({ currentVersion: APP_VERSION });
+      if (cancelled || !status?.updateAvailable) return;
+      pushSystem(
+        `✨ DeepSeek Code v${status.latest} is available (you have v${status.current}). ` +
+          `Run /update to install it, or /changelog for what changed.`,
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [pushSystem]);
 
   const handleTrustDecision = useCallback(
@@ -4622,6 +4647,44 @@ Based on the above changes:
               { role: "system", content: `Unable to run ${commandLabel}: ${(error as Error).message}`, timestamp: Date.now() },
             ]);
           }
+          return true;
+        }
+
+        case "update": {
+          pushSystem(`Checking the npm registry for the latest version (current: v${APP_VERSION})…`);
+          void (async () => {
+            const status = await checkForUpdate({ currentVersion: APP_VERSION, force: true });
+            if (!status) {
+              pushSystem(
+                "Could not reach the npm registry. Check your connection, or run `deepseek-code update` in a terminal.",
+              );
+              return;
+            }
+            if (!status.updateAvailable) {
+              pushSystem(`✓ DeepSeek Code v${APP_VERSION} is up to date (latest: v${status.latest}).`);
+              return;
+            }
+            pushSystem(`Installing v${status.latest}…`);
+            const result = await runUpdate({ version: status.latest });
+            if (result.success) {
+              pushSystem(`✓ Updated to v${status.latest}. Restart DeepSeek Code to use it.`);
+              return;
+            }
+            pushSystem(
+              `Update failed — run it yourself:\n  ${result.command}` +
+                (result.output ? `\n\n${result.output.slice(-2_000)}` : ""),
+            );
+          })();
+          return true;
+        }
+
+        case "changelog": {
+          const changelog = readChangelog();
+          pushSystem(
+            changelog
+              ? `Release notes\n\n${formatChangelogForDisplay(changelog)}`
+              : "No CHANGELOG.md was found — this copy does not bundle release notes.",
+          );
           return true;
         }
 

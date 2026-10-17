@@ -259,9 +259,21 @@ function loadEnvConfig(): Partial<DeepSeekCodeConfig> {
 
 
 
-function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
+/** The CLI-only fields `parseCliArgs` and `loadConfig` carry alongside config. */
+export interface CliOptions {
+  help?: boolean;
+  version?: boolean;
+  resumeSession?: string;
+  effort?: EffortLevel;
+  /** `deepseek-code update` / `--update`: install the latest published version. */
+  update?: boolean;
+  /** `deepseek-code changelog` / `--changelog`: print the bundled release notes. */
+  changelog?: boolean;
+}
+
+export function parseCliArgs(): Partial<DeepSeekCodeConfig> & CliOptions {
   const args = process.argv.slice(2);
-  const config: Partial<DeepSeekCodeConfig> & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } = {};
+  const config: Partial<DeepSeekCodeConfig> & CliOptions = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -352,6 +364,20 @@ function parseCliArgs(): Partial<DeepSeekCodeConfig> & { help?: boolean; version
       case "--stream":
         (config as any).printStreamText = true;
         break;
+      // Self-update and release notes. The bare words are the documented
+      // spelling (`deepseek-code update`); the flags are accepted too because
+      // every other non-interactive mode here is a flag.
+      case "update":
+      case "--update":
+        config.update = true;
+        break;
+      case "changelog":
+      case "--changelog":
+        config.changelog = true;
+        break;
+      case "--no-update-check":
+        process.env.DEEPSEEK_CODE_NO_UPDATE_CHECK = "1";
+        break;
       // Agent Client Protocol over stdio — the mode the DeepSeek Harness's
       // `subagent-acp` backend spawns. See src/cli/acp.ts.
       case "--acp":
@@ -370,6 +396,8 @@ export function printHelp(): void {
 DeepSeek Code — Terminal-native AI coding agent
 
 Usage: deepseek-code [options]
+       deepseek-code update           Install the latest published version
+       deepseek-code changelog        Print the release notes
 
 Options:
   -m, --model <name>            Model name (default: deepseek-flash)
@@ -390,6 +418,11 @@ Options:
       --verbose                 Stream tool progress to stderr in --print
       --acp                     Serve the Agent Client Protocol over stdio
                                 (spawned by the DeepSeek Harness; not for humans)
+      --update                  Install the latest published version
+                                (same as 'deepseek-code update')
+      --changelog               Print the release notes
+                                (same as 'deepseek-code changelog')
+      --no-update-check         Skip the once-a-day startup update check
   -h, --help                    Show this help
   -v, --version                 Show version
 
@@ -397,6 +430,7 @@ Environment:
   DEEPSEEK_API_KEY        API key for DeepSeek
   DEEPSEEK_MODEL          Model name (deepseek-flash or deepseek-v4-pro)
   DEEPSEEK_BASE_URL       Custom base URL (for proxies)
+  DEEPSEEK_CODE_NO_UPDATE_CHECK=1  Skip the startup update check
 
 Config file:
   .deepseek-code.json in cwd, or ~/.config/deepseek-code/config.json
@@ -418,7 +452,7 @@ Examples:
 
 
 
-export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: boolean; resumeSession?: string; effort?: EffortLevel } {
+export function loadConfig(): DeepSeekCodeConfig & CliOptions {
   const fileConfig = loadConfigFile();
   const envConfig = loadEnvConfig();
   const persistedConfig = loadPersistedSettings();
@@ -439,7 +473,7 @@ export function loadConfig(): DeepSeekCodeConfig & { help?: boolean; version?: b
   
   merged.provider = "deepseek";
 
-  return merged as DeepSeekCodeConfig & { help?: boolean; version?: boolean };
+  return merged as DeepSeekCodeConfig & CliOptions;
 }
 
 
