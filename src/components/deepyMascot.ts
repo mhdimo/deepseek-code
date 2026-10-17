@@ -120,8 +120,14 @@ let truecolor: boolean | null = null;
 /** Whether the terminal can be expected to honor 24-bit SGR. */
 export function deepyTruecolor(): boolean {
   if (truecolor === null) {
-    const out = process.stdout as unknown as { hasColors?: (depth?: number) => boolean };
-    truecolor = typeof out.hasColors === "function" ? out.hasColors(16_777_216) : false;
+    // Respect the standard opt-outs first: `hasColors` reports what the
+    // terminal is capable of, not what the user asked for.
+    if (process.env.NO_COLOR || process.env.FORCE_COLOR === "0") {
+      truecolor = false;
+    } else {
+      const out = process.stdout as unknown as { hasColors?: (depth?: number) => boolean };
+      truecolor = typeof out.hasColors === "function" ? out.hasColors(16_777_216) : false;
+    }
   }
   return truecolor;
 }
